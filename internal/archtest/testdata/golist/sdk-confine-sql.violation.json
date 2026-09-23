@@ -1,0 +1,27 @@
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/graph",
+	"Imports": [
+		"github.com/jackc/pgx/v5/pgxpool"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/cmd/rempartd",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/graph/adapters/postgres",
+		"github.com/lib/pq"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/evidence/domain",
+	"Imports": [
+		"database/sql"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/graph/adapters/postgres",
+	"Imports": [
+		"database/sql",
+		"github.com/jackc/pgx/v5",
+		"github.com/jackc/pgx/v5/pgxpool"
+	]
+}

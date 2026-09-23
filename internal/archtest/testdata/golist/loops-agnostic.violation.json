@@ -1,0 +1,38 @@
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/loops",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/llm",
+		"github.com/amezianechayer/rempart/internal/loops/domain",
+		"github.com/amezianechayer/rempart/internal/tenancy",
+		"go.temporal.io/sdk/workflow",
+		"time"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/loops/domain",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/llm/domain",
+		"sort"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/loops/codec",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/graph",
+		"github.com/amezianechayer/rempart/internal/secrets/envelope",
+		"go.temporal.io/api/common/v1"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/loops/fake",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/loops"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/loops/demo",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/llm",
+		"github.com/amezianechayer/rempart/internal/loops"
+	]
+}

@@ -41,6 +41,13 @@ aucun
   - Documents : menaces T28 à T32 (`docs/02-THREAT-MODEL.md`) ; proposition de harnais `docs/proposals/0003-garde-make-variables.md` (81 cas de test des hooks verts sur clone avec 0001, 0002 et 0003).
   - Incident de revue (sans effet) : lors de la contre-revue, `security-reviewer` a lancé par erreur `make --no-print-directory update-baseline EVAL='$(shell ...)'` et `make sandbox-apply SCENARIO=demo </dev/null` sur le vrai dépôt ; les deux se sont arrêtées aux gardes (code 2), aucun fichier créé, `git status` inchangé. Le garde Bash actuel ne les bloque pas : la proposition 0003 les refuse.
 
+- 2026-09-23 : **M0-T02 `archtest-imports` terminée** (plan `docs/plans/M0-archtest-imports.md`) :
+  - `internal/archtest/packages.go` (`LoadPackages` : `go list -json ./...` sans shell, arguments littéraux, `GOFLAGS=-mod=readonly`, `GOWORK=off`, échec fermé) et `rules.go` (`Match`, `Check`, `DefaultRules` : 7 règles, R3 découpée en Anthropic, Temporal, SQL avec `database/sql`) ; R4 autorise `internal/loops` lui-même (sinon le faux de T15 violerait la règle).
+  - Tests écrits par `test-author` (rouges sur `undefined:` avant l'implémentation) ; implémentation écrite par l'agent principal d'après le plan, sans reprendre la référence hors dépôt de `test-author`, verte au premier passage.
+  - Preuves : critères 1 à 15 conformes (21 sous-tests `TestRuleDetectsViolation`, 38 cas `TestMatch`, `TestRepositoryConforms` sous `-short` en 0,1 s, hors ligne sans réécriture de `go.mod`) ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** ; `acceptance-verifier` FAIL sur la seule lettre de C1, C3 et C5 (décompte du plan faux : le sous-test gelé répète la violation), plan corrigé, puis **PASS** par un second vérificateur.
+  - Constat Go 1.27.1 : `go list ./...` sans `go.mod` répond `directory prefix . does not contain main module` (sans mentionner `go.mod`) ; `TestLoadPackagesErrors/no_go_mod` accepte `main module` ou `go.mod`.
+  - Menace T33 ajoutée (contournement des règles d'architecture).
+
 ## En cours
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
 
@@ -57,7 +64,8 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T02 (`archtest-imports`, règles de dépendance R1 à R5).
+- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T05, T06, T07, T13 ou T22, qui n'en ont pas besoin.
+- Tâche de durcissement de `internal/archtest` (revue M0-T02, 3 constats moyens, T33) : fichiers exclus par build tags ou GOOS (`IgnoredGoFiles`), `go.mod` imbriqué, SDK atteint par un module tiers ; en bas : `internal/*/*/{domain,adapters,fake}`, `C` et `unsafe` dans R1, règle « personne n'importe `internal/archtest` ». À faire avant le premier fichier `//go:build` non test ou la première dépendance qui enveloppe un SDK confiné.
 - **Avant M3 (création de `scripts/sandbox.sh`), obligatoire** : tâche de durcissement issue de la contre-revue de M0-T01 (plan `docs/plans/M0-squelette.md`, section 0) : confirmation et appel sur une ligne chaînée par `&&`, refus par test du préfixe `-`, de `.IGNORE` et de `MAKEFLAGS`, approbation hors de portée de l'agent (T31).
 - Avec M0-T04 au plus tard : règle archtest refusant `GNUmakefile` et `makefile`, `make -f Makefile` dans la CI, et proposition de harnais pour `make -f Makefile` dans le hook Stop (T32).
 - Session cloud : autoriser `vuln.go.dev` dans la politique réseau de l'environnement pour que `make verify` (govulncheck) passe ; démon Docker nécessaire à partir de M0-T03 (poste personnel ou environnement qui le fournit).
@@ -86,3 +94,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-23 18:51 [harnais] PHASE FREE (discipline TDD suspendue) : tâche squelette (M0-T01) terminée
 
 - 2026-09-23 18:51 [harnais] phase : impl -> free
+
+- 2026-09-23 19:20 [harnais] phase : free -> tests
+
+- 2026-09-23 19:32 [harnais] phase : tests -> impl
+
+- 2026-09-23 19:40 [harnais] PHASE FREE (discipline TDD suspendue) : tâche archtest-imports (M0-T02) terminée
+
+- 2026-09-23 19:40 [harnais] phase : impl -> free

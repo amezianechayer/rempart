@@ -1,0 +1,39 @@
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/llm",
+	"Imports": [
+		"context",
+		"github.com/amezianechayer/rempart/internal/llm/ports"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/loops/demo",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/loops"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/llm/adapters/anthropic",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/llm/adapters/anthropic/internal/wire",
+		"net/http"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/llm/adapters/anthropic/internal/wire",
+	"Imports": [
+		"encoding/json"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/secrets/adapters/openbao",
+	"Imports": [
+		"net/http"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/cmd/rempart-worker",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/llm/adapters/anthropic",
+		"github.com/amezianechayer/rempart/internal/secrets/adapters/openbao"
+	]
+}

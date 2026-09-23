@@ -1,0 +1,22 @@
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/llm/domain",
+	"Imports": [
+		"encoding/json",
+		"github.com/amezianechayer/rempart/internal/tenancy",
+		"github.com/santhosh-tekuri/jsonschema/v6"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/evidence/domain",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/llm/domain",
+		"sort"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/tenancy",
+	"Imports": [
+		"context",
+		"errors"
+	]
+}
