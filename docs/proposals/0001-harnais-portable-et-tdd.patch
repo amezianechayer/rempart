@@ -249,7 +249,7 @@ index 0c92f46..d693259 100644
  
  
 diff --git a/.claude/hooks/guard_edit.py b/.claude/hooks/guard_edit.py
-index 9785db9..b2933fa 100644
+index 9785db9..a457209 100644
 --- a/.claude/hooks/guard_edit.py
 +++ b/.claude/hooks/guard_edit.py
 @@ -1,12 +1,13 @@
@@ -268,7 +268,7 @@ index 9785db9..b2933fa 100644
  """
  import re
  import sys
-@@ -15,13 +16,17 @@ from pathlib import Path
+@@ -15,13 +16,18 @@ from pathlib import Path
  sys.path.insert(0, str(Path(__file__).parent))
  from _common import block, read_input, rel, state  # noqa: E402
  
@@ -276,7 +276,8 @@ index 9785db9..b2933fa 100644
 +PROTECTED = re.compile(
 +    r"^(CLAUDE\.md$|\.claude/(settings\.json|settings\.local\.json|hooks/|bin/|state/|agents/|commands/))", re.I
 +)
-+BASELINE = re.compile(r"^evals/.+/baseline\.json$", re.I)
++# baseline.json, ou une baseline par couple (plateforme, modèle) sous evals/<boucle>/baseline/ (ADR 0002).
++BASELINE = re.compile(r"^evals/.+/baseline(\.json|/.+\.json)$", re.I)
  TEST_FILE = re.compile(
 -    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|^evals/.*/baseline\.json$|"
 -    r"^modules/.*/tests?/|\.tftest\.hcl$|^evals/security/lab/)"
@@ -291,7 +292,7 @@ index 9785db9..b2933fa 100644
  
  SECRET_PATTERNS = [
      (re.compile(r"AKIA[0-9A-Z]{16}"), "clé d'accès AWS"),
-@@ -33,6 +38,7 @@ SECRET_PATTERNS = [
+@@ -33,6 +39,7 @@ SECRET_PATTERNS = [
      (re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}"), "jeton Slack"),
  ]
  ALLOWED_FAKE = re.compile(r"(EXAMPLE|FAKE|DUMMY|PLACEHOLDER)")
@@ -299,7 +300,7 @@ index 9785db9..b2933fa 100644
  
  
  def new_content(tool: str, ti: dict) -> str:
-@@ -46,7 +52,7 @@ def new_content(tool: str, ti: dict) -> str:
+@@ -46,7 +53,7 @@ def new_content(tool: str, ti: dict) -> str:
  
  
  def main() -> None:
@@ -308,7 +309,7 @@ index 9785db9..b2933fa 100644
      tool = data.get("tool_name", "")
      ti = data.get("tool_input", {}) or {}
      path = rel(ti.get("file_path", ""))
-@@ -57,6 +63,8 @@ def main() -> None:
+@@ -57,6 +64,8 @@ def main() -> None:
              f"BLOQUÉ : {path} fait partie du harnais Rempart et ne peut pas être modifié par l'agent. "
              "Si un changement du harnais est nécessaire, explique pourquoi à l'humain et propose le diff."
          )
@@ -317,7 +318,7 @@ index 9785db9..b2933fa 100644
  
      for pattern, label in SECRET_PATTERNS:
          for m in pattern.finditer(content):
-@@ -74,11 +82,11 @@ def main() -> None:
+@@ -74,11 +83,11 @@ def main() -> None:
      if phase == "impl":
          if is_test:
              block(
@@ -554,10 +555,10 @@ index d443d8e..383dc9d 100644
      )
 diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
 new file mode 100644
-index 0000000..fbdded0
+index 0000000..76b87ed
 --- /dev/null
 +++ b/.claude/hooks/test_hooks.sh
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,139 @@
 +#!/usr/bin/env bash
 +# Tests de non-régression des hooks Rempart. Usage : bash .claude/hooks/test_hooks.sh
 +# Travaille dans un projet temporaire : n'écrit rien dans le vrai dépôt. Code retour 0 si tout passe.
@@ -598,6 +599,8 @@ index 0000000..fbdded0
 +edit 2 "$TN/.claude/state/phase"
 +edit 2 ".claude/hooks/guard_edit.py"
 +edit 2 "$TN/evals/intent/baseline.json"
++edit 2 "$TN/evals/intent/baseline/anthropic/model-x.json"
++edit 0 "$TN/evals/intent/cases/baseline-ok.yaml"
 +edit 0 "$TN/internal/x/x.go" "package x"
 +edit 2 "$TN/internal/x/x.go" "k := \"$K\""
 +edit 0 "$TN/internal/x/testdata/k.txt" "EXAMPLE $K"

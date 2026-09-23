@@ -24,18 +24,19 @@ Puis redémarre Claude Code pour que les nouveaux hooks soient chargés.
 | `.claude/hooks/py.sh` (nouveau) | Lanceur qui trouve un Python 3 qui fonctionne (`python3`, `python` ou `py`), force l'UTF-8. Sans Python : exit 2 pour les gardes (action bloquée), exit 1 sinon |
 | `.claude/settings.json` | Tous les hooks passent par `py.sh` ; les gardes en `--fail-closed` |
 | `_common.py` | Entrée lue en UTF-8 ; `read_input(fail_closed=True)` bloque sur une entrée illisible ; `rel()` renvoie toujours des `/`, casse normalisée sous Windows ; état lu et écrit en UTF-8 |
-| `guard_edit.py` | Garde bloquante en cas de doute ; motifs de chemin insensibles à la casse ; baselines d'eval protégées dans toutes les phases ; `t.Skipf` aussi interdit en impl |
+| `guard_edit.py` | Garde bloquante en cas de doute ; motifs de chemin insensibles à la casse ; baselines d'eval protégées dans toutes les phases, qu'elles soient en `baseline.json` ou rangées par couple plateforme et modèle sous `baseline/` (ADR 0002) ; `t.Skipf` aussi interdit en impl |
 | `guard_bash.py` | Exemption `rempart-state` seulement pour un appel seul (sans `; & \| < > $` ni retour ligne) ; chemins Windows normalisés ; écriture dans le harnais détectée quel que soit l'ordre (`python -c open(...)`, `git checkout`, etc.) ; `--write-baseline`, `git push +ref`, `git commit -n` et `rm -rf .git` bloqués |
 | `post_edit_check.py` | Erreur de syntaxe Go signalée ; en phase tests, `go vet` n'est pas lancé sur un `_test.go` (il peut appeler du code pas encore écrit) |
 | `stop_verify.py` | En phase tests : exige seulement `go build ./...` (on peut s'arrêter pour faire relire des tests rouges) ; ailleurs `make verify-quick` ; `make` ou `go` absent compte comme un échec, pas comme un succès silencieux ; clés d'état séparées par type de vérification ; UTF-8 |
 | `session_start.py` | UTF-8 (« RÉSOLU » enfin reconnu) |
 | `.claude/bin/rempart-state` | `git status -uall` (tests des nouveaux packages visibles) ; refus des tests avec erreur de syntaxe (mauvaise raison d'échouer) ; UTF-8 |
-| `.claude/hooks/test_hooks.sh` (nouveau) | 57 cas de non-régression, exécutés dans un projet temporaire |
+| `.claude/hooks/test_hooks.sh` (nouveau) | 59 cas de non-régression, exécutés dans un projet temporaire |
 
 ## Résultats des tests (copie corrigée)
 
-- Windows 11, Git Bash, Python 3.13, Go 1.16 : 57 réussis, 0 échoué.
-- Ubuntu sous WSL2, Python 3.12, sans Go : 48 réussis, 0 échoué (cas Go sautés et signalés).
+- Windows 11, Git Bash, Python 3.13, Go 1.16 : 59 réussis, 0 échoué.
+- Ubuntu sous WSL2, Python 3.12, sans Go : 50 réussis, 0 échoué (cas Go sautés et signalés).
+- Clone neuf du dépôt, patchs 0001 et 0002 appliqués ensemble : 59 réussis.
 
 ## Conséquences à connaître
 

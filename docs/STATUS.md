@@ -10,7 +10,7 @@ aucun
 
 ## Fait (avec preuves)
 - 2026-09-23 : critique initiale de la spécification, `docs/reviews/2026-09-23-critique-initiale.md`.
-- 2026-09-23 : correctif du harnais proposé et testé sur une copie, `docs/proposals/0001-harnais-portable-et-tdd.md`. Preuve : `bash .claude/hooks/test_hooks.sh` sur la copie corrigée, 57 réussis sous Windows (Git Bash, Go 1.16), 48 réussis sous Ubuntu WSL2 (cas Go sautés). **Pas encore appliqué au dépôt.**
+- 2026-09-23 : correctif du harnais proposé et testé sur une copie, `docs/proposals/0001-harnais-portable-et-tdd.md`. Preuve : `bash .claude/hooks/test_hooks.sh` sur la copie corrigée, 59 réussis sous Windows (Git Bash, Go 1.16), 50 réussis sous Ubuntu WSL2 (cas Go sautés) ; 59 réussis sur un clone neuf avec 0001 et 0002 appliqués. Protège aussi les baselines rangées par plateforme et modèle (ADR 0002). **Pas encore appliqué au dépôt.**
 - 2026-09-23 : dépôt git initialisé (branche `main`), `.gitattributes` force les fins de ligne LF.
 - 2026-09-23 : dépôt publié sur https://github.com/amezianechayer/rempart. Visibilité **publique**, choix explicite de l'humain : spec, modèle de menace et stratégie sont lisibles par tous.
 - 2026-09-23 : à la demande de l'humain, les commits se terminent par `Co-Authored-By: Ameziane Chayer <amezianechayer9@gmail.com>` ; les 3 premiers commits ont été réécrits en ce sens. Règle proposée pour `CLAUDE.md` : `docs/proposals/0002-claude-md-trailer-commits.md`.
@@ -19,17 +19,23 @@ aucun
   - `intent-to-spec` : règle 9 (`tenant_id` jamais produit par le LLM, injecté par le serveur, menace T3), règle 10 (références croisées et CIDR vérifiés en code) ; scénario de référence : VPN `bidirectional: false` (le cluster initie les deux flux, 5432 et 9100).
   - `safe-autonomy/references/risk-rules.yaml` : type de ressource inconnu classé `high` ; `low` seulement si le delta de graphe recalculé est vide et la journalisation seulement renforcée ; nouvelles règles `high` (atteignabilité nouvelle hors conception, réduction de journalisation, version de provider ou de module, politique de clé) ; durcissement `low` hors prod seulement.
   - Preuve : sous WSL, `yaml.safe_load` charge les 12 règles, `jsonschema` (Draft 2020-12) valide le scénario contre `intent-ir-v1.schema.json`.
+- 2026-09-23 : ADR rédigés par le subagent `architect`, statut **proposé**, relus par l'agent principal :
+  - `docs/decisions/0001-chiffrement-payloads-temporal.md` : payloads Temporal chiffrés AES-256-GCM par tenant (enveloppe OpenBao Transit), sans repli en clair, références chiffrées pour les gros objets, versioning par `workflow.GetVersion` et tests de rejeu dès M0.
+  - `docs/decisions/0002-model-provider-multi-plateforme.md` : `ModelProvider` minimal (appel structuré sans outils, appel avec outils), route explicite par tenant sans défaut, résidence UE et rétention contrôlées à chaque appel, baseline d'evals par couple plateforme et modèle ; M0 : service, faux déterministe, adaptateur Anthropic direct.
+  - `docs/decisions/0003-stockage-du-graphe.md` : PostgreSQL relationnel sous RLS forcé, calculs de graphe en mémoire en Go, image PostgreSQL standard dès M0, critères de réévaluation chiffrés.
+  - Faits externes marqués « à revérifier » dans chaque ADR ; seuils proposés, pas mesurés.
 
 ## En cours
 Décisions humaines attendues avant `/milestone M0` (détail en fin de `docs/reviews/2026-09-23-critique-initiale.md`) :
 1. Appliquer les propositions 0001 (harnais) et 0002 (CLAUDE.md).
 2. Choisir le point d'entrée produit (lecture seule et preuves sur l'existant, ou feuille de route actuelle).
-3. Valider les ADR de départ (`docs/decisions/`, statut « proposé »).
-4. Relire la modification du skill `loop-engineering`.
+3. Valider (ou amender) les ADR 0001, 0002 et 0003 (`docs/decisions/`, statut « proposé »).
+4. Relire les modifications des skills `loop-engineering`, `intent-to-spec` et `safe-autonomy`.
 
 ## Reste à faire
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
-- ADR non encore rédigés : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
+- Une fois les ADR acceptés (listé dans leur section « Conséquences ») : ajouter les critères de 0001 à `prompts/M0.md` ; `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` ; baseline par couple plateforme et modèle dans le skill `agent-evals` ; amender `docs/00-VISION.md` §4 et `MASTER_PROMPT.md` (fin d'AGE, `ModelProvider` multi-plateforme) ; `security-reviewer` intègre les menaces nouvelles au modèle de menace.
+- ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - Démarrer M0 (`/milestone M0`).
 
 ## Journal
