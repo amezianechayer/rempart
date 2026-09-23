@@ -1,0 +1,11 @@
+.claude/state/
+.claude/settings.local.json
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfplan
+.env
+.env.*
+*.pem
+/tmp/
+__pycache__/

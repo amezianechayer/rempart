@@ -1,0 +1,22 @@
+# Exemple de FORMAT d'entrée de catalogue. Le contenu réglementaire ci-dessous est illustratif :
+# chaque référence doit être vérifiée dans le texte officiel avant d'être utilisée.
+framework: nis2
+source:
+  title: Directive (UE) 2022/2555 (NIS2)
+  url: "<lien EUR-Lex vers le texte consolidé>"
+  version_consulted: "<date de consultation>"
+reviewed_by: "<nom de la personne qui a vérifié>"
+reviewed_at: "<date>"
+controls:
+  - id: nis2-art21-network-security
+    reference: "Article 21, mesures de gestion des risques (à préciser au point exact après vérification)"
+    type: technical            # technical | organizational
+    covered_by_policies: [NET-001, NET-002]
+    evidence: [policy_results, reachability_snapshot, graph_diff]
+    notes: "Couvre la partie technique ; la gouvernance et les procédures restent hors périmètre de Rempart."
+  - id: nis2-art21-governance
+    reference: "Article 20 et 21 (gouvernance)"
+    type: organizational
+    covered_by_policies: []
+    evidence: []
+    notes: "Hors périmètre : listé pour que le rapport soit honnête sur ce que Rempart ne couvre pas."

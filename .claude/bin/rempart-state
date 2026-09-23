@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""Gestion de l'état du harnais Rempart. Seul moyen autorisé de changer de phase ou de jalon.
+
+Usage :
+  python3 .claude/bin/rempart-state show
+  python3 .claude/bin/rempart-state milestone M3
+  python3 .claude/bin/rempart-state phase tests [--reason "..."]
+  python3 .claude/bin/rempart-state phase impl  [--allow-green --reason "..."]
+  python3 .claude/bin/rempart-state phase free  --reason "..."
+
+Règles :
+  - tests -> impl : exige des tests nouveaux ou modifiés, et qu'ils ÉCHOUENT (preuve qu'ils testent quelque chose
+    de nouveau). --allow-green (tests de caractérisation) exige --reason.
+  - impl -> tests et passage en free : exigent --reason. Tout changement est journalisé dans docs/STATUS.md.
+"""
+import argparse
+import datetime as dt
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", Path(__file__).resolve().parents[2]))
+STATE = PROJECT_DIR / ".claude" / "state"
+STATUS = PROJECT_DIR / "docs" / "STATUS.md"
+
+
+def get(name, default=""):
+    try:
+        return (STATE / name).read_text().strip()
+    except FileNotFoundError:
+        return default
+
+
+def put(name, value):
+    STATE.mkdir(parents=True, exist_ok=True)
+    (STATE / name).write_text(value + "\n")
+
+
+def journal(msg):
+    STATUS.parent.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    with STATUS.open("a") as f:
+        f.write(f"\n- {stamp} [harnais] {msg}\n")
+
+
+def changed_test_files():
+    p = subprocess.run(["git", "status", "--porcelain"], cwd=PROJECT_DIR, capture_output=True, text=True)
+    files = []
+    for line in p.stdout.splitlines():
+        f = line[3:].strip().split(" -> ")[-1]
+        if re.search(r"(_test\.go|_test\.rego|\.tftest\.hcl)$", f):
+            files.append(f)
+    return files
+
+
+def tests_fail(files):
+    """Retourne True si au moins une suite concernée échoue."""
+    go_pkgs = sorted({"./" + str(Path(f).parent) for f in files if f.endswith("_test.go")})
+    failed = False
+    if go_pkgs and shutil.which("go"):
+        failed |= subprocess.run(["go", "test", *go_pkgs], cwd=PROJECT_DIR).returncode != 0
+    if any(f.endswith("_test.rego") for f in files) and shutil.which("opa"):
+        failed |= subprocess.run(["opa", "test", "policies/"], cwd=PROJECT_DIR).returncode != 0
+    return failed
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("show")
+    m = sub.add_parser("milestone")
+    m.add_argument("id", help="ex. M3")
+    ph = sub.add_parser("phase")
+    ph.add_argument("value", choices=["tests", "impl", "free"])
+    ph.add_argument("--reason", default="")
+    ph.add_argument("--allow-green", action="store_true")
+    a = ap.parse_args()
+
+    if a.cmd == "show":
+        print(f"jalon={get('milestone', '-')} phase={get('phase', 'free')}")
+        return 0
+
+    if a.cmd == "milestone":
+        if not re.fullmatch(r"M[0-9]+", a.id):
+            print("Identifiant de jalon invalide (attendu : M0, M1, ...).", file=sys.stderr)
+            return 1
+        put("milestone", a.id)
+        journal(f"jalon courant : {a.id}")
+        print(f"Jalon courant : {a.id}")
+        return 0
+
+    current = get("phase", "free")
+    target = a.value
+
+    if target == "impl":
+        files = changed_test_files()
+        if not files:
+            print("Refusé : aucun test nouveau ou modifié. Écris d'abord les tests.", file=sys.stderr)
+            return 1
+        if not tests_fail(files):
+            if not a.allow_green:
+                print("Refusé : les tests passent déjà, ils ne prouvent rien de nouveau. "
+                      "Pour des tests de caractérisation : --allow-green --reason \"...\"", file=sys.stderr)
+                return 1
+            if not a.reason:
+                print("--allow-green exige --reason.", file=sys.stderr)
+                return 1
+            journal(f"passage en impl avec tests verts (caractérisation) : {a.reason}")
+    elif target == "tests" and current == "impl":
+        if not a.reason:
+            print("Retour en phase tests pendant l'implémentation : --reason obligatoire.", file=sys.stderr)
+            return 1
+        journal(f"RETOUR EN PHASE TESTS depuis impl : {a.reason}")
+    elif target == "free":
+        if not a.reason:
+            print("Passage en phase free : --reason obligatoire.", file=sys.stderr)
+            return 1
+        journal(f"PHASE FREE (discipline TDD suspendue) : {a.reason}")
+
+    put("phase", target)
+    journal(f"phase : {current} -> {target}")
+    print(f"Phase : {current} -> {target}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

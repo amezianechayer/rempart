@@ -1,0 +1,3 @@
+# Fins de ligne LF partout (hooks et scripts exécutés sous Linux, macOS et WSL).
+* text=auto eol=lf
+*.patch -text

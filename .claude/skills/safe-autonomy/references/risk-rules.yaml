@@ -1,0 +1,32 @@
+# Règles de classification du risque. Le niveau final = max des règles déclenchées. Défaut : medium.
+# Chaque règle doit avoir des tests (plan JSON d'exemple + niveau attendu).
+version: 1
+default: medium
+rules:
+  - id: RISK-DATA-DESTROY
+    level: critical
+    when: {action: [delete, replace], resource_class: [data_store, backup_vault, key]}
+  - id: RISK-EXPOSE-INTERNET
+    level: critical
+    when: {graph_delta: new_internet_reachability}
+  - id: RISK-PRIV-ESC
+    level: critical
+    when: {graph_delta: new_privileged_path}
+  - id: RISK-IDENTITY-CHANGE
+    level: high
+    when: {resource_class: [iam_role, iam_policy, role_assignment, service_principal, k8s_rbac]}
+  - id: RISK-NETWORK-CORE
+    level: high
+    when: {action: [delete, replace, update], resource_class: [vpc, vnet, route_table, vpn_connection, transit_gateway, firewall]}
+  - id: RISK-PROD-COMPUTE-REPLACE
+    level: high
+    when: {environment: [prod], action: [replace], resource_class: [compute, k8s_node_group]}
+  - id: RISK-ADD-NO-EXPOSURE
+    level: medium
+    when: {action: [create], graph_delta: none_security_relevant}
+  - id: RISK-TAGS-LOGGING
+    level: low
+    when: {only_attributes: [tags, labels, logging, monitoring]}
+  - id: RISK-HARDENING
+    level: low
+    when: {graph_delta: only_removes_reachability_not_in_design}

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rempart.dev/schemas/evidence/v1.json",
+  "title": "Rempart Evidence Bundle v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "bundle_id", "tenant_id", "change_id", "created_at", "intent", "design", "validation", "plan", "risk", "approvals", "chain", "signature"],
+  "properties": {
+    "version": { "const": "1" },
+    "bundle_id": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "change_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "intent": {
+      "type": "object",
+      "required": ["ir_hash", "assumptions"],
+      "properties": {
+        "source_text_hash": { "type": "string" },
+        "ir_hash": { "type": "string" },
+        "assumptions": { "type": "array" }
+      }
+    },
+    "design": {
+      "type": "object",
+      "required": ["graph_before_hash", "graph_after_hash", "graph_diff", "threat_delta"],
+      "properties": {
+        "graph_before_hash": { "type": "string" },
+        "graph_after_hash": { "type": "string" },
+        "graph_diff": { "type": "object" },
+        "threat_delta": { "type": "object" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["findings", "tools", "exceptions"],
+      "properties": {
+        "findings": { "type": "array" },
+        "tools": {
+          "type": "array",
+          "items": { "type": "object", "required": ["name", "version"], "properties": { "name": { "type": "string" }, "version": { "type": "string" } } }
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["control_id", "justification", "approved_by", "expires_at"],
+            "properties": {
+              "control_id": { "type": "string" },
+              "justification": { "type": "string", "minLength": 20 },
+              "approved_by": { "type": "string" },
+              "expires_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "required": ["plan_hash", "blast_radius", "cost_delta_eur_month", "credential_scope"],
+      "properties": {
+        "plan_hash": { "type": "string" },
+        "blast_radius": { "type": "object" },
+        "cost_delta_eur_month": { "type": "number" },
+        "credential_scope": { "type": "object" },
+        "rollback_plan_hash": { "type": "string" }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["level", "rules_triggered"],
+      "properties": {
+        "level": { "enum": ["low", "medium", "high", "critical"] },
+        "rules_triggered": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["approver", "role", "plan_hash", "at", "reauthenticated"],
+        "properties": {
+          "approver": { "type": "string" },
+          "role": { "type": "string" },
+          "plan_hash": { "type": "string" },
+          "at": { "type": "string", "format": "date-time" },
+          "reauthenticated": { "type": "boolean" }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "runner_id": { "type": "string" },
+        "runner_attestation": { "type": "object" },
+        "post_deploy_checks": { "type": "array" },
+        "rolled_back": { "type": "boolean" }
+      }
+    },
+    "trace_ids": { "type": "array", "items": { "type": "string" } },
+    "chain": {
+      "type": "object",
+      "required": ["previous_hash", "sequence"],
+      "properties": { "previous_hash": { "type": "string" }, "sequence": { "type": "integer", "minimum": 0 } }
+    },
+    "signature": {
+      "type": "object",
+      "required": ["alg", "key_id", "value"],
+      "properties": { "alg": { "type": "string" }, "key_id": { "type": "string" }, "value": { "type": "string" } }
+    }
+  }
+}

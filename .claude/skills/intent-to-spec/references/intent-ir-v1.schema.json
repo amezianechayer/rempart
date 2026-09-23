@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rempart.dev/schemas/intent/v1.json",
+  "title": "Rempart Intent IR v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "tenant_id", "summary", "workloads", "exposure", "data", "compliance", "constraints", "assumptions", "open_questions"],
+  "properties": {
+    "version": { "const": "1" },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "maxLength": 500 },
+    "environment": { "enum": ["dev", "staging", "prod"], "default": "dev" },
+    "workloads": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "cloud", "region", "criticality"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,40}$" },
+          "kind": { "enum": ["k8s_cluster", "vm_group", "managed_db", "object_storage", "load_balancer", "observability_stack", "gitops_controller"] },
+          "cloud": { "enum": ["aws", "azure", "scaleway", "ovhcloud"] },
+          "region": { "type": "string", "minLength": 2 },
+          "criticality": { "enum": ["low", "medium", "high"] },
+          "size": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "count": { "type": "integer", "minimum": 1, "maximum": 500 },
+              "tier": { "enum": ["small", "medium", "large", "xlarge"] },
+              "os": { "enum": ["linux", "windows"] },
+              "k8s_version": { "type": "string" }
+            }
+          },
+          "runs_on": { "type": "string", "description": "id d'un workload k8s_cluster si ce workload y est déployé" },
+          "notes": { "type": "string", "maxLength": 300 }
+        }
+      }
+    },
+    "connectivity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "kind"],
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "kind": { "enum": ["vpn_site_to_site", "peering", "private_link", "internal"] },
+          "bidirectional": { "type": "boolean", "default": false },
+          "ports": { "type": "array", "items": { "type": "string", "pattern": "^(tcp|udp)/[0-9]{1,5}(-[0-9]{1,5})?$" } },
+          "purpose": { "type": "string", "maxLength": 200 }
+        }
+      }
+    },
+    "exposure": {
+      "type": "array",
+      "description": "Ce qui est exposé à Internet. Tableau vide = rien d'exposé.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["workload", "protocol", "justification"],
+        "properties": {
+          "workload": { "type": "string" },
+          "protocol": { "enum": ["https", "http", "tcp", "udp"] },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "behind": { "type": "array", "items": { "enum": ["waf", "load_balancer", "cdn", "api_gateway"] } },
+          "allowed_sources": { "type": "array", "items": { "type": "string" } },
+          "justification": { "type": "string", "minLength": 5 }
+        }
+      }
+    },
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "classification", "stored_in"],
+        "properties": {
+          "id": { "type": "string" },
+          "classification": { "enum": ["public", "internal", "confidential", "regulated"] },
+          "regulation": { "type": "array", "items": { "enum": ["gdpr", "health", "financial", "other"] } },
+          "stored_in": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "residency": { "enum": ["eu", "fr", "any"] }
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metrics": { "enum": ["prometheus", "cloud_native", "none"] },
+        "logs": { "enum": ["loki", "cloud_native", "none"] },
+        "dashboards": { "enum": ["grafana", "cloud_native", "none"] },
+        "retention_days": { "type": "integer", "minimum": 1, "maximum": 3650 }
+      }
+    },
+    "compliance": { "type": "array", "items": { "enum": ["nis2", "dora", "secnumcloud", "iso27001", "cis"] } },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "monthly_budget_eur": { "type": "number", "minimum": 0 },
+        "allowed_regions": { "type": "array", "items": { "type": "string" } },
+        "forbidden_clouds": { "type": "array", "items": { "enum": ["aws", "azure", "scaleway", "ovhcloud"] } }
+      }
+    },
+    "explicit_overrides": {
+      "type": "array",
+      "description": "Exigences de l'utilisateur contraires aux défauts sûrs. Capturées telles quelles, tranchées par L2.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "affects"],
+        "properties": { "statement": { "type": "string" }, "affects": { "type": "string" } }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "value", "rationale"],
+        "properties": { "field": { "type": "string" }, "value": {}, "rationale": { "type": "string" } }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "question", "default"],
+        "properties": { "field": { "type": "string" }, "question": { "type": "string" }, "default": {} }
+      }
+    }
+  }
+}

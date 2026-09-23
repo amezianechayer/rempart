@@ -1,0 +1,31 @@
+{
+  "version": "1",
+  "tenant_id": "tenant-demo",
+  "summary": "Cluster Kubernetes sur AWS, trois VM Linux sur Azure, VPN site à site entre les deux, observabilité Prometheus/Grafana/Loki, conforme NIS2.",
+  "environment": "staging",
+  "workloads": [
+    { "id": "app-cluster", "kind": "k8s_cluster", "cloud": "aws", "region": "eu-west-3", "criticality": "high", "size": { "count": 3, "tier": "medium" } },
+    { "id": "legacy-vms", "kind": "vm_group", "cloud": "azure", "region": "francecentral", "criticality": "medium", "size": { "count": 3, "tier": "small", "os": "linux" } },
+    { "id": "obs", "kind": "observability_stack", "cloud": "aws", "region": "eu-west-3", "criticality": "medium", "runs_on": "app-cluster" },
+    { "id": "gitops", "kind": "gitops_controller", "cloud": "aws", "region": "eu-west-3", "criticality": "high", "runs_on": "app-cluster" }
+  ],
+  "connectivity": [
+    { "from": "app-cluster", "to": "legacy-vms", "kind": "vpn_site_to_site", "bidirectional": true, "ports": ["tcp/5432", "tcp/9100"], "purpose": "accès applicatif à la base legacy et collecte des métriques des VM" }
+  ],
+  "exposure": [
+    { "workload": "app-cluster", "protocol": "https", "port": 443, "behind": ["waf", "load_balancer"], "justification": "application web publique" }
+  ],
+  "data": [
+    { "id": "customer-db", "classification": "confidential", "regulation": ["gdpr"], "stored_in": ["legacy-vms"], "residency": "eu" }
+  ],
+  "observability": { "metrics": "prometheus", "logs": "loki", "dashboards": "grafana", "retention_days": 90 },
+  "compliance": ["nis2"],
+  "constraints": { "monthly_budget_eur": 1500, "allowed_regions": ["eu-west-3", "francecentral"] },
+  "explicit_overrides": [],
+  "assumptions": [
+    { "field": "environment", "value": "staging", "rationale": "non précisé ; staging choisi par défaut pour un premier déploiement" },
+    { "field": "observability.retention_days", "value": 90, "rationale": "non précisé ; 90 jours par défaut" },
+    { "field": "workloads[legacy-vms].region", "value": "francecentral", "rationale": "tenant européen, région UE par défaut" }
+  ],
+  "open_questions": []
+}
