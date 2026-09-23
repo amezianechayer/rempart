@@ -1,7 +1,11 @@
 # Règles de classification du risque. Le niveau final = max des règles déclenchées. Défaut : medium.
+# Échec sûr : une ressource dont le type n'a pas de classe connue (absente de la table de correspondance) est classée high.
+# low n'est possible que si le delta du graphe recalculé (atteignabilité ET permissions effectives) est vide :
+# tags et labels peuvent piloter des conditions ABAC et des sélecteurs de NetworkPolicy.
 # Chaque règle doit avoir des tests (plan JSON d'exemple + niveau attendu).
 version: 1
 default: medium
+unknown_resource_class: high
 rules:
   - id: RISK-DATA-DESTROY
     level: critical
@@ -14,10 +18,19 @@ rules:
     when: {graph_delta: new_privileged_path}
   - id: RISK-IDENTITY-CHANGE
     level: high
-    when: {resource_class: [iam_role, iam_policy, role_assignment, service_principal, k8s_rbac]}
+    when: {resource_class: [iam_role, iam_policy, role_assignment, service_principal, k8s_rbac, key_policy]}
   - id: RISK-NETWORK-CORE
     level: high
     when: {action: [delete, replace, update], resource_class: [vpc, vnet, route_table, vpn_connection, transit_gateway, firewall]}
+  - id: RISK-NEW-REACHABILITY
+    level: high
+    when: {graph_delta: new_reachability_not_in_design}
+  - id: RISK-AUDIT-REDUCTION
+    level: high
+    when: {graph_delta: logging_or_monitoring_reduced}
+  - id: RISK-SUPPLY-CHAIN
+    level: high
+    when: {changes: [provider_version, module_version]}
   - id: RISK-PROD-COMPUTE-REPLACE
     level: high
     when: {environment: [prod], action: [replace], resource_class: [compute, k8s_node_group]}
@@ -26,7 +39,8 @@ rules:
     when: {action: [create], graph_delta: none_security_relevant}
   - id: RISK-TAGS-LOGGING
     level: low
-    when: {only_attributes: [tags, labels, logging, monitoring]}
+    when: {only_attributes: [tags, labels, logging, monitoring], graph_delta: none, logging_change: additive_only}
   - id: RISK-HARDENING
     level: low
-    when: {graph_delta: only_removes_reachability_not_in_design}
+    # En prod, retirer une ouverture absente de la conception peut couper un flux réel non déclaré : medium par défaut.
+    when: {environment: [dev, staging], graph_delta: only_removes_reachability_not_in_design}

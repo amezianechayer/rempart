@@ -10,7 +10,7 @@
     { "id": "gitops", "kind": "gitops_controller", "cloud": "aws", "region": "eu-west-3", "criticality": "high", "runs_on": "app-cluster" }
   ],
   "connectivity": [
-    { "from": "app-cluster", "to": "legacy-vms", "kind": "vpn_site_to_site", "bidirectional": true, "ports": ["tcp/5432", "tcp/9100"], "purpose": "accès applicatif à la base legacy et collecte des métriques des VM" }
+    { "from": "app-cluster", "to": "legacy-vms", "kind": "vpn_site_to_site", "bidirectional": false, "ports": ["tcp/5432", "tcp/9100"], "purpose": "accès applicatif à la base legacy et collecte des métriques des VM" }
   ],
   "exposure": [
     { "workload": "app-cluster", "protocol": "https", "port": 443, "behind": ["waf", "load_balancer"], "justification": "application web publique" }
