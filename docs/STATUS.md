@@ -57,6 +57,12 @@ aucun
   - Menaces T34 (usurpation du tenant système) et T35 (conversion directe `tenancy.ID(x)`).
   - Note : `go test ./... -rapid.nofailfile` échoue sur les paquets qui n'importent pas rapid (drapeau inconnu) ; le drapeau ne se passe qu'aux paquets qui l'utilisent.
 
+- 2026-09-23 : **M0-T06 `secret-value` terminée** (plan `docs/plans/M0-secret-value.md`, amendement V1) :
+  - `internal/secrets/secret` : `Value` et `Bytes` (valeur derrière un pointeur, non comparables) ; `fmt` (tout verbe, drapeau, largeur), `slog`, JSON, XML, texte et templates n'affichent que `[REDACTED]` ; `gob` refuse d'encoder ; tout décodage refusé (`ErrDecodeRefused`, `null` compris) ; `Bytes.Wipe` met à zéro le tableau et les vues rendues, vide toutes les copies (effort, garanties mémoire documentées).
+  - **Amendement V1** : la vérification préalable de `test-author` a trouvé une fuite réelle dans le code de référence du plan (`p *[]byte` : `%s` ou `%q` sur un champ non exporté affichait les octets en décimal) ; corrigé par `p **[]byte` avant le gel des tests.
+  - Preuves : 14 tests (dont une propriété `rapid` à 10 000 cas), verts sous `-race` ; 17 mutations détectées ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** (3 constats bas, dont la note sur `append` ajoutée au commentaire de `Reveal`) ; `acceptance-verifier` **PASS** (critère 8 et ancres M13, M14 du plan corrigés : défauts de rédaction, code conforme).
+  - Menace T36 (contournement du masquage des secrets).
+
 ## En cours
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
 
@@ -73,7 +79,7 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T06, T07, T13 ou T22, qui n'en ont pas besoin.
+- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T07, T13 ou T22, qui n'en ont pas besoin.
 - Humain : trancher l'ADR 0004 (identifiant de tenant, tenant système) avant M1.
 - Tâche de durcissement de `internal/archtest` (revue M0-T02, 3 constats moyens, T33) : fichiers exclus par build tags ou GOOS (`IgnoredGoFiles`), `go.mod` imbriqué, SDK atteint par un module tiers ; en bas : `internal/*/*/{domain,adapters,fake}`, `C` et `unsafe` dans R1, règle « personne n'importe `internal/archtest` ». À faire avant le premier fichier `//go:build` non test ou la première dépendance qui enveloppe un SDK confiné.
 - **Avant M3 (création de `scripts/sandbox.sh`), obligatoire** : tâche de durcissement issue de la contre-revue de M0-T01 (plan `docs/plans/M0-squelette.md`, section 0) : confirmation et appel sur une ligne chaînée par `&&`, refus par test du préfixe `-`, de `.IGNORE` et de `MAKEFLAGS`, approbation hors de portée de l'agent (T31).
@@ -120,3 +126,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-23 22:32 [harnais] PHASE FREE (discipline TDD suspendue) : tâche tenancy (M0-T05) terminée
 
 - 2026-09-23 22:32 [harnais] phase : impl -> free
+
+- 2026-09-23 22:51 [harnais] phase : free -> tests
+
+- 2026-09-23 23:01 [harnais] phase : tests -> impl
+
+- 2026-09-23 23:08 [harnais] PHASE FREE (discipline TDD suspendue) : tâche secret-value (M0-T06) terminée
+
+- 2026-09-23 23:08 [harnais] phase : impl -> free
