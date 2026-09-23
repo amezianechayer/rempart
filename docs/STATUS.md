@@ -29,6 +29,7 @@ aucun
   - `docs/00-VISION.md` §4 et `MASTER_PROMPT.md` : pile amendée (PostgreSQL sous RLS et graphe en Go, `ModelProvider` multi-plateforme), dossiers d'outillage ajoutés (Q2) ; `MASTER_PROMPT.md` déclaré instantané, `docs/` et `prompts/` font foi.
   - **Skill modifié, à relire** : `agent-evals` (baseline par couple plateforme et modèle, suites de fumée par région, route sans baseline refusée à partir de M1).
   - Preuves : `grep -c 'Apache AGE' docs/00-VISION.md MASTER_PROMPT.md` vaut 0 et 0 ; `grep -c 'baseline/' .claude/skills/agent-evals/SKILL.md` vaut 1 ; `grep -c 'TestHistoryHasNoPlaintext' prompts/M1.md` vaut 1.
+  - Modèle de menace : revue `security-reviewer` des ADR 0001 à 0003, **verdict PASS avec réserves** (7 constats moyens, 8 bas, aucun critique ni haut). `docs/02-THREAT-MODEL.md` : menaces T13 à T27 ajoutées, vérifications de T1, T3, T5 et T7 complétées, §4.1 risques résiduels acceptés (historique Temporal en clair en M0), §4.2 menaces à formaliser avec les ADR runner. Réserves inscrites dans chaque ADR (section « Réserves de la revue sécurité ») ; gardes de début de M1 dans `prompts/M1.md` ; amendement A2 du plan M0 (`TestCheckPolicyRejectsEmptyResidency` dans M0-T08). Preuve : 27 lignes de menace, 5 colonnes chacune, contrôle par script.
 
 ## En cours
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
@@ -45,6 +46,7 @@ Préalables humains restants (étape H0 du plan) avant `/task` M0-T01 :
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
+- ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
 - Après H0 (poste personnel) : `/resume`, puis `/task` M0-T01.
 
 ## Journal

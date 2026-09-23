@@ -76,3 +76,10 @@ Vérification :
 Menaces nouvelles, à intégrer au modèle de menace par `security-reviewer` après acceptation :
 - Mélange de données entre tenants dans la mémoire d'un worker, par un cache ou un état global (I). Atténuation : pas d'état global (`go-platform-conventions`), graphe chargé par calcul, contrôle du tenant au chargement, clé de cache incluant le tenant.
 - Épuisement mémoire par un graphe surdimensionné, volontaire ou non (D). Atténuation : `Limits` au chargement, `ErrGraphTooLarge`, escalade.
+
+## Réserves de la revue sécurité (D0, 2026-09-23)
+Verdict de `security-reviewer` sur les ADR 0001 à 0003 : PASS avec réserves. Les réserves ci-dessous font partie de la décision acceptée ; les menaces citées sont dans `docs/02-THREAT-MODEL.md`.
+- Porte de chiffrement du graphe réel, en remplacement de « a minima, chiffrement du stockage » : aucun instantané `observed` d'un client réel n'est enregistré tant que `untrusted_text` et les attributs sensibles (documents de politique, ARN) ne sont pas scellés par tenant avec l'enveloppe de l'ADR 0001, sauf ADR d'acceptation de risque signé par l'humain. Test `TestObservedSnapshotSealedPerTenant` (M5).
+- L'affirmation « seuls des faits typés entrent dans `attrs` » est inexacte : `Policy.document`, les ARN, chemins et modules de `MANAGED_BY_IAC` sont des chaînes contrôlables par un attaquant et nécessaires aux calculs. `schemas/graph/v1.json` (M1) marque chaque champ texte libre, porté en Go par un type distinct sans conversion implicite ; son rendu vers le LLM passe uniquement par `UntrustedBlock`. Test `TestFactsBlockHasNoFreeText` (M1), ajouté à la vérification de T2.
+- Le tenant est positionné par transaction seulement, jamais pour la session (T23). Test `TestTenantSettingIsTransactionLocal` (M1, avec les premières tables).
+- `Neighborhood` plafonne aussi le nombre de nœuds renvoyés, en plus de la profondeur 2 (T24). Test `TestNeighborhoodLimits`.

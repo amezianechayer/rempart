@@ -92,3 +92,11 @@ Menaces nouvelles, à intégrer au modèle de menace par `security-reviewer` apr
 - Indisponibilité ou destruction d'une clé Transit, qui bloque ou rend illisibles les workflows d'un tenant (D). Atténuation : échec fermé, suppression interdite par défaut, sauvegarde d'OpenBao, alerte.
 - Déploiement qui casse le rejeu et gèle les approbations en vol (D). Atténuation : tests de rejeu dans `make verify-quick`.
 - DEK en clair dans la mémoire des workers (I). Atténuation : cache borné en durée et en usages, pas de vidage mémoire en production.
+
+## Réserves de la revue sécurité (D0, 2026-09-23)
+Verdict de `security-reviewer` sur les ADR 0001 à 0003 : PASS avec réserves. Les réserves ci-dessous font partie de la décision acceptée ; les menaces citées sont dans `docs/02-THREAT-MODEL.md`.
+- Le jeton Transit du worker partagé déballe les DEK de tous les tenants : la clé par tenant protège contre un lecteur de la base ou de l'UI Temporal, pas contre un worker compromis. Atténuations de T17 : jeton de courte durée obtenu par identité de charge de travail, limité à `datakey` et `decrypt`, audit OpenBao et alerte, pools de workers dédiés pour les tenants qui l'exigent.
+- `ContinueAsNew` avant l'attente fait de la phase d'approbation un point d'entrée (T18) : cette phase n'est acceptée que si `workflow.GetInfo(ctx).ContinuedExecutionRunID` n'est pas vide. Test `TestDemoApprovalPhaseRequiresContinuation` (M1).
+- Un workflow du tenant système ne traite jamais de données client ; la liste des workflows système est figée par un test d'architecture (M1).
+- Les données associées ne lient pas un payload à son exécution : un acteur qui écrit dans la base Temporal peut déplacer un payload entre exécutions d'un même tenant (impact limité par T4 et T12). Au prototype de M1 : ajouter l'identifiant de workflow aux données associées si tous les chemins d'encodage le connaissent ; sinon, limite acceptée et consignée ici.
+- Garde mécanique du report A1 : en M1, `cmd/rempart-worker` refuse d'enregistrer un workflow autre que la démo sans le convertisseur de Rempart (`TestWorkerRequiresRempartConverter`), et `TestHistoryHasNoPlaintext` est bloquant pour la première tâche L1.

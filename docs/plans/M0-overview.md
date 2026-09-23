@@ -21,6 +21,10 @@ Effets sur ce plan (ils priment sur le reste du document) :
 - **Risque résiduel accepté pour M0** : historique Temporal en clair, sans données client (T3, T7, T11, principe 9). Il doit être levé avant la première exécution de L1.
 - **Questions** : réponses par défaut retenues (Q1 module `github.com/amezianechayer/rempart` ; Q2 dossiers d'outillage consignés en D0 ; Q3 intégration contre `make dev` ; Q4 aucun appel réel au modèle en M0 ; Q5 vérificateur d'approbation factice jusqu'en M4).
 
+### Amendement A2 (revue sécurité de D0, 2026-09-23)
+- M0-T08 ajoute `TestCheckPolicyRejectsEmptyResidency` : `CheckPolicy` refuse une résidence ou une rétention vide (réserve de l'ADR 0002, T19).
+- Les autres réserves concernent M1 et au-delà (`prompts/M1.md`, section des ADR « Réserves de la revue sécurité »).
+
 ---
 
 ## 1. Objectif

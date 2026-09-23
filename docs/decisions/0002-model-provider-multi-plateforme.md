@@ -99,3 +99,11 @@ Menaces nouvelles, à intégrer au modèle de menace par `security-reviewer` apr
 - Erreur de routage qui envoie hors UE les données d'un tenant `eu` (I). Atténuation : contrôle déterministe à chaque appel, route effective tracée, test dédié.
 - Compromission des comptes d'inférence de Rempart sur Bedrock ou Vertex (I, D) : lecture des journaux d'invocation, épuisement de coût. Atténuation : aucune clé longue durée (fédération d'identité), journalisation d'invocation désactivée, quotas et alertes de budget.
 - Substitution silencieuse de modèle par un alias ou une redirection de plateforme (T). Atténuation : identifiants exacts, contrôle du modèle déclaré par la réponse.
+
+## Réserves de la revue sécurité (D0, 2026-09-23)
+Verdict de `security-reviewer` sur les ADR 0001 à 0003 : PASS avec réserves. Les réserves ci-dessous font partie de la décision acceptée ; les menaces citées sont dans `docs/02-THREAT-MODEL.md`.
+- La résidence est contrôlée sur l'hôte réellement contacté, pas seulement sur la route déclarée (T19) : l'endpoint est construit depuis `Route.Region`, sans région par défaut ni lecture de l'environnement. Test `TestBedrockEndpointMatchesRouteRegion` (avec l'adaptateur Bedrock).
+- `CheckPolicy` refuse une résidence ou une rétention vide. Test `TestCheckPolicyRejectsEmptyResidency` (M0-T08). L'exigence « un seul pays » n'est pas modélisée par l'énumération `eu` ou `none` : une valeur par pays (par exemple `fr`) sera ajoutée quand un client l'exigera ; d'ici là, la phrase correspondante décrit une cible, pas un contrôle.
+- Le cache de préfixe du fournisseur est commun à l'organisation Rempart : les marqueurs de cache ne portent que sur la partie statique (système, schéma), jamais sur des données de tenant. Test `TestCacheControlOnlyOnStaticPrefix` dès le premier usage du cache.
+- La liste des baselines validées est un registre embarqué au build depuis `evals/**/baseline/**` (fichiers protégés par le hook et CODEOWNERS). Test `TestRouteWithoutBaselineRejected` (M1, T21).
+- Tout texte issu du cloud rendu vers le LLM passe par `UntrustedBlock`, y compris les chaînes nécessaires aux calculs (documents de politique, ARN) : voir la réserve correspondante de l'ADR 0003. Test `TestFactsBlockHasNoFreeText` (M1).
