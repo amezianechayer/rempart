@@ -31,14 +31,24 @@ aucun
   - Preuves : `grep -c 'Apache AGE' docs/00-VISION.md MASTER_PROMPT.md` vaut 0 et 0 ; `grep -c 'baseline/' .claude/skills/agent-evals/SKILL.md` vaut 1 ; `grep -c 'TestHistoryHasNoPlaintext' prompts/M1.md` vaut 1.
   - Modèle de menace : revue `security-reviewer` des ADR 0001 à 0003, **verdict PASS avec réserves** (7 constats moyens, 8 bas, aucun critique ni haut). `docs/02-THREAT-MODEL.md` : menaces T13 à T27 ajoutées, vérifications de T1, T3, T5 et T7 complétées, §4.1 risques résiduels acceptés (historique Temporal en clair en M0), §4.2 menaces à formaliser avec les ADR runner. Réserves inscrites dans chaque ADR (section « Réserves de la revue sécurité ») ; gardes de début de M1 dans `prompts/M1.md` ; amendement A2 du plan M0 (`TestCheckPolicyRejectsEmptyResidency` dans M0-T08). Preuve : 27 lignes de menace, 5 colonnes chacune, contrôle par script.
 
+- 2026-09-23 : **M0-T01 `squelette` terminée** (plan `docs/plans/M0-squelette.md`, amendement R1) dans une session cloud (conteneur Linux) :
+  - Module `github.com/amezianechayer/rempart`, `go 1.27.1`, govulncheck v1.8.0 par directive `tool` ; 21 domaines de la vision et `internal/archtest` avec `doc.go` ; 5 binaires stub (code 2) ; `policies/{design,iac,runtime,k8s}`, `modules`, `schemas`, `evals`, `web` ; `Makefile` (issu du modèle, `verify-quick` sans réseau ni Docker, OPA seulement si un `.rego` existe, `dev` et `evals` en code 2 nommant M0-T03 et M0-T23, gardes `sandbox-*`) ; `.golangci.yml` v2 (gosec, errorlint, contextcheck, nolintlint strict, gofumpt, `#nosec` neutralisé) ; `README.md` et `docs/SETUP.md` (versions épinglées).
+  - Tests : `TestLayoutMatchesVision`, `TestGoDirective`, `TestMakefileTargets`, `TestGolangciConfig` (133 témoins négatifs), écrits par `test-author`, rouges pour la bonne raison avant l'implémentation.
+  - Preuves : `make verify-quick` rc=0, aussi avec `GOPROXY=off` ; critères 1 à 8 et C1 à C13 conformes ; `acceptance-verifier` **PASS** (deux passages) ; `security-reviewer` **PASS** (revue puis contre-revue).
+  - Amendement R1 (revue sécurité) : variables de l'appelant figées par `override X := $(value X)` (make développait `SCENARIO='$(shell ...)'`), confirmation lue sur `/dev/tty`, liste blanche d'`EVAL`, `nosec: true` pour gosec ; retour journalisé en phase tests pour rendre ces règles mécaniques.
+  - Écarts dus au harnais non patché : `git add` des tests avant `phase impl` (porte aveugle aux fichiers d'un dossier non suivi) ; `Makefile` créé en dernier (hook Stop actif dès sa création). Critère 7 prouvé par binaire construit (`go run` rend 1, pas 2) ; critère 8 par motif de directive.
+  - Limite d'environnement : `make verify` rouge ici uniquement parce que `vuln.go.dev` est bloqué par la politique réseau de la session cloud (govulncheck) ; tout le reste de `verify` est vert.
+  - Documents : menaces T28 à T32 (`docs/02-THREAT-MODEL.md`) ; proposition de harnais `docs/proposals/0003-garde-make-variables.md` (81 cas de test des hooks verts sur clone avec 0001, 0002 et 0003).
+  - Incident de revue (sans effet) : lors de la contre-revue, `security-reviewer` a lancé par erreur `make --no-print-directory update-baseline EVAL='$(shell ...)'` et `make sandbox-apply SCENARIO=demo </dev/null` sur le vrai dépôt ; les deux se sont arrêtées aux gardes (code 2), aucun fichier créé, `git status` inchangé. Le garde Bash actuel ne les bloque pas : la proposition 0003 les refuse.
+
 ## En cours
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
 
-Préalables humains restants (étape H0 du plan) avant `/task` M0-T01 :
+Préalables humains (étape H0 du plan) :
 1. ~~Valider le découpage et répondre aux questions Q1 à Q5~~ : fait le 2026-09-23.
-2. Appliquer les propositions 0001 (harnais) et 0002 (CLAUDE.md), redémarrer Claude Code.
+2. Appliquer les propositions 0001 (harnais), 0002 (CLAUDE.md) puis 0003 (garde make et bac à sable), redémarrer Claude Code. M0-T01 a été faite sans elles (écarts consignés ci-dessus).
 3. ~~Trancher les ADR 0001, 0002 et 0003~~ : acceptés le 2026-09-23.
-4. ~~Poste Linux, macOS ou WSL2, `bash scripts/check-tools.sh` vert ; `git tag m0-start`~~ : fait le 2026-09-23 dans une session Claude Code cloud (conteneur Linux) à la demande de l'humain (« continue et fais le nécessaire »). Outils installés : Go 1.27.1 (dernière stable), golangci-lint v2.13.2, gofumpt v0.12.0, govulncheck v1.8.0, OPA 1.20.2 ; `bash scripts/check-tools.sh` affiche `Outils requis pour M0 : OK.` ; démon Docker non joignable dans ce conteneur (nécessaire à partir de M0-T03). Tag `m0-start` posé sur `1eca7a7` par l'agent. Jalon courant réglé à M0 (`rempart-state milestone M0`, l'état n'est pas versionné).
+4. ~~Poste Linux, macOS ou WSL2, `bash scripts/check-tools.sh` vert ; `git tag m0-start`~~ : fait le 2026-09-23 dans une session Claude Code cloud (conteneur Linux) à la demande de l'humain (« continue et fais le nécessaire »). Outils installés : Go 1.27.1 (dernière stable), golangci-lint v2.13.2, gofumpt v0.12.0, govulncheck v1.8.0, OPA 1.20.2 ; `bash scripts/check-tools.sh` affiche `Outils requis pour M0 : OK.` ; démon Docker non joignable dans ce conteneur (nécessaire à partir de M0-T03). Tag `m0-start` posé sur `1eca7a7` par l'agent. Jalon courant réglé à M0 (`rempart-state milestone M0`, l'état n'est pas versionné). Le tag n'a pas pu être poussé depuis la session cloud : `git tag m0-start 1eca7a7 && git push origin m0-start` depuis le poste de l'humain.
 5. Relire les modifications des skills `loop-engineering`, `intent-to-spec`, `safe-autonomy` et `agent-evals`.
 6. Choisir le point d'entrée produit (n'affecte pas M0, mais M1 à M4).
 
@@ -47,7 +57,10 @@ Préalables humains restants (étape H0 du plan) avant `/task` M0-T01 :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Après H0 (poste personnel) : `/resume`, puis `/task` M0-T01.
+- Prochaine tâche : `/task` M0-T02 (`archtest-imports`, règles de dépendance R1 à R5).
+- **Avant M3 (création de `scripts/sandbox.sh`), obligatoire** : tâche de durcissement issue de la contre-revue de M0-T01 (plan `docs/plans/M0-squelette.md`, section 0) : confirmation et appel sur une ligne chaînée par `&&`, refus par test du préfixe `-`, de `.IGNORE` et de `MAKEFLAGS`, approbation hors de portée de l'agent (T31).
+- Avec M0-T04 au plus tard : règle archtest refusant `GNUmakefile` et `makefile`, `make -f Makefile` dans la CI, et proposition de harnais pour `make -f Makefile` dans le hook Stop (T32).
+- Session cloud : autoriser `vuln.go.dev` dans la politique réseau de l'environnement pour que `make verify` (govulncheck) passe ; démon Docker nécessaire à partir de M0-T03 (poste personnel ou environnement qui le fournit).
 
 ## Journal
 - 2026-09-23 [session de démarrage] Poste de travail Windows sans `python3` ni dépôt git : aucun hook n'a tourné pendant cette session. Travail limité à la documentation et à une proposition de patch testée hors du dépôt. Suite du projet prévue sur le poste personnel, via GitHub.
@@ -61,3 +74,15 @@ Préalables humains restants (étape H0 du plan) avant `/task` M0-T01 :
 - 2026-09-23 17:32 [harnais] jalon courant : M0
 
 - 2026-09-23 17:53 [harnais] phase : free -> tests
+
+- 2026-09-23 18:13 [harnais] phase : tests -> impl
+
+- 2026-09-23 18:29 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T01 amendement R1 : revue securite (injection make par variables de ligne de commande, confirmation par tube, #nosec) a rendre mecanique dans TestMakefileTargets et TestGolangciConfig
+
+- 2026-09-23 18:29 [harnais] phase : impl -> tests
+
+- 2026-09-23 18:39 [harnais] phase : tests -> impl
+
+- 2026-09-23 18:51 [harnais] PHASE FREE (discipline TDD suspendue) : tâche squelette (M0-T01) terminée
+
+- 2026-09-23 18:51 [harnais] phase : impl -> free

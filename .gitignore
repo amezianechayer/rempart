@@ -9,3 +9,5 @@
 *.pem
 /tmp/
 __pycache__/
+/bin/
+evals/**/reports/

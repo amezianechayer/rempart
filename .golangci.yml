@@ -1,0 +1,75 @@
+# golangci-lint v2 (M0-T01). Pinned version: docs/SETUP.md, CI from M0-T04.
+# Every nolint directive must name the linter and give a reason (nolintlint).
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+  build-tags:
+    - integration
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    # Required by the go-platform-conventions skill
+    - contextcheck
+    - errorlint
+    - gosec
+    - nolintlint
+    # Resources, context, HTTP and SQL
+    - bodyclose
+    - fatcontext
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    # Correctness
+    - copyloopvar
+    - durationcheck
+    - errchkjson
+    - forcetypeassert
+    - nilerr
+    - predeclared
+    - reassign
+    - unconvert
+    - usestdlibvars
+    - wastedassign
+    # Source integrity and supply chain
+    - asciicheck
+    - bidichk
+    - gocheckcompilerdirectives
+    - gomoddirectives
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    gosec:
+      config:
+        global:
+          # Ignore gosec's own nosec annotations: a gosec finding is silenced
+          # only by a nolint directive naming gosec, which nolintlint checks.
+          nosec: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      module-path: github.com/amezianechayer/rempart
+    goimports:
+      local-prefixes:
+        - github.com/amezianechayer/rempart
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

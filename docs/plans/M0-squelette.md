@@ -2,10 +2,34 @@
 
 - Date : 2026-09-23
 - Auteur : subagent `architect`
-- Statut : proposé (à relire par l'agent principal avant `phase tests`)
+- Statut : relu par l'agent principal ; **amendé** le 2026-09-23 par R1 (section 0), après la revue `security-reviewer` (verdict PASS avec constats moyens)
 - Fiche d'origine : `docs/plans/M0-overview.md` section 7 (M0-T01), précisée par les sections 2.2, 3, 4 et 5.5. Ce plan ne l'élargit pas ; les précisions sont listées en section 2.3.
 - Sources lues : `prompts/M0.md` ; `docs/00-VISION.md` §4 ; `docs/02-THREAT-MODEL.md` ; `docs/04-INTERFACE.md` §8 ; `docs/STATUS.md` ; `docs/SETUP.md` ; `Makefile.template` ; `.gitignore` ; `README.md` ; skill `go-platform-conventions` ; `.claude/settings.json` ; hooks `guard_edit.py`, `guard_bash.py`, `stop_verify.py`, `post_edit_check.py`, `_common.py` ; `.claude/bin/rempart-state` (état actuel, patch 0001 non appliqué) ; `scripts/check-tools.sh`.
 - Faits d'environnement au 2026-09-23 (fournis par l'agent principal) : Go stable le plus récent 1.27.1 ; Go local 1.24.7 avec `GOTOOLCHAIN=auto` ; golangci-lint v2.13.2 ; gofumpt v0.12.0 ; govulncheck `golang.org/x/vuln` v1.8.0 (exige go >= 1.26) ; OPA 1.20.2 ; `proxy.golang.org` et `sum.golang.org` joignables, `github.com` (releases) et `go.dev` bloqués ; démon Docker injoignable dans le conteneur.
+
+---
+
+## 0. Amendement R1 (revue sécurité du 2026-09-23, prime sur le reste du document)
+
+La revue `security-reviewer` de l'implémentation conforme à la première version de ce plan a rendu PASS avec trois constats moyens et deux bas, tous démontrés sur copie. Ils sont corrigés dans T01 (retour journalisé en phase tests) plutôt que reportés, car ils contredisent la précision P6 et la section 13.
+
+| # | Constat | Correctif (sections 6.1 et 6.2 mises à jour) | Règle de test ajoutée |
+|---|---|---|---|
+| R1-a (moyen) | GNU make développe une variable passée en ligne de commande quand il l'exporte : `make sandbox-plan SCENARIO='$(shell ...)'` exécute la commande avant la garde et la liste blanche (même chose pour `EVAL`). P6 « jamais interpolées par make » était faux. | `override X := $(value X)` puis `export`, pour `SCENARIO`, `EVAL`, `POLICIES_DIR`, `OPA` | `TestMakefileTargets` règle 13 |
+| R1-b (moyen) | La confirmation « oui » se fournit par un tube (`printf 'oui\n' \| make sandbox-apply`). | `read ... </dev/tty` : sans terminal, la recette échoue | règle 14 |
+| R1-c (moyen) | Un `// #nosec` fait taire gosec sans passer par nolintlint. | `linters.settings.gosec.config.global.nosec: true` | `TestGolangciConfig` règle 7 ; critère 8 étendu |
+| R1-d (bas) | `POLICIES_DIR` et `OPA` interpolés par make entre apostrophes : échappement possible. | lus par le shell (`"$$POLICIES_DIR"`, `"$$OPA"`) | règle 5 étendue à ces deux variables ; règle 10 accepte `"$$OPA" test` |
+| R1-e (bas) | `EVAL` sans liste blanche. | `^[a-z0-9][a-z0-9/_-]{0,126}$` avant `go run`, après la garde de présence de `cmd/rempart-evals` | règle 15 |
+
+Portée de R1-b (corrigée après la contre-revue) : la lecture sur `/dev/tty` ferme le tube sur l'entrée standard, mais **pas** `make -i` (ou `MAKEFLAGS=i`), le préfixe `-` sur une ligne de recette, `.IGNORE`, ni un pseudo-terminal (`script`, `pty`). Elle n'est donc pas une approbation humaine ; elle reste sans effet tant que `scripts/sandbox.sh` n'existe pas (la garde échoue d'abord). Mesures hors dépôt proposées à l'humain (harnais) : `docs/proposals/0003-garde-make-variables.md`. Menaces nouvelles : T28 à T32 de `docs/02-THREAT-MODEL.md`.
+
+### Contre-revue R1 (2026-09-23) : verdicts PASS, constats reportés avant M3
+
+`security-reviewer` et `acceptance-verifier` ont rendu PASS sur l'implémentation R1. Constats moyens restants, à corriger par une tâche dédiée **avant** la création de `scripts/sandbox.sh` (M3), et au plus tard avec M0-T04 pour le point 2 :
+
+1. Confirmation contournable par le moteur make (`-i`, `MAKEFLAGS`, préfixe `-`, `.IGNORE`) ou par un pseudo-terminal : validation, lecture, test et appel sur une seule ligne logique chaînée par `&&` ; en M3, approbation par un canal hors de portée de l'agent (T31).
+2. `GNUmakefile` ou `makefile` écrit par l'agent : il remplace `Makefile` pour toute commande `make`, y compris celle du hook Stop et de la CI (T32). Correctifs : règle archtest qui refuse ces fichiers ; `make -f Makefile` dans le hook Stop (harnais) et dans la CI (M0-T04).
+3. Mutations non détectées par `TestMakefileTargets` : préfixe `-` retiré par l'analyseur, `[ ... ] || true`, `</dev/tty || a=oui`, `MAKEFLAGS +=`, `.IGNORE`, `$(value X)` en recette.
 
 ---
 
@@ -261,10 +285,14 @@ EVAL ?= all
 POLICIES_DIR ?= policies
 OPA ?= opa
 
-# Variables fournies par l'appelant : lues par le shell depuis l'environnement,
-# jamais interpolées par make dans une recette (menace T8).
-export SCENARIO
-export EVAL
+# Variables fournies par l'appelant (menace T8). $(value ...) fige le texte brut : une valeur
+# passée en ligne de commande, par exemple SCENARIO='$(shell ...)', n'est jamais développée
+# par make. Les recettes les lisent par le shell ("$$VAR"), jamais par make.
+override SCENARIO := $(value SCENARIO)
+override EVAL := $(value EVAL)
+override POLICIES_DIR := $(value POLICIES_DIR)
+override OPA := $(value OPA)
+export SCENARIO EVAL POLICIES_DIR OPA
 
 .PHONY: verify-quick verify opa-test arch-test evals update-baseline
 .PHONY: dev dev-preflight dev-down sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
@@ -280,17 +308,17 @@ verify: verify-quick
 	go test -tags=integration ./...
 	go tool govulncheck ./...
 
-# Étape OPA active seulement s'il existe au moins un fichier .rego sous $(POLICIES_DIR).
+# Étape OPA active seulement s'il existe au moins un fichier .rego sous POLICIES_DIR.
 # Dans ce cas, opa absent est une erreur : jamais de saut silencieux.
 opa-test:
-	@if [ -z "$$(find '$(POLICIES_DIR)' -type f -name '*.rego' -print -quit 2>/dev/null)" ]; then \
-		echo "opa-test : aucun fichier .rego sous $(POLICIES_DIR), étape OPA sans objet."; \
-	elif ! command -v '$(OPA)' >/dev/null 2>&1; then \
-		echo "opa-test : fichiers .rego présents sous $(POLICIES_DIR) mais '$(OPA)' introuvable (voir docs/SETUP.md)." >&2; \
+	@if [ -z "$$(find "$$POLICIES_DIR" -type f -name '*.rego' -print -quit 2>/dev/null)" ]; then \
+		echo "opa-test : aucun fichier .rego sous $$POLICIES_DIR, étape OPA sans objet."; \
+	elif ! command -v "$$OPA" >/dev/null 2>&1; then \
+		echo "opa-test : fichiers .rego présents sous $$POLICIES_DIR mais $$OPA introuvable (voir docs/SETUP.md)." >&2; \
 		exit 2; \
 	else \
-		'$(OPA)' check '$(POLICIES_DIR)'; \
-		'$(OPA)' test '$(POLICIES_DIR)'; \
+		"$$OPA" check "$$POLICIES_DIR"; \
+		"$$OPA" test "$$POLICIES_DIR"; \
 	fi
 
 arch-test:
@@ -299,11 +327,13 @@ arch-test:
 # Evals : livrées par M0-T23 (cmd/rempart-evals). Avant : code 2, aucune action.
 evals:
 	@test -d cmd/rempart-evals || { echo "evals : indisponible avant M0-T23 (cmd/rempart-evals absent) ; aucune action." >&2; exit 2; }
+	@[[ "$${EVAL:-}" =~ ^[a-z0-9][a-z0-9/_-]{0,126}$$ ]] || { echo "EVAL requis, au format [a-z0-9/_-] (ex. EVAL=demo)." >&2; exit 2; }
 	go run ./cmd/rempart-evals --suite "$$EVAL"
 
 # Réservé aux humains (bloqué pour l'agent par le hook guard_bash). Fonctionnel à partir de M0-T23.
 update-baseline:
 	@test -d cmd/rempart-evals || { echo "update-baseline : indisponible avant M0-T23 (cmd/rempart-evals absent) ; aucune action." >&2; exit 2; }
+	@[[ "$${EVAL:-}" =~ ^[a-z0-9][a-z0-9/_-]{0,126}$$ ]] || { echo "EVAL requis, au format [a-z0-9/_-] (ex. EVAL=demo)." >&2; exit 2; }
 	go run ./cmd/rempart-evals --suite "$$EVAL" --write-baseline
 
 # Pile de développement : livrée par M0-T03 (docker-compose.yml, dev-preflight en prérequis).
@@ -331,15 +361,16 @@ sandbox-plan: sandbox-guard
 	@[[ "$${SCENARIO:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$$ ]] || { echo "SCENARIO requis, au format [a-z0-9-] (ex. SCENARIO=demo)." >&2; exit 2; }
 	./scripts/sandbox.sh plan "$$SCENARIO"
 
-# Approbation humaine exigée deux fois : permission "ask" de Claude Code ET confirmation ci-dessous.
+# Approbation humaine exigée deux fois : permission "ask" de Claude Code ET confirmation
+# tapée au terminal (lue sur /dev/tty : un tube sur l'entrée standard ne suffit pas).
 sandbox-apply: sandbox-guard
 	@[[ "$${SCENARIO:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$$ ]] || { echo "SCENARIO requis, au format [a-z0-9-] (ex. SCENARIO=demo)." >&2; exit 2; }
-	@read -r -p "Appliquer $$SCENARIO sur le compte SANDBOX ? Tape 'oui' : " a; [ "$$a" = "oui" ]
+	@read -r -p "Appliquer $$SCENARIO sur le compte SANDBOX ? Tape 'oui' : " a </dev/tty; [ "$$a" = "oui" ]
 	./scripts/sandbox.sh apply "$$SCENARIO"
 
 sandbox-destroy: sandbox-guard
 	@[[ "$${SCENARIO:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$$ ]] || { echo "SCENARIO requis, au format [a-z0-9-] (ex. SCENARIO=demo)." >&2; exit 2; }
-	@read -r -p "Détruire $$SCENARIO sur le compte SANDBOX ? Tape 'oui' : " a; [ "$$a" = "oui" ]
+	@read -r -p "Détruire $$SCENARIO sur le compte SANDBOX ? Tape 'oui' : " a </dev/tty; [ "$$a" = "oui" ]
 	./scripts/sandbox.sh destroy "$$SCENARIO"
 ```
 
@@ -367,7 +398,7 @@ Notes :
 
 ```yaml
 # golangci-lint v2 (M0-T01). Pinned version: docs/SETUP.md, CI from M0-T04.
-# Every //nolint must name the linter and give a reason (nolintlint).
+# Every nolint directive must name the linter and give a reason (nolintlint).
 version: "2"
 
 run:
@@ -416,6 +447,12 @@ linters:
       disable:
         - fieldalignment
         - shadow
+    gosec:
+      config:
+        global:
+          # Ignore gosec's own nosec annotations: a gosec finding is silenced
+          # only by a nolint directive naming gosec, which nolintlint checks.
+          nosec: true
     nolintlint:
       require-explanation: true
       require-specific: true
@@ -543,14 +580,17 @@ En phase tests : **PASS**. `go.mod` est créé à l'étape 0, avant les tests ; 
 2. `sandbox-plan`, `sandbox-apply`, `sandbox-destroy` ont `sandbox-guard` parmi leurs prérequis ;
 3. la recette de `sandbox-guard` contient `scripts/sandbox.sh absent` et `exit 2`, et aucune ligne correspondant à `\bread\b` ;
 4. les recettes de `sandbox-apply` et `sandbox-destroy` contiennent une ligne `\bread\b` contenant `"oui"`, placée avant la ligne qui appelle `scripts/sandbox.sh` (confirmation humaine conservée) ;
-5. aucune ligne du Makefile ne correspond à `(^|[^$])\$[({](SCENARIO|EVAL)[)}:]` (pas d'interpolation par make des variables de l'appelant) ;
+5. aucune ligne du Makefile ne correspond à `(^|[^$])\$[({](SCENARIO|EVAL|POLICIES_DIR|OPA)[)}:]` (pas d'interpolation par make des variables de l'appelant ; R1-d) ;
 6. recette de `verify-quick` : lignes correspondant, dans cet ordre, à `^go build \./\.\.\.$`, `^golangci-lint run\b`, `^go test\b.*-short.*\./\.\.\.`, puis des appels `$(MAKE)` à `opa-test` et à `arch-test` ;
 7. ensemble atteignable depuis `verify-quick` (prérequis, et cibles nommées sur une ligne contenant `$(MAKE)`, récursivement) : aucune ligne de recette ne correspond à `\bdocker\b|govulncheck|-tags[= ]?integration|\bcurl\b|\bwget\b|\bgo (get|install)\b` ;
 8. `verify` a `verify-quick` en prérequis ; sa recette contient `go test -tags=integration ./...` et `go tool govulncheck ./...` ;
 9. toute ligne du Makefile qui contient `govulncheck` contient `go tool govulncheck` ;
-10. recette jointe de `opa-test` : contient `\*\.rego` et `command -v`, et la première occurrence de `.rego` précède la première occurrence de `(opa|\$\(OPA\)'?) test` ; aucune ligne du Makefile ne correspond à `\[\s*-d\s+policies\s*\]` (condition du modèle, qui lançait OPA sur des dossiers vides) ;
+10. recette jointe de `opa-test` : contient `\*\.rego` et `command -v`, et la première occurrence de `.rego` précède la première occurrence de `(opa|\$\(OPA\)'?|"\$\$OPA") test` (R1-d) ; aucune ligne du Makefile ne correspond à `\[\s*-d\s+policies\s*\]` (condition du modèle, qui lançait OPA sur des dossiers vides) ;
 11. recette de `update-baseline` : contient `--write-baseline` ;
 12. recette de `arch-test` : contient `./internal/archtest/...`.
+13. (R1-a) pour chacune de `SCENARIO`, `EVAL`, `POLICIES_DIR`, `OPA` : une ligne `^override\s+X\s*:=\s*\$\(value X\)\s*$` existe, placée avant toute ligne `export` qui nomme `X` ; et chacune est exportée (ligne `export` qui la nomme) ;
+14. (R1-b) dans `sandbox-apply` et `sandbox-destroy`, la ligne `\bread\b` qui contient `"oui"` contient aussi `</dev/tty` ;
+15. (R1-e) les recettes de `evals` et `update-baseline` contiennent, avant la ligne `go run`, une ligne qui valide `EVAL` par `=~` ; la garde de présence de `cmd/rempart-evals` reste la première ligne (critère 6a).
 
 Les propriétés transitoires (messages `M0-T23`, `M0-T03`) ne sont **pas** testées ici : elles changent en M0-T03 et M0-T23 et sont prouvées par les critères 6.
 
@@ -575,6 +615,7 @@ En phase tests : **FAIL**, sous-test `repository`, parce que `Makefile` n'existe
 4. `linters.settings.nolintlint.require-explanation` et `linters.settings.nolintlint.require-specific` valent `true` ;
 5. `formatters.enable` contient `gofumpt` ;
 6. `run.tests`, s'il est présent, vaut `true`.
+7. (R1-c) `linters.settings.gosec.config.global.nosec` vaut `true` (les annotations propres à gosec ne font plus taire gosec ; seul `//nolint:gosec`, contrôlé par nolintlint, le peut).
 
 `checkGolangciFiles` exige `.golangci.yml` présent et `.golangci.yaml`, `.golangci.toml`, `.golangci.json` absents (une seule configuration, sans ambiguïté sur celle que lit golangci-lint).
 
@@ -622,7 +663,7 @@ Chaque commande se lance depuis la racine du dépôt, en phase impl terminée ou
 | 6b | `out=$(make dev 2>&1); rc=$?; printf '%s\n' "$out" \| grep -c 'M0-T03'; echo rc=$rc` | `1` puis `rc=2` |
 | 7 | `for b in rempartd rempart-worker rempart-runner rempart rempart-mcp; do go build -o "bin/$b" "./cmd/$b" && "./bin/$b"; echo "$b rc=$?"; done 2>&1` | pour chaque binaire, une ligne `<b>: not implemented (M0)` puis `<b> rc=2` (10 lignes) |
 | 7 bis | `git status --porcelain bin/ \| wc -l` | `0` (`bin/` ignoré) |
-| 8 | `grep -rnE '//[[:space:]]*nolint' --include='*.go' . \| wc -l` | `0` |
+| 8 | `grep -rnE '//[[:space:]]*(nolint\|#nosec)' --include='*.go' . \| wc -l` | `0` (R1-c : aucune directive nolint ni annotation nosec) |
 
 Note sur 7 : la commande de la fiche, `go run ./cmd/rempartd; echo rc=$?`, affiche `rempartd: not implemented (M0)`, `exit status 2` puis `rc=1` (précision P1). Si la chaîne 1.27.1 propageait le code, elle afficherait `rc=2` : les deux sont cohérents avec un stub correct ; le critère fait foi par la commande ci-dessus.
 
