@@ -38,7 +38,7 @@ Préalables humains restants (étape H0 du plan) avant `/task` M0-T01 :
 1. ~~Valider le découpage et répondre aux questions Q1 à Q5~~ : fait le 2026-09-23.
 2. Appliquer les propositions 0001 (harnais) et 0002 (CLAUDE.md), redémarrer Claude Code.
 3. ~~Trancher les ADR 0001, 0002 et 0003~~ : acceptés le 2026-09-23.
-4. Poste Linux, macOS ou WSL2 (décision : M0 se code sur le poste personnel), dépôt dans `~/rempart`, `bash scripts/check-tools.sh` vert ; `git tag m0-start`.
+4. ~~Poste Linux, macOS ou WSL2, `bash scripts/check-tools.sh` vert ; `git tag m0-start`~~ : fait le 2026-09-23 dans une session Claude Code cloud (conteneur Linux) à la demande de l'humain (« continue et fais le nécessaire »). Outils installés : Go 1.27.1 (dernière stable), golangci-lint v2.13.2, gofumpt v0.12.0, govulncheck v1.8.0, OPA 1.20.2 ; `bash scripts/check-tools.sh` affiche `Outils requis pour M0 : OK.` ; démon Docker non joignable dans ce conteneur (nécessaire à partir de M0-T03). Tag `m0-start` posé sur `1eca7a7` par l'agent. Jalon courant réglé à M0 (`rempart-state milestone M0`, l'état n'est pas versionné).
 5. Relire les modifications des skills `loop-engineering`, `intent-to-spec`, `safe-autonomy` et `agent-evals`.
 6. Choisir le point d'entrée produit (n'affecte pas M0, mais M1 à M4).
 
@@ -57,3 +57,5 @@ Préalables humains restants (étape H0 du plan) avant `/task` M0-T01 :
 - 2026-09-23 15:23 [harnais] PHASE FREE (discipline TDD suspendue) : D0 alignement documentaire des ADR 0001 a 0003 acceptes (sans code)
 
 - 2026-09-23 15:23 [harnais] phase : free -> free
+
+- 2026-09-23 17:32 [harnais] jalon courant : M0
