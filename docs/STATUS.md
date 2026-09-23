@@ -12,6 +12,7 @@ aucun
 - 2026-09-23 : critique initiale de la spécification, `docs/reviews/2026-09-23-critique-initiale.md`.
 - 2026-09-23 : correctif du harnais proposé et testé sur une copie, `docs/proposals/0001-harnais-portable-et-tdd.md`. Preuve : `bash .claude/hooks/test_hooks.sh` sur la copie corrigée, 57 réussis sous Windows (Git Bash, Go 1.16), 48 réussis sous Ubuntu WSL2 (cas Go sautés). **Pas encore appliqué au dépôt.**
 - 2026-09-23 : dépôt git initialisé (branche `main`), `.gitattributes` force les fins de ligne LF.
+- 2026-09-23 : dépôt publié sur https://github.com/amezianechayer/rempart. Visibilité **publique**, choix explicite de l'humain : spec, modèle de menace et stratégie sont lisibles par tous.
 
 ## En cours
 Décisions humaines attendues avant `/milestone M0` (détail en fin de `docs/reviews/2026-09-23-critique-initiale.md`) :
