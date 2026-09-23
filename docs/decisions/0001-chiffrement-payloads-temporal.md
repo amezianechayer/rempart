@@ -2,7 +2,7 @@
 
 - Statut : proposé
 - Date : 2026-09-23
-- Jalon : M0
+- Jalon : décision en M0 ; **mise en œuvre au début de M1** (décision humaine du 2026-09-23, amendement A1 de `docs/plans/M0-overview.md`), avant la première exécution de L1. Les mentions « dès M0 » ci-dessous se lisent « au début de M1 ».
 
 ## Contexte
 Temporal persiste l'historique de chaque exécution : entrées et sorties des workflows et des activités, signaux, marqueurs (`SideEffect`, versions), messages d'erreur et piles d'appel. Par défaut, tout est en clair dans la base de Temporal et lisible dans l'UI et la CLI Temporal. Pour Rempart, cela signifie : Intent IR, graphe conçu ou réel (la « carte des faiblesses » du client), JSON de plan (qui peut contenir des valeurs `sensitive`), prompts et réponses LLM, findings. Cela contredit T3 (clés par tenant), T7 (les prompts et contextes sont un actif), T11 (un opérateur qui ouvre l'UI Temporal voit tous les clients) et le principe 9 (pas de secret dans un état en clair). La critique initiale (§2) demande de régler ce point en M0, avant que la première boucle n'écrive d'historique.

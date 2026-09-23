@@ -3,7 +3,7 @@
 > Tenu à jour par l'agent à chaque fin de tâche et par le harnais. Un BLOCAGE reste affiché au démarrage de session tant qu'il n'est pas marqué « RÉSOLU ».
 
 ## Jalon courant
-M0 (démarré le 2026-09-23 ; découpage proposé dans `docs/plans/M0-overview.md`, en attente de validation humaine avant la première `/task`)
+M0 (démarré le 2026-09-23 ; découpage **validé** le 2026-09-23 avec l'amendement A1 : 19 tâches, chiffrement Temporal reporté au début de M1 ; voir `docs/plans/M0-overview.md` section 0)
 
 ## Jalons acceptés
 aucun
@@ -26,10 +26,10 @@ aucun
   - Faits externes marqués « à revérifier » dans chaque ADR ; seuils proposés, pas mesurés.
 
 ## En cours
-`/milestone M0` lancé : découpage en 23 tâches (M0-T01 à M0-T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md` (rédigé par `architect`, relu par l'agent principal). Aucune `/task` avant la validation humaine.
+`/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
 
-Préalables humains (étape H0 du plan) :
-1. Valider le découpage et répondre aux questions Q1 à Q5 (section 12 du plan).
+Préalables humains restants (étape H0 du plan) avant `/task` M0-T01 :
+1. ~~Valider le découpage et répondre aux questions Q1 à Q5~~ : fait le 2026-09-23.
 2. Appliquer les propositions 0001 (harnais) et 0002 (CLAUDE.md), redémarrer Claude Code.
 3. Valider (ou amender) les ADR 0001, 0002 et 0003 ; en cas de refus, section 9 du plan.
 4. Poste Linux, macOS ou WSL2, dépôt dans `~/rempart`, `bash scripts/check-tools.sh` vert ; `git tag m0-start`.

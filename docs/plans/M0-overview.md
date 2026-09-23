@@ -2,10 +2,24 @@
 
 - Date : 2026-09-23
 - Auteur : subagent `architect`
-- Statut : proposé, à valider par l'humain avant la première `/task` (étape 5 de `/milestone`)
+- Statut : **validé** par l'humain le 2026-09-23, avec l'amendement A1 (section 0) ; réponses par défaut retenues pour Q1 à Q5
 - Sources : `prompts/M0.md` ; `docs/00-VISION.md` §3 et §4 ; `docs/01-LOOPS.md` ; `docs/02-THREAT-MODEL.md` ; `docs/STATUS.md` ; `Makefile.template` ; skills `go-platform-conventions`, `loop-engineering` (dont `temporal-loop-skeleton.md` corrigé le 2026-09-23), `llm-safety`, `agent-evals` et leurs références ; ADR 0001, 0002, 0003 (statut « proposé ») ; `docs/reviews/2026-09-23-critique-initiale.md` ; `docs/proposals/0001-harnais-portable-et-tdd.md`.
 
 Ce document est la vue d'ensemble du jalon. Au moment de chaque `/task`, l'architecte produit le plan détaillé `docs/plans/M0-<slug>.md` de la tâche : il précise la fiche ci-dessous sans en élargir le périmètre.
+
+---
+
+## 0. Amendement A1 (validation humaine du 2026-09-23)
+
+Décision de l'humain : « validé, chiffrement en M1 ». L'ADR 0001 n'est pas refusé : sa **mise en œuvre est reportée au début de M1**, avant que la boucle L1 n'écrive le moindre historique Temporal contenant des données client. En M0, la démo ne manipule que des données synthétiques.
+
+Effets sur ce plan (ils priment sur le reste du document) :
+- **Retirées de M0, premières tâches de M1** : T16 (enveloppe AES-256-GCM), T17 (`KeyWrapper` Transit), T18 (codec Temporal), T21 (versioning et rejeu). Report consigné dans `prompts/M1.md`.
+- **Modifiées** selon la ligne « 0001 » de la section 9 : T03 sans moteur Transit, clés de tenants ni jeton du worker (OpenBao reste démarré, livrable de M0) ; T19 sans `ContinueAsNew` avant l'attente d'approbation ; T20 avec le convertisseur Temporal par défaut et sans `TestHistoryHasNoPlaintext`. `secret.Bytes` (T06) reste.
+- **Dépendances** : T20 dépend de T03 et T19 seulement ; D0 n'ajoute à `prompts/M0.md` que les critères des ADR 0002 et 0003 ; les critères `[ADR-0001]` de la section 8.2 sont prouvés en M1.
+- **M0 compte 19 tâches** : T01 à T15, T19, T20, T22, T23.
+- **Risque résiduel accepté pour M0** : historique Temporal en clair, sans données client (T3, T7, T11, principe 9). Il doit être levé avant la première exécution de L1.
+- **Questions** : réponses par défaut retenues (Q1 module `github.com/amezianechayer/rempart` ; Q2 dossiers d'outillage consignés en D0 ; Q3 intégration contre `make dev` ; Q4 aucun appel réel au modèle en M0 ; Q5 vérificateur d'approbation factice jusqu'en M4).
 
 ---
 
