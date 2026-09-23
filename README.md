@@ -6,7 +6,7 @@ Harnais complet pour construire Rempart avec Claude Code en loop engineering : l
 ```
 MASTER_PROMPT.md          prompt maître complet et autonome (toute la spécification en un fichier)
 CLAUDE.md                 instructions permanentes (lues à chaque session)
-Makefile.template         point de départ du Makefile (cibles dont dépendent les hooks)
+Makefile                  cibles de vérification (dont verify-quick, exigée par le hook Stop)
 docs/
   00-VISION.md            vision, 7 axes de supériorité, principes, architecture, mode runner
   01-LOOPS.md             les 10 boucles du produit
@@ -41,7 +41,7 @@ La porte TDD de `rempart-state` refuse le passage en implémentation si les nouv
 
 ## Démarrage
 1. Installe les prérequis : Go 1.23+, Docker, OpenTofu, OPA, Conftest, tflint, Checkov, Trivy, Infracost, Python 3, jq ; comptes sandbox AWS et Azure avec alertes de budget.
-2. Le dossier `rempart/` est la racine du repo : place-toi dedans, vérifie que le dossier caché `.claude/` est bien présent, puis `git init` et un premier commit. `Makefile.template` sera renommé en `Makefile` lors de M0.
+2. Le dossier `rempart/` est la racine du repo : place-toi dedans, vérifie que le dossier caché `.claude/` est bien présent, puis `git init` et un premier commit. Le `Makefile` a été créé en M0-T01 à partir de l'ancien modèle.
 3. Lance Claude Code depuis `rempart/`, colle `MASTER_PROMPT.md` (version complète) ou `prompts/00-bootstrap.md` (version courte qui renvoie aux documents). Lis sa critique, ajuste.
 4. `/milestone M0`, valide le découpage, puis `/task` pour chaque tâche. `/close-milestone M0` à la fin.
 5. En parallèle de M0 à M2, mène la découverte marché (`docs/03-DISCOVERY.md`). Ses conclusions peuvent modifier le périmètre de M3 et au-delà.

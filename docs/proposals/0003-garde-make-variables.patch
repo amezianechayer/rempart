@@ -1,0 +1,61 @@
+diff --git a/.claude/hooks/guard_bash.py b/.claude/hooks/guard_bash.py
+index d693259..afa773f 100755
+--- a/.claude/hooks/guard_bash.py
++++ b/.claude/hooks/guard_bash.py
+@@ -34,8 +34,21 @@ RULES = [
+     (r"\baz\b[^|;&]*\bdelete\b", "commande Azure destructive interdite depuis l'agent."),
+     (r"\b(scw|ovhcloud)\b[^|;&]*\b(delete|terminate)\b", "commande cloud souverain destructive interdite."),
+     (r"\bgo\s+test\b[^|;&]*\s-skip\b", "exclusion de tests via -skip interdite dans le flux normal."),
+-    (r"\bmake\s+update-baseline\b|--write-baseline\b",
++    (r"\bg?make\b[^|;&]*\bupdate-baseline\b|--write-baseline\b",
+      "la mise à jour des baselines d'eval se fait par une PR humaine explicite."),
++    # T28 : make développe $(...) et ${...} dans une variable passée en ligne de commande.
++    (r"\bg?make\b[^|;&]*\$[({]",
++     "argument de make contenant $( ou ${ : make le développerait avant toute garde (T28). "
++     "Passe une valeur littérale, validée par la recette."),
++    # T29 : seule la forme canonique, couverte par la permission « ask », atteint le bac à sable.
++    (r"^(?!\s*make\s+sandbox-(apply|destroy)\s+SCENARIO=[a-z0-9][a-z0-9-]{0,62}\s*$)[\s\S]*"
++     r"(\bg?make\b[^|;&]*\bsandbox-(apply|destroy)\b|\bsandbox\.sh\b[^|;&]*\b(apply|destroy)\b)",
++     "bac à sable : seule la forme `make sandbox-apply SCENARIO=<nom>` (ou sandbox-destroy), seule sur la ligne, "
++     "est permise ; elle demande l'approbation humaine (T29)."),
++    # T31 et T32 : options et variables qui changent le fichier lu par make ou ignorent les échecs de recette.
++    (r"\b(MAKEFLAGS|MAKEFILES|GNUMAKEFLAGS)\s*=|\bg?make\b[^|;&]*\s(-[a-zA-Z]*[if][a-zA-Z]*|--ignore-errors|--eval|--file|--makefile)\b",
++     "make : -i, -f, --eval, MAKEFLAGS et MAKEFILES interdits ; ils ignorent les échecs de recette ou changent "
++     "le fichier exécuté (T31, T32)."),
+ ]
+ 
+ 
+diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
+index 76b87ed..c205182 100644
+--- a/.claude/hooks/test_hooks.sh
++++ b/.claude/hooks/test_hooks.sh
+@@ -84,6 +84,29 @@ cmd 0 "git commit -m \"feat: add loop\""
+ cmd 2 "git commit -n -m x"
+ cmd 2 "rm -rf .git"
+ cmd 0 "rm -rf build/"
++# T28 et T29 (proposition 0003)
++cmd 2 'make dev-down SCENARIO=$(shell touch /tmp/x)'
++cmd 2 'make evals EVAL=${shell id}'
++cmd 0 "make -s opa-test POLICIES_DIR=policies"
++cmd 0 'out=$(make sandbox-plan SCENARIO=demo 2>&1); echo "$out"'
++cmd 0 "make sandbox-apply SCENARIO=demo"
++cmd 0 "make sandbox-destroy SCENARIO=demo-2"
++cmd 2 "printf 'oui\\n' | make sandbox-apply SCENARIO=demo"
++cmd 2 "make -s sandbox-apply SCENARIO=demo"
++cmd 2 "make SCENARIO=demo sandbox-destroy"
++cmd 2 "make sandbox-apply SCENARIO=demo; echo fin"
++cmd 2 "./scripts/sandbox.sh apply demo"
++cmd 0 "make sandbox-plan SCENARIO=demo"
++cmd 2 "gmake -s sandbox-apply SCENARIO=demo"
++cmd 2 'gmake dev FOO=$(shell id)'
++cmd 2 "make --no-print-directory update-baseline"
++cmd 2 "make -i sandbox-apply SCENARIO=demo"
++cmd 2 "make -f other.mk verify-quick"
++cmd 2 "MAKEFLAGS=i make dev"
++cmd 2 "make --eval=x: dev"
++cmd 0 "make -s verify-quick"
++cmd 0 "make -C . arch-test"
++cmd 0 "make evals EVAL=demo-if"
+ check 2 "$(printf 'pas du json' | hook --fail-closed "$T/.claude/hooks/guard_bash.py")" "bash : entrée illisible (fail-closed)"
+ 
+ # --- py.sh sans Python : bloquant pour les gardes, non bloquant sinon
