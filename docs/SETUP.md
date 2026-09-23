@@ -10,7 +10,7 @@ git clone https://github.com/<ton-compte>/rempart.git
 cd rempart
 bash scripts/check-tools.sh
 ```
-Si le correctif du harnais n'est pas encore appliqué : `docs/proposals/0001-harnais-portable-et-tdd.md`.
+Propositions à appliquer par toi si ce n'est pas encore fait (le harnais est protégé contre l'agent) : `docs/proposals/0001-harnais-portable-et-tdd.md` (hooks) et `docs/proposals/0002-claude-md-trailer-commits.md` (CLAUDE.md).
 
 ## Outils
 
