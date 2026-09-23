@@ -2,6 +2,8 @@
 ## Plateforme agentique d'infrastructure multicloud sécurisée par construction
 
 > **Mode d'emploi.** Ce prompt est autonome : il contient toute la spécification. Il s'utilise dans le dossier `rempart/`, qui est la racine du repo et contient le harnais (hooks, subagents, commandes et skills dans `rempart/.claude/`), les documents (`rempart/docs/`) et un prompt par jalon (`rempart/prompts/`). Lance Claude Code depuis `rempart/` et colle ce prompt pour la première session. Tous les chemins cités dans ce prompt sont relatifs à `rempart/`. Pour les sessions suivantes, utilise `/milestone Mx`, `/task` et `/resume`. Nom « Rempart » provisoire.
+>
+> **Référence vivante.** Depuis le 2026-09-23, ce prompt est un instantané : en cas d'écart, `docs/` (vision, boucles, modèle de menace, interface, ADR dans `docs/decisions/`) et `prompts/` font foi. État du projet : `docs/STATUS.md`.
 
 ---
 
@@ -83,7 +85,7 @@ Cible initiale (à confirmer par `docs/03-DISCOVERY.md`) : ETI et PME européenn
 ### 2.4 Architecture
 
 #### Stack
-Go 1.23+ (hexagonal) ; Temporal (boucles durables) ; OpenTofu ; OPA/Rego et Conftest ; tflint, Checkov, Trivy, Infracost ; PostgreSQL + Apache AGE pour le graphe (derrière une interface) ; OpenBao pour les secrets ; API Anthropic via SDK Go derrière `ModelProvider` ; Next.js ; CLI Go ; serveur MCP ; OpenTelemetry, Prometheus, Grafana, Loki ; Kubernetes + ArgoCD pour le déploiement de Rempart et comme cible gérée.
+Go 1.23+ (hexagonal) ; Temporal (boucles durables) ; OpenTofu ; OPA/Rego et Conftest ; tflint, Checkov, Trivy, Infracost ; PostgreSQL relationnel sous RLS forcé pour le graphe, calculs de graphe en mémoire en Go, derrière `internal/graph/ports.Store` (ADR 0003) ; OpenBao pour les secrets ; Claude via l'API Anthropic, Amazon Bedrock ou Google Vertex AI, derrière `ModelProvider` (SDK Go officiel, route par tenant, résidence UE contrôlée, ADR 0002) ; Next.js ; CLI Go ; serveur MCP ; OpenTelemetry, Prometheus, Grafana, Loki ; Kubernetes + ArgoCD pour le déploiement de Rempart et comme cible gérée.
 
 #### Modules
 ```
@@ -116,6 +118,8 @@ schemas/        JSON Schemas versionnés (intent, graph, evidence, findings)
 evals/          jeux d'évaluation par boucle + labo vulnérable
 web/            interface
 ```
+
+Outillage de développement, jamais livré aux clients (ajouté en M0, validé le 2026-09-23) : `cmd/rempart-evals` (exécuteur d'evals), `internal/evals` (noyau d'évaluation), `internal/archtest` (tests d'architecture et de configuration du dépôt), `scripts/` (pile de dev, outils), `.github/` (CI).
 
 #### Mode runner (A6)
 - Le plan de contrôle calcule, valide, fait approuver et **signe** un plan (hash du plan OpenTofu + périmètre d'identifiants + approbations).
@@ -517,7 +521,7 @@ Skills : `go-platform-conventions`, `loop-engineering`, `llm-safety`, `agent-eva
 - `Makefile` à partir de `Makefile.template` : `verify-quick` (build, lint, tests unitaires, `opa test`), `verify` (+ intégration, govulncheck, evals ciblées), `evals`, `dev`, `sandbox-apply`, `sandbox-destroy`.
 - `docker-compose.yml` : Temporal, PostgreSQL, OpenBao en mode dev.
 - CI GitHub Actions (ou GitLab CI) : `make verify` sur chaque PR.
-- `internal/llm` : interface `ModelProvider`, adaptateur Anthropic, faux déterministe, rédacteur de secrets, sorties JSON validées par schéma.
+- `internal/llm` : interface `ModelProvider` (ADR 0002 : appel structuré sans outils, appel avec outils, route par tenant), service `llm.Client`, adaptateur Anthropic direct, faux déterministe, rédacteur de secrets, sorties JSON validées par schéma.
 - `internal/loops` : workflow générique `RunLoop` (proposer, vérifier, diagnostiquer, budget, stagnation, escalade) + un workflow de démonstration.
 - `evals/` : exécuteur minimal, format de cas, baseline.
 

@@ -49,7 +49,7 @@ Cible initiale (à confirmer par `docs/03-DISCOVERY.md`) : ETI et PME européenn
 ## 4. Architecture
 
 ### Stack
-Go 1.23+ (hexagonal) ; Temporal (boucles durables) ; OpenTofu ; OPA/Rego et Conftest ; tflint, Checkov, Trivy, Infracost ; PostgreSQL + Apache AGE pour le graphe (derrière une interface) ; OpenBao pour les secrets ; API Anthropic via SDK Go derrière `ModelProvider` ; Next.js ; CLI Go ; serveur MCP ; OpenTelemetry, Prometheus, Grafana, Loki ; Kubernetes + ArgoCD pour le déploiement de Rempart et comme cible gérée.
+Go 1.23+ (hexagonal) ; Temporal (boucles durables) ; OpenTofu ; OPA/Rego et Conftest ; tflint, Checkov, Trivy, Infracost ; PostgreSQL relationnel sous RLS forcé pour le graphe, calculs de graphe en mémoire en Go, derrière `internal/graph/ports.Store` (ADR 0003) ; OpenBao pour les secrets ; Claude via l'API Anthropic, Amazon Bedrock ou Google Vertex AI, derrière `ModelProvider` (SDK Go officiel, route par tenant, résidence UE contrôlée, ADR 0002) ; Next.js ; CLI Go ; serveur MCP ; OpenTelemetry, Prometheus, Grafana, Loki ; Kubernetes + ArgoCD pour le déploiement de Rempart et comme cible gérée.
 
 ### Modules
 ```
@@ -82,6 +82,8 @@ schemas/        JSON Schemas versionnés (intent, graph, evidence, findings)
 evals/          jeux d'évaluation par boucle + labo vulnérable
 web/            interface
 ```
+
+Outillage de développement, jamais livré aux clients (ajouté en M0, validé le 2026-09-23) : `cmd/rempart-evals` (exécuteur d'evals), `internal/evals` (noyau d'évaluation), `internal/archtest` (tests d'architecture et de configuration du dépôt), `scripts/` (pile de dev, outils), `.github/` (CI).
 
 ### Mode runner (A6)
 - Le plan de contrôle calcule, valide, fait approuver et **signe** un plan (hash du plan OpenTofu + périmètre d'identifiants + approbations).

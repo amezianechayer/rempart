@@ -1,6 +1,6 @@
 # 0001. Chiffrement des payloads Temporal par tenant et versioning des workflows
 
-- Statut : proposé
+- Statut : accepté le 2026-09-23 (décision humaine)
 - Date : 2026-09-23
 - Jalon : décision en M0 ; **mise en œuvre au début de M1** (décision humaine du 2026-09-23, amendement A1 de `docs/plans/M0-overview.md`), avant la première exécution de L1. Les mentions « dès M0 » ci-dessous se lisent « au début de M1 ».
 

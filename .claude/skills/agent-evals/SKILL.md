@@ -13,7 +13,8 @@ Format d'un cas et d'un rapport : `references/case-format.md`
 evals/<boucle>/
   cases/*.yaml     entrée, contexte, attendu
   graders/         vérificateurs de résultat, déterministes d'abord
-  baseline.json    métriques de référence (modifiable uniquement par PR humaine)
+  baseline.json    métriques de référence des suites sans LLM (modifiable uniquement par PR humaine)
+  baseline/<plateforme>/<modèle>.json   une baseline par couple plateforme et modèle pour les suites qui appellent un LLM (ADR 0002)
 evals/security/lab/        IaC d'un environnement volontairement vulnérable + failles attendues
 evals/security/injection/  ressources dont noms/tags/descriptions contiennent des injections
 ```
@@ -27,5 +28,6 @@ Taux de succès ; taux d'escalade **correcte** (escalader quand il faut, pas qua
 ## Règles
 - Graders déterministes chaque fois que possible. Juge LLM uniquement pour des propriétés non vérifiables autrement (clarté d'une explication), avec grille explicite et jamais sur une décision de sécurité.
 - 3 exécutions par cas non déterministe ; comparer des distributions, pas des valeurs uniques.
-- Régression significative par rapport à `baseline.json` : merge bloqué. La baseline change uniquement par PR humaine explicite (le hook bloque `make update-baseline` pour l'agent).
-- Chaque changement de modèle LLM déclenche la suite complète.
+- Régression significative par rapport à la baseline : merge bloqué. La baseline change uniquement par PR humaine explicite (le hook bloque `make update-baseline`, `--write-baseline` et toute écriture de baseline par l'agent).
+- Chaque changement de couple plateforme et modèle déclenche la suite complète ; un changement de région pour un même couple, une suite de fumée (ADR 0002). Le rapport indique `platform` et `region`.
+- Une route LLM dont le couple plateforme et modèle n'a pas de baseline validée est refusée à partir de M1 (ADR 0002).

@@ -1,6 +1,6 @@
 # 0003. Stockage du graphe sans Apache AGE
 
-- Statut : proposé
+- Statut : accepté le 2026-09-23 (décision humaine)
 - Date : 2026-09-23
 - Jalon : M0
 

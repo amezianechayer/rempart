@@ -19,11 +19,16 @@ aucun
   - `intent-to-spec` : règle 9 (`tenant_id` jamais produit par le LLM, injecté par le serveur, menace T3), règle 10 (références croisées et CIDR vérifiés en code) ; scénario de référence : VPN `bidirectional: false` (le cluster initie les deux flux, 5432 et 9100).
   - `safe-autonomy/references/risk-rules.yaml` : type de ressource inconnu classé `high` ; `low` seulement si le delta de graphe recalculé est vide et la journalisation seulement renforcée ; nouvelles règles `high` (atteignabilité nouvelle hors conception, réduction de journalisation, version de provider ou de module, politique de clé) ; durcissement `low` hors prod seulement.
   - Preuve : sous WSL, `yaml.safe_load` charge les 12 règles, `jsonschema` (Draft 2020-12) valide le scénario contre `intent-ir-v1.schema.json`.
-- 2026-09-23 : ADR rédigés par le subagent `architect`, statut **proposé**, relus par l'agent principal :
+- 2026-09-23 : ADR rédigés par le subagent `architect`, relus par l'agent principal, **acceptés par l'humain le 2026-09-23** (0001 mis en œuvre au début de M1) :
   - `docs/decisions/0001-chiffrement-payloads-temporal.md` : payloads Temporal chiffrés AES-256-GCM par tenant (enveloppe OpenBao Transit), sans repli en clair, références chiffrées pour les gros objets, versioning par `workflow.GetVersion` et tests de rejeu dès M0.
   - `docs/decisions/0002-model-provider-multi-plateforme.md` : `ModelProvider` minimal (appel structuré sans outils, appel avec outils), route explicite par tenant sans défaut, résidence UE et rétention contrôlées à chaque appel, baseline d'evals par couple plateforme et modèle ; M0 : service, faux déterministe, adaptateur Anthropic direct.
   - `docs/decisions/0003-stockage-du-graphe.md` : PostgreSQL relationnel sous RLS forcé, calculs de graphe en mémoire en Go, image PostgreSQL standard dès M0, critères de réévaluation chiffrés.
   - Faits externes marqués « à revérifier » dans chaque ADR ; seuils proposés, pas mesurés.
+- 2026-09-23 : étape D0 (alignement documentaire, phase free journalisée, sans code) :
+  - `prompts/M0.md` : critères 6 à 11 issus des ADR 0002 et 0003 ; ceux de 0001 sont dans `prompts/M1.md`.
+  - `docs/00-VISION.md` §4 et `MASTER_PROMPT.md` : pile amendée (PostgreSQL sous RLS et graphe en Go, `ModelProvider` multi-plateforme), dossiers d'outillage ajoutés (Q2) ; `MASTER_PROMPT.md` déclaré instantané, `docs/` et `prompts/` font foi.
+  - **Skill modifié, à relire** : `agent-evals` (baseline par couple plateforme et modèle, suites de fumée par région, route sans baseline refusée à partir de M1).
+  - Preuves : `grep -c 'Apache AGE' docs/00-VISION.md MASTER_PROMPT.md` vaut 0 et 0 ; `grep -c 'baseline/' .claude/skills/agent-evals/SKILL.md` vaut 1 ; `grep -c 'TestHistoryHasNoPlaintext' prompts/M1.md` vaut 1.
 
 ## En cours
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
@@ -31,18 +36,22 @@ aucun
 Préalables humains restants (étape H0 du plan) avant `/task` M0-T01 :
 1. ~~Valider le découpage et répondre aux questions Q1 à Q5~~ : fait le 2026-09-23.
 2. Appliquer les propositions 0001 (harnais) et 0002 (CLAUDE.md), redémarrer Claude Code.
-3. Valider (ou amender) les ADR 0001, 0002 et 0003 ; en cas de refus, section 9 du plan.
-4. Poste Linux, macOS ou WSL2, dépôt dans `~/rempart`, `bash scripts/check-tools.sh` vert ; `git tag m0-start`.
-5. Relire les modifications des skills `loop-engineering`, `intent-to-spec` et `safe-autonomy`.
+3. ~~Trancher les ADR 0001, 0002 et 0003~~ : acceptés le 2026-09-23.
+4. Poste Linux, macOS ou WSL2 (décision : M0 se code sur le poste personnel), dépôt dans `~/rempart`, `bash scripts/check-tools.sh` vert ; `git tag m0-start`.
+5. Relire les modifications des skills `loop-engineering`, `intent-to-spec`, `safe-autonomy` et `agent-evals`.
 6. Choisir le point d'entrée produit (n'affecte pas M0, mais M1 à M4).
 
 ## Reste à faire
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
-- Une fois les ADR acceptés (listé dans leur section « Conséquences ») : ajouter les critères de 0001 à `prompts/M0.md` ; `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` ; baseline par couple plateforme et modèle dans le skill `agent-evals` ; amender `docs/00-VISION.md` §4 et `MASTER_PROMPT.md` (fin d'AGE, `ModelProvider` multi-plateforme) ; `security-reviewer` intègre les menaces nouvelles au modèle de menace.
+- `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
-- Après H0 : D0 (alignement documentaire des ADR acceptés), puis `/task` M0-T01.
+- Après H0 (poste personnel) : `/resume`, puis `/task` M0-T01.
 
 ## Journal
 - 2026-09-23 [session de démarrage] Poste de travail Windows sans `python3` ni dépôt git : aucun hook n'a tourné pendant cette session. Travail limité à la documentation et à une proposition de patch testée hors du dépôt. Suite du projet prévue sur le poste personnel, via GitHub.
 
 - 2026-09-23 12:31 [harnais] jalon courant : M0
+
+- 2026-09-23 15:23 [harnais] PHASE FREE (discipline TDD suspendue) : D0 alignement documentaire des ADR 0001 a 0003 acceptes (sans code)
+
+- 2026-09-23 15:23 [harnais] phase : free -> free
