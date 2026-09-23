@@ -3,7 +3,7 @@
 > Tenu à jour par l'agent à chaque fin de tâche et par le harnais. Un BLOCAGE reste affiché au démarrage de session tant qu'il n'est pas marqué « RÉSOLU ».
 
 ## Jalon courant
-M0 (non démarré)
+M0 (démarré le 2026-09-23 ; découpage proposé dans `docs/plans/M0-overview.md`, en attente de validation humaine avant la première `/task`)
 
 ## Jalons acceptés
 aucun
@@ -26,17 +26,23 @@ aucun
   - Faits externes marqués « à revérifier » dans chaque ADR ; seuils proposés, pas mesurés.
 
 ## En cours
-Décisions humaines attendues avant `/milestone M0` (détail en fin de `docs/reviews/2026-09-23-critique-initiale.md`) :
-1. Appliquer les propositions 0001 (harnais) et 0002 (CLAUDE.md).
-2. Choisir le point d'entrée produit (lecture seule et preuves sur l'existant, ou feuille de route actuelle).
-3. Valider (ou amender) les ADR 0001, 0002 et 0003 (`docs/decisions/`, statut « proposé »).
-4. Relire les modifications des skills `loop-engineering`, `intent-to-spec` et `safe-autonomy`.
+`/milestone M0` lancé : découpage en 23 tâches (M0-T01 à M0-T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md` (rédigé par `architect`, relu par l'agent principal). Aucune `/task` avant la validation humaine.
+
+Préalables humains (étape H0 du plan) :
+1. Valider le découpage et répondre aux questions Q1 à Q5 (section 12 du plan).
+2. Appliquer les propositions 0001 (harnais) et 0002 (CLAUDE.md), redémarrer Claude Code.
+3. Valider (ou amender) les ADR 0001, 0002 et 0003 ; en cas de refus, section 9 du plan.
+4. Poste Linux, macOS ou WSL2, dépôt dans `~/rempart`, `bash scripts/check-tools.sh` vert ; `git tag m0-start`.
+5. Relire les modifications des skills `loop-engineering`, `intent-to-spec` et `safe-autonomy`.
+6. Choisir le point d'entrée produit (n'affecte pas M0, mais M1 à M4).
 
 ## Reste à faire
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - Une fois les ADR acceptés (listé dans leur section « Conséquences ») : ajouter les critères de 0001 à `prompts/M0.md` ; `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` ; baseline par couple plateforme et modèle dans le skill `agent-evals` ; amender `docs/00-VISION.md` §4 et `MASTER_PROMPT.md` (fin d'AGE, `ModelProvider` multi-plateforme) ; `security-reviewer` intègre les menaces nouvelles au modèle de menace.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
-- Démarrer M0 (`/milestone M0`).
+- Après H0 : D0 (alignement documentaire des ADR acceptés), puis `/task` M0-T01.
 
 ## Journal
 - 2026-09-23 [session de démarrage] Poste de travail Windows sans `python3` ni dépôt git : aucun hook n'a tourné pendant cette session. Travail limité à la documentation et à une proposition de patch testée hors du dépôt. Suite du projet prévue sur le poste personnel, via GitHub.
+
+- 2026-09-23 12:31 [harnais] jalon courant : M0
