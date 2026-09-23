@@ -1,0 +1,743 @@
+diff --git a/.claude/bin/rempart-state b/.claude/bin/rempart-state
+index a4d0543..b3f0e18 100644
+--- a/.claude/bin/rempart-state
++++ b/.claude/bin/rempart-state
+@@ -7,10 +7,11 @@ Usage :
+   python3 .claude/bin/rempart-state phase tests [--reason "..."]
+   python3 .claude/bin/rempart-state phase impl  [--allow-green --reason "..."]
+   python3 .claude/bin/rempart-state phase free  --reason "..."
++(Sous Windows sans python3 : `python` ou `py` à la place.)
+ 
+ Règles :
+-  - tests -> impl : exige des tests nouveaux ou modifiés, et qu'ils ÉCHOUENT (preuve qu'ils testent quelque chose
+-    de nouveau). --allow-green (tests de caractérisation) exige --reason.
++  - tests -> impl : exige des tests nouveaux ou modifiés, sans erreur de syntaxe, et qu'ils ÉCHOUENT
++    (preuve qu'ils testent quelque chose de nouveau). --allow-green (tests de caractérisation) exige --reason.
+   - impl -> tests et passage en free : exigent --reason. Tout changement est journalisé dans docs/STATUS.md.
+ """
+ import argparse
+@@ -26,39 +27,58 @@ PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", Path(__file__).resolve()
+ STATE = PROJECT_DIR / ".claude" / "state"
+ STATUS = PROJECT_DIR / "docs" / "STATUS.md"
+ 
++for _stream in (sys.stdout, sys.stderr):
++    try:
++        _stream.reconfigure(encoding="utf-8")
++    except (AttributeError, ValueError):
++        pass
++
+ 
+ def get(name, default=""):
+     try:
+-        return (STATE / name).read_text().strip()
++        return (STATE / name).read_text(encoding="utf-8").strip()
+     except FileNotFoundError:
+         return default
+ 
+ 
+ def put(name, value):
+     STATE.mkdir(parents=True, exist_ok=True)
+-    (STATE / name).write_text(value + "\n")
++    (STATE / name).write_text(value + "\n", encoding="utf-8")
+ 
+ 
+ def journal(msg):
+     STATUS.parent.mkdir(parents=True, exist_ok=True)
+     stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+-    with STATUS.open("a") as f:
++    with STATUS.open("a", encoding="utf-8") as f:
+         f.write(f"\n- {stamp} [harnais] {msg}\n")
+ 
+ 
+ def changed_test_files():
+-    p = subprocess.run(["git", "status", "--porcelain"], cwd=PROJECT_DIR, capture_output=True, text=True)
++    # -uall : sans lui, un nouveau dossier non suivi apparaît comme « internal/ » et ses tests sont invisibles.
++    p = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=PROJECT_DIR, capture_output=True,
++                       text=True, encoding="utf-8", errors="replace")
+     files = []
+     for line in p.stdout.splitlines():
+-        f = line[3:].strip().split(" -> ")[-1]
++        f = line[3:].strip().split(" -> ")[-1].strip('"')
+         if re.search(r"(_test\.go|_test\.rego|\.tftest\.hcl)$", f):
+             files.append(f)
+     return files
+ 
+ 
++def syntax_errors(files):
++    """Un test qui ne se parse pas échoue pour une mauvaise raison : il ne prouve rien."""
++    go_files = [f for f in files if f.endswith("_test.go") and (PROJECT_DIR / f).exists()]
++    if not go_files or not shutil.which("gofmt"):
++        return ""
++    p = subprocess.run(["gofmt", "-e", "-l", *go_files], cwd=PROJECT_DIR, capture_output=True,
++                       text=True, encoding="utf-8", errors="replace")
++    return p.stderr.strip() if p.returncode != 0 else ""
++
++
+ def tests_fail(files):
+     """Retourne True si au moins une suite concernée échoue."""
+-    go_pkgs = sorted({"./" + str(Path(f).parent) for f in files if f.endswith("_test.go")})
++    go_pkgs = sorted({"./" + Path(f).parent.as_posix() for f in files
++                      if f.endswith("_test.go") and (PROJECT_DIR / f).exists()})
+     failed = False
+     if go_pkgs and shutil.which("go"):
+         failed |= subprocess.run(["go", "test", *go_pkgs], cwd=PROJECT_DIR).returncode != 0
+@@ -100,6 +120,11 @@ def main():
+         if not files:
+             print("Refusé : aucun test nouveau ou modifié. Écris d'abord les tests.", file=sys.stderr)
+             return 1
++        errors = syntax_errors(files)
++        if errors:
++            print("Refusé : les tests ont des erreurs de syntaxe, ils échouent pour une mauvaise raison.\n" + errors,
++                  file=sys.stderr)
++            return 1
+         if not tests_fail(files):
+             if not a.allow_green:
+                 print("Refusé : les tests passent déjà, ils ne prouvent rien de nouveau. "
+diff --git a/.claude/hooks/_common.py b/.claude/hooks/_common.py
+index a97cdb2..96371fd 100644
+--- a/.claude/hooks/_common.py
++++ b/.claude/hooks/_common.py
+@@ -7,25 +7,41 @@ from pathlib import Path
+ PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+ STATE_DIR = PROJECT_DIR / ".claude" / "state"
+ 
++# Sous Windows, la locale par défaut (cp1252) corrompt les accents : on force l'UTF-8.
++for _stream in (sys.stdout, sys.stderr):
++    try:
++        _stream.reconfigure(encoding="utf-8")
++    except (AttributeError, ValueError):
++        pass
++
++
++def read_input(fail_closed: bool = False) -> dict:
++    """Lit l'entrée JSON du hook en UTF-8, quelle que soit la locale.
+ 
+-def read_input() -> dict:
++    fail_closed=True (hooks de garde) : une entrée illisible bloque l'action au lieu d'être ignorée.
++    """
+     try:
+-        return json.load(sys.stdin)
+-    except Exception:
++        data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
++        if not isinstance(data, dict):
++            raise ValueError("objet JSON attendu")
++        return data
++    except Exception as e:  # noqa: BLE001
++        if fail_closed:
++            block(f"BLOQUÉ : entrée du hook illisible ({e}). Par sécurité, l'action est refusée.")
+         return {}
+ 
+ 
+ def state(name: str, default: str = "") -> str:
+     p = STATE_DIR / name
+     try:
+-        return p.read_text().strip()
++        return p.read_text(encoding="utf-8").strip()
+     except FileNotFoundError:
+         return default
+ 
+ 
+ def set_state(name: str, value: str) -> None:
+     STATE_DIR.mkdir(parents=True, exist_ok=True)
+-    (STATE_DIR / name).write_text(value + "\n")
++    (STATE_DIR / name).write_text(value + "\n", encoding="utf-8")
+ 
+ 
+ def block(message: str) -> None:
+@@ -35,7 +51,20 @@ def block(message: str) -> None:
+ 
+ 
+ def rel(path: str) -> str:
+-    try:
+-        return str(Path(path).resolve().relative_to(PROJECT_DIR.resolve()))
+-    except Exception:
+-        return path
++    """Chemin relatif au projet, toujours avec des « / ».
++
++    Sous Windows, la casse est normalisée (minuscules) : les motifs de chemin s'évaluent sans tenir compte de la casse.
++    Un chemin hors du projet est renvoyé tel quel (en « / »).
++    """
++    if not path:
++        return ""
++    p = Path(path)
++    if not p.is_absolute():
++        p = PROJECT_DIR / p
++    target = os.path.normcase(str(p.resolve()))
++    root = os.path.normcase(str(PROJECT_DIR.resolve())).rstrip("\\/")
++    if target == root:
++        return ""
++    if target.startswith(root + os.sep):
++        return target[len(root) + 1:].replace(os.sep, "/")
++    return Path(path).as_posix()
+diff --git a/.claude/hooks/guard_bash.py b/.claude/hooks/guard_bash.py
+index 0c92f46..d693259 100644
+--- a/.claude/hooks/guard_bash.py
++++ b/.claude/hooks/guard_bash.py
+@@ -1,5 +1,9 @@
+ #!/usr/bin/env python3
+-"""PreToolUse (Bash) : bloque les commandes dangereuses ou qui contournent le harnais."""
++"""PreToolUse (Bash) : bloque les commandes dangereuses ou qui contournent le harnais.
++
++Ce filtre relève le niveau d'exigence mais n'est pas un bac à sable : les filets restent le journal,
++les subagents indépendants, la CI et la revue humaine.
++"""
+ import re
+ import sys
+ from pathlib import Path
+@@ -7,30 +11,55 @@ from pathlib import Path
+ sys.path.insert(0, str(Path(__file__).parent))
+ from _common import block, read_input  # noqa: E402
+ 
++# Seule exemption : un appel direct à rempart-state, sans enchaînement, redirection ni substitution.
++STATE_CMD = re.compile(r"^\s*(python3?|py)\s+\.claude/bin/rempart-state(\s|$)")
++SHELL_META = re.compile(r"[;&|<>`$\n\r]")
++
++HARNESS_PATH = re.compile(r"(\.claude/(settings|hooks|bin|state|agents|commands)\b|\bclaude\.md\b)", re.I)
++HARMLESS_REDIRECT = re.compile(r"\d?>>?\s*/dev/null|\d>&\d")
++WRITERS = re.compile(
++    r"(>|\btee\b|\bsed\s+(-\S*\s+)*-\S*i|\bperl\s+-\S*i|\bcp\b|\bmv\b|\brm\b|\bln\b|\bchmod\b|\btruncate\b|"
++    r"\binstall\b|\bdd\b|\brsync\b|\bgit\s+(checkout|restore|apply|stash|reset)\b|\bopen\(|\bwrite_text\(|"
++    r"\bwriteFile|\bSet-Content\b|\bOut-File\b|\bNew-Item\b|\bRemove-Item\b)"
++)
++
+ RULES = [
+     (r"\b(tofu|terraform)\b[^|;&]*\b(apply|destroy)\b",
+      "apply/destroy direct interdit. Utilise `make sandbox-apply` (approbation humaine requise)."),
+-    (r"\bgit\s+push\b[^|;&]*(--force|\s-f\b)", "push forcé interdit."),
++    (r"\bgit\s+push\b[^|;&]*(--force|\s-f\b|\s\+\S)", "push forcé interdit (y compris la forme +refspec)."),
+     (r"\bgit\s+(commit|push)\b[^|;&]*--no-verify", "contournement des hooks git interdit."),
+-    (r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+(/|~|\$HOME|\.\s*$|\*)", "suppression récursive dangereuse."),
++    (r"\bgit\s+commit\b[^|;&]*\s-[a-zA-Z]*n[a-zA-Z]*(\s|$)", "contournement des hooks git interdit (git commit -n)."),
++    (r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+(/|~|\$HOME|\.\s*$|\./?\*|\./?\s*$|\.git\b)", "suppression récursive dangereuse."),
+     (r"\baws\b[^|;&]*\b(delete-|terminate-|remove-|deregister-)", "commande AWS destructive interdite depuis l'agent."),
+     (r"\baz\b[^|;&]*\bdelete\b", "commande Azure destructive interdite depuis l'agent."),
+     (r"\b(scw|ovhcloud)\b[^|;&]*\b(delete|terminate)\b", "commande cloud souverain destructive interdite."),
+-    (r"(>|>>|\btee\b|\bsed\s+-i|\bcp\b|\bmv\b|\brm\b|\bchmod\b|\btruncate\b)[^|;&]*(\.claude/(settings|hooks|bin|state|agents|commands)|CLAUDE\.md)",
+-     "modification du harnais interdite. Pour changer de phase : `python3 .claude/bin/rempart-state phase <tests|impl|free>`."),
+     (r"\bgo\s+test\b[^|;&]*\s-skip\b", "exclusion de tests via -skip interdite dans le flux normal."),
+-    (r"\bmake\s+update-baseline\b", "la mise à jour des baselines d'eval se fait par une PR humaine explicite."),
++    (r"\bmake\s+update-baseline\b|--write-baseline\b",
++     "la mise à jour des baselines d'eval se fait par une PR humaine explicite."),
+ ]
+ 
+ 
++def touches_harness(cmd: str) -> bool:
++    """Vrai si la commande mentionne un chemin du harnais ET contient une opération d'écriture, dans n'importe quel ordre."""
++    if not HARNESS_PATH.search(cmd):
++        return False
++    return bool(WRITERS.search(HARMLESS_REDIRECT.sub(" ", cmd)))
++
++
+ def main() -> None:
+-    data = read_input()
++    data = read_input(fail_closed=True)
+     cmd = (data.get("tool_input") or {}).get("command", "")
+-    if re.match(r"^\s*python3\s+\.claude/bin/rempart-state\b", cmd):
++    norm = re.sub(r"/+", "/", cmd.replace("\\", "/"))  # chemins Windows, antislashs doublés compris
++    if STATE_CMD.match(norm) and not SHELL_META.search(norm):
+         sys.exit(0)
+     for pattern, reason in RULES:
+-        if re.search(pattern, cmd):
++        if re.search(pattern, norm):
+             block(f"BLOQUÉ : {reason}\nCommande : {cmd}")
++    if touches_harness(norm):
++        block(
++            "BLOQUÉ : modification du harnais interdite. Pour changer de phase : "
++            f"`python3 .claude/bin/rempart-state phase <tests|impl|free>`.\nCommande : {cmd}"
++        )
+     sys.exit(0)
+ 
+ 
+diff --git a/.claude/hooks/guard_edit.py b/.claude/hooks/guard_edit.py
+index 9785db9..b2933fa 100644
+--- a/.claude/hooks/guard_edit.py
++++ b/.claude/hooks/guard_edit.py
+@@ -1,12 +1,13 @@
+ #!/usr/bin/env python3
+ """PreToolUse (Edit|Write|MultiEdit).
+ 
+-1. Protège le harnais (.claude/settings.json, hooks, bin, state) contre toute modification par l'agent.
++1. Protège le harnais (.claude/settings.json, hooks, bin, state) et les baselines d'eval contre toute modification par l'agent.
+ 2. Applique la discipline TDD selon la phase courante :
+    - phase "tests" : seuls les tests, fixtures, evals et docs sont modifiables ;
+-   - phase "impl"  : les tests, cas d'eval et baselines sont gelés ;
++   - phase "impl"  : les tests et cas d'eval sont gelés ;
+    - phase "free"  : aucune restriction TDD (bootstrap, docs).
+ 3. Bloque l'écriture de secrets en clair.
++Les chemins sont comparés sans tenir compte de la casse (systèmes de fichiers Windows et macOS).
+ """
+ import re
+ import sys
+@@ -15,13 +16,17 @@ from pathlib import Path
+ sys.path.insert(0, str(Path(__file__).parent))
+ from _common import block, read_input, rel, state  # noqa: E402
+ 
+-PROTECTED = re.compile(r"^(CLAUDE\.md$|\.claude/(settings\.json|settings\.local\.json|hooks/|bin/|state/|agents/|commands/))")
++PROTECTED = re.compile(
++    r"^(CLAUDE\.md$|\.claude/(settings\.json|settings\.local\.json|hooks/|bin/|state/|agents/|commands/))", re.I
++)
++BASELINE = re.compile(r"^evals/.+/baseline\.json$", re.I)
+ TEST_FILE = re.compile(
+-    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|^evals/.*/baseline\.json$|"
+-    r"^modules/.*/tests?/|\.tftest\.hcl$|^evals/security/lab/)"
++    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|"
++    r"^modules/.*/tests?/|\.tftest\.hcl$|^evals/security/lab/)",
++    re.I,
+ )
+-DOC_FILE = re.compile(r"(^docs/|\.md$)")
+-SOURCE_FILE = re.compile(r"^(internal|cmd|pkg|policies|modules|web/src)/")
++DOC_FILE = re.compile(r"(^docs/|\.md$)", re.I)
++SOURCE_FILE = re.compile(r"^(internal|cmd|pkg|policies|modules|web/src)/", re.I)
+ 
+ SECRET_PATTERNS = [
+     (re.compile(r"AKIA[0-9A-Z]{16}"), "clé d'accès AWS"),
+@@ -33,6 +38,7 @@ SECRET_PATTERNS = [
+     (re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}"), "jeton Slack"),
+ ]
+ ALLOWED_FAKE = re.compile(r"(EXAMPLE|FAKE|DUMMY|PLACEHOLDER)")
++SKIP_CALL = re.compile(r"\bt\.(Skip|Skipf|SkipNow)\(")
+ 
+ 
+ def new_content(tool: str, ti: dict) -> str:
+@@ -46,7 +52,7 @@ def new_content(tool: str, ti: dict) -> str:
+ 
+ 
+ def main() -> None:
+-    data = read_input()
++    data = read_input(fail_closed=True)
+     tool = data.get("tool_name", "")
+     ti = data.get("tool_input", {}) or {}
+     path = rel(ti.get("file_path", ""))
+@@ -57,6 +63,8 @@ def main() -> None:
+             f"BLOQUÉ : {path} fait partie du harnais Rempart et ne peut pas être modifié par l'agent. "
+             "Si un changement du harnais est nécessaire, explique pourquoi à l'humain et propose le diff."
+         )
++    if BASELINE.search(path):
++        block(f"BLOQUÉ : {path} est une baseline d'eval. Elle ne change que par une PR humaine explicite.")
+ 
+     for pattern, label in SECRET_PATTERNS:
+         for m in pattern.finditer(content):
+@@ -74,11 +82,11 @@ def main() -> None:
+     if phase == "impl":
+         if is_test:
+             block(
+-                f"BLOQUÉ (phase impl) : {path} est un test, un cas d'eval ou une baseline, gelés pendant l'implémentation. "
++                f"BLOQUÉ (phase impl) : {path} est un test ou un cas d'eval, gelés pendant l'implémentation. "
+                 "Si un test est faux, arrête-toi, explique pourquoi, et repasse en phase tests avec "
+-                "`python3 .claude/bin/rempart-state phase tests` (le changement sera tracé dans STATUS.md)."
++                "`python3 .claude/bin/rempart-state phase tests --reason \"...\"` (le changement sera tracé dans STATUS.md)."
+             )
+-        if re.search(r"\bt\.Skip\(|\bt\.SkipNow\(", content):
++        if SKIP_CALL.search(content):
+             block("BLOQUÉ : ajout de t.Skip interdit en phase impl. Un test qui échoue se corrige, il ne se désactive pas.")
+     elif phase == "tests":
+         if SOURCE_FILE.search(path) and not is_test and not is_doc:
+diff --git a/.claude/hooks/post_edit_check.py b/.claude/hooks/post_edit_check.py
+index 4cc043d..f55c918 100644
+--- a/.claude/hooks/post_edit_check.py
++++ b/.claude/hooks/post_edit_check.py
+@@ -4,6 +4,7 @@
+ Formate le fichier puis lance une vérification rapide propre au langage.
+ En cas d'erreur, exit 2 : le message est renvoyé à Claude pour correction immédiate.
+ Les outils absents sont ignorés (bootstrap).
++En phase tests, un test Go peut appeler du code pas encore écrit : on n'y vérifie que la syntaxe, pas `go vet`.
+ """
+ import json
+ import shutil
+@@ -12,12 +13,13 @@ import sys
+ from pathlib import Path
+ 
+ sys.path.insert(0, str(Path(__file__).parent))
+-from _common import PROJECT_DIR, block, read_input, rel  # noqa: E402
++from _common import PROJECT_DIR, block, read_input, rel, state  # noqa: E402
+ 
+ 
+ def run(cmd, timeout=90):
+     try:
+-        p = subprocess.run(cmd, cwd=PROJECT_DIR, capture_output=True, text=True, timeout=timeout)
++        p = subprocess.run(cmd, cwd=PROJECT_DIR, capture_output=True, text=True, encoding="utf-8",
++                           errors="replace", timeout=timeout)
+         return p.returncode, (p.stdout + p.stderr).strip()
+     except subprocess.TimeoutExpired:
+         return 0, ""  # une vérification lente ne doit pas bloquer l'édition ; le Stop hook rattrapera
+@@ -32,9 +34,12 @@ def main() -> None:
+     ext = Path(path).suffix
+ 
+     if ext == ".go" and shutil.which("gofmt"):
+-        run(["gofmt", "-w", path])
+-        if shutil.which("go"):
+-            pkg = "./" + str(Path(r).parent)
++        code, out = run(["gofmt", "-e", "-w", path])
++        if code != 0:
++            block(f"Erreur de syntaxe Go dans {r} :\n{out[-3000:]}")
++        test_in_tests_phase = r.endswith("_test.go") and state("phase", "free") == "tests"
++        if shutil.which("go") and not test_in_tests_phase:
++            pkg = "./" + Path(r).parent.as_posix()
+             code, out = run(["go", "vet", pkg])
+             if code != 0:
+                 block(f"go vet échoue après modification de {r} :\n{out[-3000:]}")
+@@ -50,7 +55,7 @@ def main() -> None:
+ 
+     elif ext == ".json" and (r.startswith("schemas/") or "/references/" in r):
+         try:
+-            json.loads(Path(path).read_text())
++            json.loads(Path(path).read_text(encoding="utf-8"))
+         except Exception as e:  # noqa: BLE001
+             block(f"JSON invalide dans {r} : {e}")
+ 
+diff --git a/.claude/hooks/py.sh b/.claude/hooks/py.sh
+new file mode 100644
+index 0000000..b9d25a5
+--- /dev/null
++++ b/.claude/hooks/py.sh
+@@ -0,0 +1,19 @@
++#!/bin/sh
++# Lanceur portable des hooks Rempart : trouve un Python 3 qui fonctionne (python3, python ou py selon l'OS).
++# Usage : py.sh [--fail-closed] <script.py> [args...]
++# --fail-closed : sans Python, exit 2 (l'action est bloquée) au lieu de 1 (erreur non bloquante).
++# Un hook de garde qui ne peut pas s'exécuter doit bloquer, jamais laisser passer en silence.
++fail=1
++if [ "$1" = "--fail-closed" ]; then
++  fail=2
++  shift
++fi
++export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
++for p in python3 python py; do
++  # Vérifie que l'interpréteur fonctionne vraiment (l'alias python3 du Microsoft Store ne fait rien).
++  if "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' >/dev/null 2>&1; then
++    exec "$p" "$@"
++  fi
++done
++echo "Hook Rempart : aucun Python 3.8+ trouvé (python3, python, py). Installe Python 3." >&2
++exit "$fail"
+diff --git a/.claude/hooks/session_start.py b/.claude/hooks/session_start.py
+index f994c91..d7623d2 100644
+--- a/.claude/hooks/session_start.py
++++ b/.claude/hooks/session_start.py
+@@ -13,15 +13,15 @@ def main() -> None:
+              f"- Jalon courant : {state('milestone', 'non défini')}",
+              f"- Phase TDD : {state('phase', 'free')}"]
+     try:
+-        log = subprocess.run(["git", "log", "--oneline", "-8"], cwd=PROJECT_DIR,
+-                             capture_output=True, text=True, timeout=10).stdout.strip()
++        log = subprocess.run(["git", "log", "--oneline", "-8"], cwd=PROJECT_DIR, capture_output=True,
++                             text=True, encoding="utf-8", errors="replace", timeout=10).stdout.strip()
+         if log:
+             lines += ["- Derniers commits :", *["  " + l for l in log.splitlines()]]
+     except Exception:  # noqa: BLE001
+         pass
+     status = PROJECT_DIR / "docs" / "STATUS.md"
+     if status.exists():
+-        content = status.read_text().splitlines()
++        content = status.read_text(encoding="utf-8").splitlines()
+         lines += ["", "## Extrait de docs/STATUS.md", *content[:60]]
+         blocked = [l for l in content if "BLOCAGE" in l and "RÉSOLU" not in l]
+         if blocked:
+diff --git a/.claude/hooks/stop_verify.py b/.claude/hooks/stop_verify.py
+index d443d8e..383dc9d 100644
+--- a/.claude/hooks/stop_verify.py
++++ b/.claude/hooks/stop_verify.py
+@@ -1,8 +1,11 @@
+ #!/usr/bin/env python3
+-"""Stop : Claude ne peut pas terminer son tour avec un arbre de travail qui ne passe pas `make verify-quick`.
++"""Stop : Claude ne peut pas terminer son tour avec un arbre de travail qui ne passe pas la vérification.
+ 
+-- Si rien n'a changé depuis la dernière vérification verte : on laisse passer.
+-- Sinon on lance `make verify-quick`. Rouge : exit 2, Claude reçoit les erreurs et doit continuer.
++- Phase tests : les nouveaux tests échouent par construction ; on exige seulement que le code de
++  production compile (`go build ./...`), pour pouvoir s'arrêter et faire relire les tests.
++- Autres phases : `make verify-quick`.
++- Si rien n'a changé depuis la dernière vérification verte du même type : on laisse passer.
++- Rouge : exit 2, Claude reçoit les erreurs et doit continuer. Un outil absent (make, go) compte comme un échec.
+ - Coupe-circuit anti-boucle : après MAX_ATTEMPTS échecs consécutifs, on laisse Claude s'arrêter
+   mais on consigne un BLOCAGE dans docs/STATUS.md pour l'humain.
+ """
+@@ -20,8 +23,12 @@ TARGET = "verify-quick"
+ 
+ 
+ def sh(cmd, timeout=60):
+-    p = subprocess.run(cmd, cwd=PROJECT_DIR, capture_output=True, text=True, timeout=timeout)
+-    return p.returncode, p.stdout, p.stderr
++    try:
++        p = subprocess.run(cmd, cwd=PROJECT_DIR, capture_output=True, text=True, encoding="utf-8",
++                           errors="replace", timeout=timeout)
++        return p.returncode, p.stdout, p.stderr
++    except FileNotFoundError:
++        return 127, "", f"commande introuvable : {cmd[0]}"
+ 
+ 
+ def worktree_fingerprint() -> str:
+@@ -29,8 +36,8 @@ def worktree_fingerprint() -> str:
+     _, diff, _ = sh(["git", "diff", "HEAD", "--", ".", ":(exclude).claude/state"])
+     h.update(diff.encode())
+     _, untracked, _ = sh(["git", "ls-files", "--others", "--exclude-standard"])
+-    for f in sorted(untracked.split()):
+-        if f.startswith(".claude/state"):
++    for f in sorted(untracked.splitlines()):
++        if not f or f.startswith(".claude/state"):
+             continue
+         h.update(f.encode())
+         try:
+@@ -42,49 +49,62 @@ def worktree_fingerprint() -> str:
+ 
+ def has_target() -> bool:
+     mk = PROJECT_DIR / "Makefile"
+-    return mk.exists() and f"\n{TARGET}:" in "\n" + mk.read_text()
++    return mk.exists() and f"\n{TARGET}:" in "\n" + mk.read_text(encoding="utf-8")
++
++
++def check_plan():
++    """Renvoie (commande, libellé, clé d'état) selon la phase, ou None s'il n'y a rien à vérifier."""
++    if state("phase", "free") == "tests":
++        if (PROJECT_DIR / "go.mod").exists():
++            return ["go", "build", "./..."], "go build ./... (phase tests)", "last_compiled"
++        return None
++    if has_target():
++        return ["make", TARGET], f"make {TARGET}", "last_verified"
++    return None
+ 
+ 
+-def log_blocked(summary: str) -> None:
++def log_blocked(label: str, summary: str) -> None:
+     status = PROJECT_DIR / "docs" / "STATUS.md"
+     status.parent.mkdir(parents=True, exist_ok=True)
+     stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+-    with status.open("a") as f:
+-        f.write(f"\n- {stamp} BLOCAGE : `make {TARGET}` rouge après {MAX_ATTEMPTS} tentatives. "
++    with status.open("a", encoding="utf-8") as f:
++        f.write(f"\n- {stamp} BLOCAGE : `{label}` rouge après {MAX_ATTEMPTS} tentatives. "
+                 f"Intervention humaine requise. Dernière erreur : {summary}\n")
+ 
+ 
+ def main() -> None:
+     data = read_input()
+     rc, _, _ = sh(["git", "rev-parse", "--is-inside-work-tree"])
+-    if rc != 0 or not has_target():
++    plan = check_plan()
++    if rc != 0 or plan is None:
+         sys.exit(0)
++    cmd, label, key = plan
+ 
+     fp = worktree_fingerprint()
+-    if fp == state("last_verified"):
++    if fp == state(key):
+         set_state("stop_attempts", "0")
+         sys.exit(0)
+ 
+     attempts = int(state("stop_attempts", "0") or 0)
+     if data.get("stop_hook_active") and attempts >= MAX_ATTEMPTS:
+-        log_blocked("voir la sortie de la dernière exécution")
++        log_blocked(label, "voir la sortie de la dernière exécution")
+         set_state("stop_attempts", "0")
+         sys.exit(0)
+ 
+     try:
+-        rc, out, err = sh(["make", TARGET], timeout=840)
++        rc, out, err = sh(cmd, timeout=840)
+     except subprocess.TimeoutExpired:
+-        rc, out, err = 1, "", f"make {TARGET} a dépassé le délai."
++        rc, out, err = 1, "", f"{label} a dépassé le délai."
+ 
+     if rc == 0:
+-        set_state("last_verified", fp)
++        set_state(key, fp)
+         set_state("stop_attempts", "0")
+         sys.exit(0)
+ 
+     set_state("stop_attempts", str(attempts + 1))
+     tail = (out + "\n" + err).strip().splitlines()[-80:]
+     block(
+-        f"Tu ne peux pas terminer : `make {TARGET}` échoue (tentative {attempts + 1}/{MAX_ATTEMPTS}).\n"
++        f"Tu ne peux pas terminer : `{label}` échoue (tentative {attempts + 1}/{MAX_ATTEMPTS}).\n"
+         "Diagnostique la cause racine avant de modifier quoi que ce soit. Ne désactive aucun test.\n"
+         "--- fin de sortie ---\n" + "\n".join(tail)
+     )
+diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
+new file mode 100644
+index 0000000..fbdded0
+--- /dev/null
++++ b/.claude/hooks/test_hooks.sh
+@@ -0,0 +1,137 @@
++#!/usr/bin/env bash
++# Tests de non-régression des hooks Rempart. Usage : bash .claude/hooks/test_hooks.sh
++# Travaille dans un projet temporaire : n'écrit rien dans le vrai dépôt. Code retour 0 si tout passe.
++# Les cas qui demandent Go, gofmt ou make sont sautés (et signalés) si l'outil est absent.
++set -u
++SRC="$(cd "$(dirname "$0")/../.." && pwd)"
++T="$(mktemp -d)"
++trap 'rm -rf "$T"' EXIT
++mkdir -p "$T/.claude/state" "$T/docs"
++cp -r "$SRC/.claude/hooks" "$SRC/.claude/bin" "$T/.claude/"
++rm -rf "$T/.claude/hooks/__pycache__"
++printf '# STATUS\n' > "$T/docs/STATUS.md"
++(cd "$T" && git init -q && git -c core.autocrlf=false -c user.name=t -c user.email=t@t commit -q --allow-empty -m init)
++
++native() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
++TN="$(native "$T")"
++export CLAUDE_PROJECT_DIR="$TN" PYTHONUTF8=1 PYTHONIOENCODING=utf-8
++PY=""
++for p in python3 python py; do "$p" -c 'import sys' >/dev/null 2>&1 && { PY=$p; break; }; done
++[ -n "$PY" ] || { echo "Python 3 introuvable"; exit 1; }
++
++pass=0; fail=0; skipped=""
++check() { if [ "$1" = "$2" ]; then pass=$((pass + 1)); else fail=$((fail + 1)); echo "ÉCHEC : $3 (attendu $1, obtenu $2)"; fi; }
++hook() { sh "$T/.claude/hooks/py.sh" "$@" >/dev/null 2>&1; echo $?; }
++edit_json() { "$PY" -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$1" "${2:-x}"; }
++bash_json() { "$PY" -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' "$1"; }
++edit() { check "$1" "$(edit_json "$2" "${3:-x}" | hook --fail-closed "$T/.claude/hooks/guard_edit.py")" "edit $2"; }
++cmd() { check "$1" "$(bash_json "$2" | hook --fail-closed "$T/.claude/hooks/guard_bash.py")" "bash : $2"; }
++phase() { printf '%s\n' "$1" > "$T/.claude/state/phase"; }
++state_cmd() { (cd "$T" && "$PY" .claude/bin/rempart-state "$@" >/dev/null 2>&1); echo $?; }
++K="AKIA""ABCDEFGHIJKLMNOP"
++
++# --- guard_edit : harnais, baselines, secrets, entrée illisible
++phase free
++edit 2 "$TN/.claude/settings.json"
++edit 2 "$TN/CLAUDE.md"
++edit 2 "$TN/claude.md"
++edit 2 "$TN/.claude/state/phase"
++edit 2 ".claude/hooks/guard_edit.py"
++edit 2 "$TN/evals/intent/baseline.json"
++edit 0 "$TN/internal/x/x.go" "package x"
++edit 2 "$TN/internal/x/x.go" "k := \"$K\""
++edit 0 "$TN/internal/x/testdata/k.txt" "EXAMPLE $K"
++check 2 "$(printf '{"tool_name":"Write","tool_input":{"file_path":"x.go","content":"// \xc3\x81 %s"}}' "$K" | hook --fail-closed "$T/.claude/hooks/guard_edit.py")" "secret précédé d'un caractère non ASCII"
++check 2 "$(printf 'pas du json' | hook --fail-closed "$T/.claude/hooks/guard_edit.py")" "entrée illisible (fail-closed)"
++if command -v cygpath >/dev/null 2>&1; then
++  TW="$(cygpath -w "$T")"
++  edit 2 "$TW\\.claude\\settings.json"
++  edit 2 "$(printf '%s' "$TW" | tr '[:lower:]' '[:upper:]')\\.CLAUDE\\SETTINGS.JSON"
++fi
++# --- guard_edit : discipline TDD
++phase tests
++edit 2 "$TN/internal/x/x.go" "package x"
++edit 0 "$TN/internal/x/x_test.go" "package x"
++edit 0 "$TN/docs/plans/M0-x.md"
++phase impl
++edit 2 "$TN/internal/x/x_test.go" "package x"
++edit 2 "$TN/evals/intent/cases/a.yaml"
++edit 2 "$TN/internal/x/x.go" "t.Skipf(\"plus tard\")"
++edit 0 "$TN/internal/x/x.go" "package x"
++phase free
++
++# --- guard_bash
++cmd 2 "tofu apply -auto-approve"
++cmd 0 "tofu plan -out plan.bin"
++cmd 2 "python3 .claude/bin/rempart-state show; tofu apply -auto-approve"
++cmd 2 "python3 .claude/bin/rempart-state show && echo free > .claude/state/phase"
++cmd 0 "python3 .claude/bin/rempart-state phase impl --allow-green --reason \"caractérisation : l'API existe déjà\""
++cmd 0 "python .claude/bin/rempart-state show"
++cmd 2 "echo free > .claude/state/phase"
++cmd 2 "python -c \"open('.claude/settings.json','w').write('{}')\""
++cmd 2 "python -c \"p='.claude\\\\settings.json'; open(p,'w')\""
++cmd 0 "grep -n hooks .claude/settings.json 2>/dev/null"
++cmd 0 "cat CLAUDE.md"
++cmd 0 "ls .claude/hooks"
++cmd 2 "go run ./cmd/rempart-evals --suite all --write-baseline"
++cmd 2 "make update-baseline"
++cmd 2 "git push origin +main"
++cmd 2 "git push --force-with-lease origin main"
++cmd 0 "git push -u origin main"
++cmd 0 "git commit -m \"feat: add loop\""
++cmd 2 "git commit -n -m x"
++cmd 2 "rm -rf .git"
++cmd 0 "rm -rf build/"
++check 2 "$(printf 'pas du json' | hook --fail-closed "$T/.claude/hooks/guard_bash.py")" "bash : entrée illisible (fail-closed)"
++
++# --- py.sh sans Python : bloquant pour les gardes, non bloquant sinon
++SHBIN="$(command -v sh)"
++check 2 "$(printf '{}' | env PATH=/nonexistent "$SHBIN" "$T/.claude/hooks/py.sh" --fail-closed x.py >/dev/null 2>&1; echo $?)" "py.sh --fail-closed sans Python"
++check 1 "$(printf '{}' | env PATH=/nonexistent "$SHBIN" "$T/.claude/hooks/py.sh" x.py >/dev/null 2>&1; echo $?)" "py.sh sans Python"
++
++# --- session_start : UTF-8 et blocages résolus ignorés
++printf '# STATUS\n- 2026-01-01 BLOCAGE : ancien, RÉSOLU\n- 2026-01-02 BLOCAGE : actuel\n' > "$T/docs/STATUS.md"
++out="$(sh "$T/.claude/hooks/py.sh" "$T/.claude/hooks/session_start.py" 2>&1)"
++check 0 "$(printf '%s\n' "$out" | sed -n '/ATTENTION/,$p' | grep -c 'RÉSOLU')" "session_start : blocage résolu non signalé"
++check 1 "$(printf '%s\n' "$out" | sed -n '/ATTENTION/,$p' | grep -c 'BLOCAGE : actuel')" "session_start : blocage actif signalé"
++
++# --- rempart-state et stop_verify (Go requis)
++if command -v go >/dev/null 2>&1 && command -v gofmt >/dev/null 2>&1; then
++  printf 'module example.com/t\n\ngo 1.16\n' > "$T/go.mod"
++  (cd "$T" && git -c core.autocrlf=false add go.mod && git -c core.autocrlf=false -c user.name=t -c user.email=t@t commit -qm mod)
++  mkdir -p "$T/internal/loops"
++  LT="$T/internal/loops/loop_test.go"
++  printf 'package loops\n\nimport "testing"\n\nfunc TestNew(t *testing.T) { t.Fatal("pas encore implémenté") }\n' > "$LT"
++  phase tests; check 0 "$(state_cmd phase impl)" "impl accepté : test rouge dans un nouveau package"
++  phase tests; check 0 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop en phase tests : la compilation suffit"
++  printf 'package loops\n\nimport "testing"\n\nfunc TestNew(t *testing.T) { _ = New() }\n' > "$LT"
++  phase tests; check 0 "$(state_cmd phase impl)" "impl accepté : fonction absente"
++  phase tests; check 0 "$(edit_json "$LT" | hook "$T/.claude/hooks/post_edit_check.py")" "post_edit en phase tests : symbole absent toléré"
++  phase free; check 2 "$(edit_json "$LT" | hook "$T/.claude/hooks/post_edit_check.py")" "post_edit hors phase tests : go vet appliqué"
++  printf 'package loops\n\nimport "testing"\n\nfunc TestNew(t *testing.T) {}\n' > "$LT"
++  phase tests; check 1 "$(state_cmd phase impl)" "impl refusé : test déjà vert"
++  printf 'package loops\n\nfunc TestNew(t *testing.T) {\n' > "$LT"
++  phase tests; check 1 "$(state_cmd phase impl)" "impl refusé : erreur de syntaxe"
++  check 2 "$(edit_json "$LT" | hook "$T/.claude/hooks/post_edit_check.py")" "post_edit : erreur de syntaxe signalée"
++  rm -f "$LT"
++  phase impl; check 0 "$(state_cmd phase tests --reason 'retour : test mal spécifié')" "retour en tests avec raison"
++else
++  skipped="$skipped rempart-state/stop(phase tests)/post_edit(go absent)"
++fi
++check 0 "$("$PY" -c "import sys; open(sys.argv[1], encoding='utf-8').read()" "$TN/docs/STATUS.md" >/dev/null 2>&1; echo $?)" "STATUS.md reste en UTF-8"
++
++# --- stop_verify en phase free
++phase free
++printf 'verify-quick:\n\t@exit 1\n' > "$T/Makefile"
++printf 0 > "$T/.claude/state/stop_attempts"
++if command -v make >/dev/null 2>&1; then
++  check 2 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : verify-quick rouge bloque"
++  printf 'verify-quick:\n\t@exit 0\n' > "$T/Makefile"
++  check 0 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : verify-quick vert passe"
++  check 0 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : arbre inchangé, pas de nouvelle vérification"
++else
++  check 2 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : make absent compte comme un échec"
++fi
++
++echo "hooks : $pass réussis, $fail échoués${skipped:+ ; sautés :$skipped}"
++[ "$fail" -eq 0 ]
+diff --git a/.claude/settings.json b/.claude/settings.json
+index e09fc1b..bf5e2f2 100644
+--- a/.claude/settings.json
++++ b/.claude/settings.json
+@@ -22,7 +22,7 @@
+     "SessionStart": [
+       {
+         "hooks": [
+-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session_start.py" }
++          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_start.py\"" }
+         ]
+       }
+     ],
+@@ -30,13 +30,13 @@
+       {
+         "matcher": "Edit|Write|MultiEdit",
+         "hooks": [
+-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_edit.py" }
++          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" --fail-closed \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_edit.py\"" }
+         ]
+       },
+       {
+         "matcher": "Bash",
+         "hooks": [
+-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard_bash.py" }
++          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" --fail-closed \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_bash.py\"" }
+         ]
+       }
+     ],
+@@ -44,14 +44,14 @@
+       {
+         "matcher": "Edit|Write|MultiEdit",
+         "hooks": [
+-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post_edit_check.py", "timeout": 120 }
++          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_edit_check.py\"", "timeout": 120 }
+         ]
+       }
+     ],
+     "Stop": [
+       {
+         "hooks": [
+-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop_verify.py", "timeout": 900 }
++          { "type": "command", "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/py.sh\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop_verify.py\"", "timeout": 900 }
+         ]
+       }
+     ]
