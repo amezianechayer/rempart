@@ -1,4 +1,6 @@
 // Package tenancy handles tenant isolation, RBAC and identities.
 //
-// No code yet: created by M0-T01 from docs/00-VISION.md section 4.
+// M0 (docs/plans/M0-tenancy.md, ADR 0004): the tenant identifier ID, the
+// reserved System tenant, and the tenant carried by context.Context, checked
+// at every boundary with Require. RBAC and identities come in later milestones.
 package tenancy

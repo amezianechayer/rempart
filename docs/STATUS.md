@@ -48,6 +48,15 @@ aucun
   - Constat Go 1.27.1 : `go list ./...` sans `go.mod` répond `directory prefix . does not contain main module` (sans mentionner `go.mod`) ; `TestLoadPackagesErrors/no_go_mod` accepte `main module` ou `go.mod`.
   - Menace T33 ajoutée (contournement des règles d'architecture).
 
+- 2026-09-23 : **M0-T05 `tenancy` terminée** (plan `docs/plans/M0-tenancy.md`) :
+  - `internal/tenancy/tenant.go` : `ID` (UUID canonique en minuscules, version 4 et variante RFC 9562, sans normalisation, nul et max refusés), `System` = `00000000-0000-8000-8000-000000000001` (UUID version 8, hors de l'espace client), `ParseID`, `WithTenant` (jamais d'écrasement d'un autre tenant : `ErrTenantMismatch`), `FromContext` (revalide la valeur stockée), `Require`, `ErrNilContext` ; clé de contexte non exportée ; messages d'erreur sans donnée.
+  - Dépendance de test `pgregory.net/rapid v1.3.0` (MPL-2.0, tests seulement, aucune dépendance de module, absente des binaires).
+  - **ADR 0004 proposé** (`docs/decisions/0004-identifiant-de-tenant-et-tenant-systeme.md`) : format des identifiants et tenant système ; **à trancher par l'humain avant la première tâche de M1 qui stocke un identifiant**, avec la condition de la revue sécurité (`ParseCustomerID` qui refuse `System` aux frontières externes).
+  - Tests écrits par `test-author` (14 tests, 103 sous-tests, deux propriétés `rapid`), rouges sur `undefined:` ; implémentation conforme au code de référence de la section 5.1.
+  - Preuves : 15 critères conformes (critère 8 `go mod graph` et critère 15 corrigés dans le plan : valeurs attendues mal écrites, code conforme) ; mutations M1 à M8 toutes détectées ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** (1 moyen, 3 bas, 19 mutations détectées) ; `acceptance-verifier` **PASS**.
+  - Menaces T34 (usurpation du tenant système) et T35 (conversion directe `tenancy.ID(x)`).
+  - Note : `go test ./... -rapid.nofailfile` échoue sur les paquets qui n'importent pas rapid (drapeau inconnu) ; le drapeau ne se passe qu'aux paquets qui l'utilisent.
+
 ## En cours
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
 
@@ -64,7 +73,8 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T05, T06, T07, T13 ou T22, qui n'en ont pas besoin.
+- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T06, T07, T13 ou T22, qui n'en ont pas besoin.
+- Humain : trancher l'ADR 0004 (identifiant de tenant, tenant système) avant M1.
 - Tâche de durcissement de `internal/archtest` (revue M0-T02, 3 constats moyens, T33) : fichiers exclus par build tags ou GOOS (`IgnoredGoFiles`), `go.mod` imbriqué, SDK atteint par un module tiers ; en bas : `internal/*/*/{domain,adapters,fake}`, `C` et `unsafe` dans R1, règle « personne n'importe `internal/archtest` ». À faire avant le premier fichier `//go:build` non test ou la première dépendance qui enveloppe un SDK confiné.
 - **Avant M3 (création de `scripts/sandbox.sh`), obligatoire** : tâche de durcissement issue de la contre-revue de M0-T01 (plan `docs/plans/M0-squelette.md`, section 0) : confirmation et appel sur une ligne chaînée par `&&`, refus par test du préfixe `-`, de `.IGNORE` et de `MAKEFLAGS`, approbation hors de portée de l'agent (T31).
 - Avec M0-T04 au plus tard : règle archtest refusant `GNUmakefile` et `makefile`, `make -f Makefile` dans la CI, et proposition de harnais pour `make -f Makefile` dans le hook Stop (T32).
@@ -102,3 +112,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-23 19:40 [harnais] PHASE FREE (discipline TDD suspendue) : tâche archtest-imports (M0-T02) terminée
 
 - 2026-09-23 19:40 [harnais] phase : impl -> free
+
+- 2026-09-23 22:18 [harnais] phase : free -> tests
+
+- 2026-09-23 22:26 [harnais] phase : tests -> impl
+
+- 2026-09-23 22:32 [harnais] PHASE FREE (discipline TDD suspendue) : tâche tenancy (M0-T05) terminée
+
+- 2026-09-23 22:32 [harnais] phase : impl -> free
