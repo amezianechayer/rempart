@@ -59,3 +59,5 @@ Préalables humains restants (étape H0 du plan) avant `/task` M0-T01 :
 - 2026-09-23 15:23 [harnais] phase : free -> free
 
 - 2026-09-23 17:32 [harnais] jalon courant : M0
+
+- 2026-09-23 17:53 [harnais] phase : free -> tests
