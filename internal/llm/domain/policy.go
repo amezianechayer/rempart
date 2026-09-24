@@ -28,11 +28,13 @@ type TenantPolicy struct {
 
 const maxRegionLen = 32
 
+const modelVersion = `claude-[a-z]+(-[0-9]{1,2}){1,2}`
+
 var (
 	regionPattern  = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
-	anthropicModel = regexp.MustCompile(`^claude-[a-z0-9]+(-[a-z0-9]+)*-[0-9]{8}$`)
-	bedrockModel   = regexp.MustCompile(`^((eu|us|apac|global)\.)?anthropic\.claude-[a-z0-9]+(-[a-z0-9]+)*-[0-9]{8}-v[0-9]+:[0-9]+$`)
-	vertexModel    = regexp.MustCompile(`^claude-[a-z0-9]+(-[a-z0-9]+)*@[0-9]{8}$`)
+	anthropicModel = regexp.MustCompile(`^` + modelVersion + `(-[0-9]{8})?$`)
+	bedrockModel   = regexp.MustCompile(`^((eu|us|apac|global)\.)?anthropic\.` + modelVersion + `(-[0-9]{8}-v[0-9]+:[0-9]+|-v[0-9]+(:[0-9]+)?)?$`)
+	vertexModel    = regexp.MustCompile(`^` + modelVersion + `(@[0-9]{8})?$`)
 	genericModel   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$`)
 )
 

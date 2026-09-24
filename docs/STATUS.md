@@ -225,3 +225,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-24 19:17 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-client (M0-T11) terminée
 
 - 2026-09-24 19:17 [harnais] phase : impl -> free
+
+- 2026-09-24 22:34 [harnais] phase : free -> tests
+
+- 2026-09-24 22:51 [harnais] phase : tests -> impl

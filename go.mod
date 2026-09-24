@@ -5,12 +5,12 @@ go 1.27.1
 tool golang.org/x/vuln/cmd/govulncheck
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.75.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	pgregory.net/rapid v1.3.0
 )
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.75.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect

@@ -105,11 +105,13 @@ func TestCheckPolicyModelPinned(t *testing.T) {
 		ok       bool
 	}
 	models := []modelCase{
-		// anthropic (11)
+		// anthropic (13)
 		{"anthropic_sonnet", PlatformAnthropic, modelA, true},
 		{"anthropic_haiku", PlatformAnthropic, "claude-haiku-4-5-20251001", true},
 		{"anthropic_empty", PlatformAnthropic, "", false},
-		{"anthropic_no_date", PlatformAnthropic, "claude-sonnet-4-5", false},
+		{"anthropic_undated", PlatformAnthropic, "claude-sonnet-4-5", true},
+		{"anthropic_preview", PlatformAnthropic, "claude-mythos-preview", false},
+		{"anthropic_three_digits", PlatformAnthropic, "claude-opus-5-100", false},
 		{"anthropic_latest_alias", PlatformAnthropic, "claude-3-5-sonnet-latest", false},
 		{"anthropic_latest_suffix", PlatformAnthropic, "claude-sonnet-4-5-latest", false},
 		{"anthropic_capitalized", PlatformAnthropic, "Claude-Sonnet-4-5-20250929", false},
@@ -117,17 +119,19 @@ func TestCheckPolicyModelPinned(t *testing.T) {
 		{"anthropic_trailing_newline", PlatformAnthropic, modelA + "\n", false},
 		{"anthropic_short_date", PlatformAnthropic, "claude-sonnet-4-5-2025092", false},
 		{"anthropic_bedrock_id", PlatformAnthropic, modelB, false},
-		// bedrock (7)
+		// bedrock (9)
 		{"bedrock_regional", PlatformBedrock, modelB, true},
 		{"bedrock_eu_profile", PlatformBedrock, "eu." + modelB, true},
-		{"bedrock_no_date", PlatformBedrock, "anthropic.claude-sonnet-4-5", false},
+		{"bedrock_undated", PlatformBedrock, "anthropic.claude-sonnet-4-5", true},
+		{"bedrock_eu_undated", PlatformBedrock, "eu.anthropic.claude-opus-5", true},
+		{"bedrock_undated_revision", PlatformBedrock, "anthropic.claude-opus-4-6-v1", true},
 		{"bedrock_no_revision", PlatformBedrock, "anthropic.claude-sonnet-4-5-20250929-v1", false},
 		{"bedrock_anthropic_id", PlatformBedrock, modelA, false},
 		{"bedrock_unknown_geo", PlatformBedrock, "fr." + modelB, false},
 		{"bedrock_arn", PlatformBedrock, "arn:aws:bedrock:eu-west-3::foundation-model/" + modelB, false},
 		// vertex (5)
 		{"vertex_pinned", PlatformVertex, modelV, true},
-		{"vertex_no_date", PlatformVertex, "claude-sonnet-4-5", false},
+		{"vertex_undated", PlatformVertex, "claude-sonnet-4-5", true},
 		{"vertex_latest", PlatformVertex, "claude-sonnet-4-5@latest", false},
 		{"vertex_short_date", PlatformVertex, "claude-sonnet-4-5@2025092", false},
 		{"vertex_anthropic_id", PlatformVertex, modelA, false},
