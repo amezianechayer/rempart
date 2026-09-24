@@ -64,6 +64,12 @@ aucun
   - Menace T36 (contournement du masquage des secrets).
 
 ## En cours
+**M0-T07 `redaction` : BLOQUÉE, décision humaine requise** (2026-09-24). Travail sauvegardé en commit WIP sur `main-6cpq6q`, non accepté.
+- Plan `docs/plans/M0-redaction.md` avec amendements V1 (code de référence faux : 2 fuites, non-idempotences), V2 (revue BLOCK : 4 hautes, 5 moyennes) et V3 (correctifs, vue opaque des placeholders, paires `name`/`value`).
+- État : tests verts (17 tests, 85 cas positifs, propriétés `rapid`), `make verify-quick` vert ; acceptation : tout conforme sauf un dossier `testdata/rapid` parasite (supprimé) et des décomptes du plan à mettre à jour ; trou de couverture : la lecture relâchée de `PSK` et `Authorization` n'est protégée par aucun test (mutations X3, X4 survivantes).
+- **Contre-revue sécurité : BLOCK** : (haute) paire JSON `name`/`value` perdue si la valeur contient `{` (`kubectl -o json`, ECS : environ 1 mot de passe généré sur 3 à 6) ; (moyennes) régression sur l'octet NUL (`\x00sk-...`), `\"Authorization\"` échappé, `<pre_shared_key>` d'`ec2:DescribeVpnConnections` ; (basses) frontière consommée par `FindAll` (idempotence), placeholder forgé collé, nom en chemin SSM. Menaces proposées : placeholder forgé dans une donnée cloud (T7 bis), octets NUL (T7 ter).
+- **Même échec deux fois** (règle de `CLAUDE.md`) : deux revues BLOCK successives, chaque cycle d'expressions régulières ouvre de nouveaux cas. Changement d'approche à décider par l'humain (options dans la réponse de session du 2026-09-24) : (A) détection structurée (décodage JSON et YAML, parcours des clés) plus expressions pour le texte libre, par un plan d'architecte et un ADR ; (B) accepter le rédacteur actuel comme seconde barrière avec risque résiduel consigné, correction du seul constat haut, la minimisation et la quarantaine (T11, M1) restant la première barrière.
+
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
 
 Préalables humains (étape H0 du plan) :
@@ -79,7 +85,7 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T07, T13 ou T22, qui n'en ont pas besoin.
+- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T13 ou T22 (M0-T07 bloquée, voir « En cours »).
 - Humain : trancher l'ADR 0004 (identifiant de tenant, tenant système) avant M1.
 - Tâche de durcissement de `internal/archtest` (revue M0-T02, 3 constats moyens, T33) : fichiers exclus par build tags ou GOOS (`IgnoredGoFiles`), `go.mod` imbriqué, SDK atteint par un module tiers ; en bas : `internal/*/*/{domain,adapters,fake}`, `C` et `unsafe` dans R1, règle « personne n'importe `internal/archtest` ». À faire avant le premier fichier `//go:build` non test ou la première dépendance qui enveloppe un SDK confiné.
 - **Avant M3 (création de `scripts/sandbox.sh`), obligatoire** : tâche de durcissement issue de la contre-revue de M0-T01 (plan `docs/plans/M0-squelette.md`, section 0) : confirmation et appel sur une ligne chaînée par `&&`, refus par test du préfixe `-`, de `.IGNORE` et de `MAKEFLAGS`, approbation hors de portée de l'agent (T31).
@@ -134,3 +140,21 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-23 23:08 [harnais] PHASE FREE (discipline TDD suspendue) : tâche secret-value (M0-T06) terminée
 
 - 2026-09-23 23:08 [harnais] phase : impl -> free
+
+- 2026-09-23 23:49 [harnais] phase : free -> tests
+
+- 2026-09-24 00:52 [harnais] phase : tests -> impl
+
+- 2026-09-24 01:14 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T07 amendement V2 : revue securite BLOCK (4 fuites hautes, 5 moyennes) a rendre mecaniques par des cas de test rouges
+
+- 2026-09-24 01:14 [harnais] phase : impl -> tests
+
+- 2026-09-24 04:14 [harnais] phase : tests -> impl
+
+- 2026-09-24 10:03 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T07 : fixture de webhook Slack prise pour un vrai secret par la protection de push GitHub ; remplacement par une forme non reconnue, sans changer la regle testee
+
+- 2026-09-24 10:03 [harnais] phase : impl -> tests
+
+- 2026-09-24 10:04 [harnais] passage en impl avec tests verts (caractérisation) : fixture Slack reformulee pour la protection de push GitHub, meme regle testee
+
+- 2026-09-24 10:04 [harnais] phase : tests -> impl
