@@ -76,6 +76,13 @@ aucun
   - **À revérifier** (étape I0 impossible, documentation AWS et Google refusée par le proxy) : régions UE Bedrock et Vertex, formats d'identifiants de modèle, et surtout les destinations du profil d'inférence Bedrock `eu.` (doute de la revue : `eu-central-2`, Zurich, hors UE). À faire avant tout adaptateur Bedrock ou Vertex.
   - Menaces T40 (route vérifiée et route appelée distinctes), T41 (faux fournisseur hors test), T42 (délimiteur statique, homoglyphes).
 
+- 2026-09-24 : **M0-T09 `llm-schema-prompts` terminée avec réserves** (plan `docs/plans/M0-llm-schema-prompts.md`) :
+  - `internal/llm/schema` : `CompileSchema` (Draft 2020-12, profil strict : liste blanche de mots-clés, `additionalProperties: false` et `required` exhaustif, `$ref` limité à `#/$defs/...`, chargeur qui refuse tout accès fichier ou réseau), `Validate` (taille, UTF-8, clés en double, données après le JSON, nombres, profondeur ; erreurs donnant le chemin sans le contenu), `Raw` ; `internal/llm/prompts` : `Prompt`, `LoadFS`, `Load` (identifiant `<nom>.v<N>` vérifié avant tout accès, hash SHA-256 avec séparation de domaine et préfixes de longueur), FS embarqué vide jusqu'à M0-T19.
+  - Dépendance `github.com/santhosh-tekuri/jsonschema/v6 v6.0.3` (Apache 2.0 ; dépendances `dlclark/regexp2`, `golang.org/x/text` v0.14.0 ; aucun import réseau ni exécution de processus ; motifs `pattern` évalués par le moteur RE2 de Go).
+  - Code de référence du plan vérifié sur copie avant gel (aucun défaut) ; 16 tests, 18 mutations détectées ; critère 3 de `prompts/M0.md` couvert par `TestValidateRejectsOutOfSchema` (`TestOutOfSchemaRejected`, critère 6, relève de M0-T11) ; `make verify-quick` rc=0.
+  - `security-reviewer` **PASS** avec réserve (moyenne) : le contrôle de rigueur ne parcourt pas les clés sœurs d'un `enum`, `anyOf`, `oneOf` ou d'un type scalaire (un mot-clé hors liste peut y figurer ; une sortie non conforme reste rejetée) ; (basse) `LoadFS` lit un fichier entier avant le contrôle de taille et suit les liens d'un FS non embarqué. À corriger avant le premier prompt réel (M0-T19). Menace T43.
+  - `acceptance-verifier` : tout conforme sauf le critère `go tool govulncheck`, **invérifiable ici** (`vuln.go.dev` bloqué par le proxy) : à relancer par l'humain avec `make verify`.
+
 ## En cours
 Aucune tâche en cours.
 
@@ -94,7 +101,8 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T09 (schéma et prompts), T10, T13 ou T22.
+- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T10 (faux fournisseur), T13 ou T22.
+- Avant M0-T19 (premier prompt réel) : durcissement de `internal/llm/schema` et `prompts` (réserves de la revue M0-T09, T43).
 - Obligations pour M0-T10 à T12 (réserves de la revue M0-T08) : le service transmet exactement la route vérifiée par `CheckPolicy` (T40) ; `PlatformFake` refusé hors mode de développement explicite (T41) ; documenter et tester dans chaque fournisseur : `req.Validate()` avant toute I/O, respect de `ctx`, aucune journalisation du prompt ni du contenu, erreurs sans valeur d'entrée, comparaison `Response.Model` et `Route.Model` ; `RequestHash` réservé à la clé du faux, jamais utilisé comme identité de preuve.
 - Avant le premier appel à un modèle réel (M1) : refonte du rédacteur de secrets (garde de `prompts/M1.md`, constats ouverts de M0-T07).
 - Humain : trancher l'ADR 0004 (identifiant de tenant, tenant système) avant M1.
@@ -181,3 +189,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-24 10:40 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-contrat (M0-T08) terminée
 
 - 2026-09-24 10:40 [harnais] phase : impl -> free
+
+- 2026-09-24 11:36 [harnais] phase : free -> tests
+
+- 2026-09-24 11:47 [harnais] phase : tests -> impl
+
+- 2026-09-24 16:34 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-schema-prompts (M0-T09) terminée avec réserves
+
+- 2026-09-24 16:34 [harnais] phase : impl -> free
