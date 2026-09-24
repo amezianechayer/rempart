@@ -70,6 +70,12 @@ aucun
   - Écarts de protocole consignés : la correction V3 a été écrite par `test-author` sur copie puis appliquée par l'agent principal (indépendance compensée par la contre-revue et l'acceptation) ; fixture de webhook Slack reformulée après un refus de la protection de push GitHub (retour journalisé en phase tests, `--allow-green`).
   - Menaces T37 à T39.
 
+- 2026-09-24 : **M0-T08 `llm-contrat` terminée** (plan `docs/plans/M0-llm-contrat.md`, amendement V1) :
+  - `internal/llm/domain` (bibliothèque standard seulement, R1) : types du contrat, `Part` exactement un des deux, `Request.Validate`, `HasUntrusted`, `RenderUntrusted` (contenu échappé, aucune balise possible, `SourceID` filtré), `RequestHash` (JSON canonique versionné), `CheckPolicy` (résidence et rétention vides ou inconnues refusées, amendement A2 ; liste blanche UE ; modèle épinglé exigé par plateforme ; échec fermé), 8 erreurs sentinelles ; `internal/llm/ports` : interfaces `ModelProvider` et `RouteResolver` (sans route par défaut).
+  - Code de référence du plan vérifié sur copie par `test-author` avant gel (aucun défaut) ; 16 tests, 24 mutations détectées ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** avec réserves ; `acceptance-verifier` **PASS**.
+  - **À revérifier** (étape I0 impossible, documentation AWS et Google refusée par le proxy) : régions UE Bedrock et Vertex, formats d'identifiants de modèle, et surtout les destinations du profil d'inférence Bedrock `eu.` (doute de la revue : `eu-central-2`, Zurich, hors UE). À faire avant tout adaptateur Bedrock ou Vertex.
+  - Menaces T40 (route vérifiée et route appelée distinctes), T41 (faux fournisseur hors test), T42 (délimiteur statique, homoglyphes).
+
 ## En cours
 Aucune tâche en cours.
 
@@ -88,7 +94,8 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T08 (contrat LLM), T09, T10, T13 ou T22.
+- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T09 (schéma et prompts), T10, T13 ou T22.
+- Obligations pour M0-T10 à T12 (réserves de la revue M0-T08) : le service transmet exactement la route vérifiée par `CheckPolicy` (T40) ; `PlatformFake` refusé hors mode de développement explicite (T41) ; documenter et tester dans chaque fournisseur : `req.Validate()` avant toute I/O, respect de `ctx`, aucune journalisation du prompt ni du contenu, erreurs sans valeur d'entrée, comparaison `Response.Model` et `Route.Model` ; `RequestHash` réservé à la clé du faux, jamais utilisé comme identité de preuve.
 - Avant le premier appel à un modèle réel (M1) : refonte du rédacteur de secrets (garde de `prompts/M1.md`, constats ouverts de M0-T07).
 - Humain : trancher l'ADR 0004 (identifiant de tenant, tenant système) avant M1.
 - Tâche de durcissement de `internal/archtest` (revue M0-T02, 3 constats moyens, T33) : fichiers exclus par build tags ou GOOS (`IgnoredGoFiles`), `go.mod` imbriqué, SDK atteint par un module tiers ; en bas : `internal/*/*/{domain,adapters,fake}`, `C` et `unsafe` dans R1, règle « personne n'importe `internal/archtest` ». À faire avant le premier fichier `//go:build` non test ou la première dépendance qui enveloppe un SDK confiné.
@@ -166,3 +173,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-24 10:07 [harnais] PHASE FREE (discipline TDD suspendue) : tâche redaction (M0-T07) close avec réserves (décision déléguée par l'humain le 2026-09-24)
 
 - 2026-09-24 10:07 [harnais] phase : impl -> free
+
+- 2026-09-24 10:21 [harnais] phase : free -> tests
+
+- 2026-09-24 10:32 [harnais] phase : tests -> impl
+
+- 2026-09-24 10:40 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-contrat (M0-T08) terminée
+
+- 2026-09-24 10:40 [harnais] phase : impl -> free
