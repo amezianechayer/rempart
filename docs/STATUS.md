@@ -83,6 +83,10 @@ aucun
   - `security-reviewer` **PASS** avec réserve (moyenne) : le contrôle de rigueur ne parcourt pas les clés sœurs d'un `enum`, `anyOf`, `oneOf` ou d'un type scalaire (un mot-clé hors liste peut y figurer ; une sortie non conforme reste rejetée) ; (basse) `LoadFS` lit un fichier entier avant le contrôle de taille et suit les liens d'un FS non embarqué. À corriger avant le premier prompt réel (M0-T19). Menace T43.
   - `acceptance-verifier` : tout conforme sauf le critère `go tool govulncheck`, **invérifiable ici** (`vuln.go.dev` bloqué par le proxy) : à relancer par l'humain avec `make verify`.
 
+- 2026-09-24 : **M0-T10 `llm-fake` terminée** (plan `docs/plans/M0-llm-fake.md`, amendement V1) :
+  - `internal/llm/fake` : `Provider` déterministe à l'octet (enregistrements par `PromptID` et `RequestHash` prioritaires, scripts séquentiels par `PromptID`, jamais de réponse par défaut : `ErrNoRecording`, `ErrScriptExhausted`) ; ordre des contrôles : compteur, `ctx`, route (plateforme `fake` sans région), refus de tout `UntrustedBlock` par `WithTools` avant `Validate` et avant capture ; `Invocations()`, `Calls()`, `Requests()` (copies profondes, route reçue exposée pour T40) ; `Capabilities` par modèle, modèle inconnu : rétention exigée ; `LoadOptions` (JSON borné, champs inconnus refusés) ; `StaticResolver` sans route par défaut (`ErrNoRoute`), clés vérifiées par `ParseID`, copie défensive. Aucune journalisation, erreurs sans valeur d'entrée.
+  - Code de référence vérifié sur copie avant gel (un seul écart de formatage gofumpt, amendement V1) ; 16 tests sous `-race`, 18 mutations détectées ; `TestFakeDeterministic` (critère 6 de M0) ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** (3 constats bas : `LoadOptions` accepte un script vide, une étape vide et des clés en double ou de casse différente ; à durcir avec le décodage strict de T43 quand le faux chargera des fichiers en M0-T20) ; `acceptance-verifier` **PASS**.
+
 ## En cours
 Aucune tâche en cours.
 
@@ -101,7 +105,8 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T10 (faux fournisseur), T13 ou T22.
+- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T11 (service `llm.Client`), T13 ou T22.
+- Obligations restantes de T41 et T40 : M0-T11 refuse `PlatformFake` sauf option explicite de configuration, compare `Route.Model` et `Response.Model`, transmet exactement la route vérifiée (`TestServicePassesCheckedRoute`) et porte `TestOutOfSchemaRejected`, `TestNoRouteNoCall`, `TestRetentionZeroRejectsRetentionModel`, `TestUntrustedBlockRejectedWithTools`, `TestModelMismatchRejected` (critères 6 et 7 de M0) ; M0-T20 ne câble le faux que par `-dev`, avec un test de configuration de production sans faux.
 - Avant M0-T19 (premier prompt réel) : durcissement de `internal/llm/schema` et `prompts` (réserves de la revue M0-T09, T43).
 - Obligations pour M0-T10 à T12 (réserves de la revue M0-T08) : le service transmet exactement la route vérifiée par `CheckPolicy` (T40) ; `PlatformFake` refusé hors mode de développement explicite (T41) ; documenter et tester dans chaque fournisseur : `req.Validate()` avant toute I/O, respect de `ctx`, aucune journalisation du prompt ni du contenu, erreurs sans valeur d'entrée, comparaison `Response.Model` et `Route.Model` ; `RequestHash` réservé à la clé du faux, jamais utilisé comme identité de preuve.
 - Avant le premier appel à un modèle réel (M1) : refonte du rédacteur de secrets (garde de `prompts/M1.md`, constats ouverts de M0-T07).
@@ -197,3 +202,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-24 16:34 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-schema-prompts (M0-T09) terminée avec réserves
 
 - 2026-09-24 16:34 [harnais] phase : impl -> free
+
+- 2026-09-24 18:01 [harnais] phase : free -> tests
+
+- 2026-09-24 18:13 [harnais] phase : tests -> impl
+
+- 2026-09-24 18:21 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-fake (M0-T10) terminée
+
+- 2026-09-24 18:21 [harnais] phase : impl -> free
