@@ -1,4 +1,3 @@
-// Package llm holds ModelProvider, versioned prompts, redaction and untrusted-data quarantine.
-//
-// No code yet: created by M0-T01 from docs/00-VISION.md section 4.
+// Package llm is the only entry point of the domains to a language model
+// (ADR 0002). Client never logs and keeps no state: safe for concurrent use.
 package llm

@@ -87,6 +87,12 @@ aucun
   - `internal/llm/fake` : `Provider` déterministe à l'octet (enregistrements par `PromptID` et `RequestHash` prioritaires, scripts séquentiels par `PromptID`, jamais de réponse par défaut : `ErrNoRecording`, `ErrScriptExhausted`) ; ordre des contrôles : compteur, `ctx`, route (plateforme `fake` sans région), refus de tout `UntrustedBlock` par `WithTools` avant `Validate` et avant capture ; `Invocations()`, `Calls()`, `Requests()` (copies profondes, route reçue exposée pour T40) ; `Capabilities` par modèle, modèle inconnu : rétention exigée ; `LoadOptions` (JSON borné, champs inconnus refusés) ; `StaticResolver` sans route par défaut (`ErrNoRoute`), clés vérifiées par `ParseID`, copie défensive. Aucune journalisation, erreurs sans valeur d'entrée.
   - Code de référence vérifié sur copie avant gel (un seul écart de formatage gofumpt, amendement V1) ; 16 tests sous `-race`, 18 mutations détectées ; `TestFakeDeterministic` (critère 6 de M0) ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** (3 constats bas : `LoadOptions` accepte un script vide, une étape vide et des clés en double ou de casse différente ; à durcir avec le décodage strict de T43 quand le faux chargera des fichiers en M0-T20) ; `acceptance-verifier` **PASS**.
 
+- 2026-09-24 : **M0-T11 `llm-client` terminée** (plan `docs/plans/M0-llm-client.md`, amendement V1) :
+  - `internal/llm` : service `Client` (`NewClient`, `Structured`, `WithTools`, `Config`, `Result`, `Trace`). Ordre : tenant du contexte, `ctx`, refus d'un bloc non fiable avec outils, `Validate`, budget de tokens, borne de 1 Mio avant rédaction, outils, prompt chargé et hash vérifié (tous sans I/O) ; puis une seule résolution de route, refus de `PlatformFake` sauf `Config.AllowFakeRoute` explicite (T41), `CheckPolicy`, rédaction des messages (secret dans le prompt système ou un outil : refus), appel avec exactement la route vérifiée (T40), comparaison stricte du modèle déclaré, validation par schéma avec correction bornée (le message de correction ne reprend pas la sortie). Erreurs opaques, causes enveloppées, aucune journalisation.
+  - Critères de `prompts/M0.md` couverts : 3 (avec M0-T07 et T09), 6 (`TestFakeDeterministic`, `TestOutOfSchemaRejected`), 7 (`TestNoRouteNoCall`, `TestRetentionZeroRejectsRetentionModel`, `TestUntrustedBlockRejectedWithTools`, `TestModelMismatchRejected`), plus `TestServicePassesCheckedRoute` (T40) et `TestFakeRouteRefusedByDefault` (T41). Critères 8 et 9 : M0-T12.
+  - Code de référence vérifié sur copie avant gel (aucun défaut ; 3 mutations reformulées pour compiler, amendement V1) ; 19 tests sous `-race`, 28 mutations détectées ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** avec réserves ; `acceptance-verifier` **PASS**.
+  - Réserves de la revue : (moyenne) `InputSchema` des outils et schéma du prompt non contrôlés par le rédacteur (T44) ; (basses) `Usage` du fournisseur non vérifié (T45), liste d'outils non copiée après contrôle, texte rédigé pouvant dépasser 1 Mio.
+
 ## En cours
 Aucune tâche en cours.
 
@@ -105,7 +111,8 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T11 (service `llm.Client`), T13 ou T22.
+- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T12 (adaptateur Anthropic contre `httptest`, critères 8 et 9), T13 ou T22.
+- Avant M0-T19 (premier prompt réel) : contrôle des secrets dans `InputSchema` et dans le schéma du prompt (T44), copie profonde des outils vérifiés ; avec M0-T12 ou T14 : validation de `Usage` (T45).
 - Obligations restantes de T41 et T40 : M0-T11 refuse `PlatformFake` sauf option explicite de configuration, compare `Route.Model` et `Response.Model`, transmet exactement la route vérifiée (`TestServicePassesCheckedRoute`) et porte `TestOutOfSchemaRejected`, `TestNoRouteNoCall`, `TestRetentionZeroRejectsRetentionModel`, `TestUntrustedBlockRejectedWithTools`, `TestModelMismatchRejected` (critères 6 et 7 de M0) ; M0-T20 ne câble le faux que par `-dev`, avec un test de configuration de production sans faux.
 - Avant M0-T19 (premier prompt réel) : durcissement de `internal/llm/schema` et `prompts` (réserves de la revue M0-T09, T43).
 - Obligations pour M0-T10 à T12 (réserves de la revue M0-T08) : le service transmet exactement la route vérifiée par `CheckPolicy` (T40) ; `PlatformFake` refusé hors mode de développement explicite (T41) ; documenter et tester dans chaque fournisseur : `req.Validate()` avant toute I/O, respect de `ctx`, aucune journalisation du prompt ni du contenu, erreurs sans valeur d'entrée, comparaison `Response.Model` et `Route.Model` ; `RequestHash` réservé à la clé du faux, jamais utilisé comme identité de preuve.
@@ -210,3 +217,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-24 18:21 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-fake (M0-T10) terminée
 
 - 2026-09-24 18:21 [harnais] phase : impl -> free
+
+- 2026-09-24 18:48 [harnais] phase : free -> tests
+
+- 2026-09-24 19:06 [harnais] phase : tests -> impl
+
+- 2026-09-24 19:17 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-client (M0-T11) terminée
+
+- 2026-09-24 19:17 [harnais] phase : impl -> free
