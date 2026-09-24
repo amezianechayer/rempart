@@ -205,6 +205,24 @@ Tests : 85 cas positifs, 31 négatifs, 17 quasi-exemptions, 22 fixtures d'idempo
 
 ---
 
+## 0 quater. Clôture avec réserves (2026-09-24, prime sur le reste du document)
+
+Deux revues `security-reviewer` successives ont rendu BLOCK (V2, puis contre-revue de V3) : chaque cycle de correction par expressions régulières ouvre de nouveaux cas. Règle de `CLAUDE.md` (« même échec deux fois : changer d'approche ») : options présentées à l'humain, qui a délégué le choix à l'agent ; option retenue : **clore M0-T07 avec risque résiduel accepté**, parce qu'aucun modèle réel n'est appelé en M0 (faux LLM seulement, question Q4), donc aucune donnée réelle n'est exposée, et reporter les constats ouverts dans une tâche obligatoire avant le premier appel réel (`prompts/M1.md`), conçue autrement (détection structurée).
+
+Constats ouverts de la contre-revue de V3 (non corrigés dans M0-T07) :
+- (haute) paire JSON `name`/`value` perdue quand une chaîne de l'objet contient `{` ou `}` (`objectRe` ne saute pas les chaînes) : `kubectl -o json`, `ecs:DescribeTaskDefinition` ;
+- (moyenne) vrais octets NUL confondus avec la vue opaque des placeholders : `/proc/<pid>/environ` en clair, `\x00sk-...` non détecté (régression de V3) ;
+- (moyenne) clé `\"Authorization\"` échappée : valeur `Basic` en clair ;
+- (moyenne) `<pre_shared_key>` XML d'`ec2:DescribeVpnConnections` non couvert ;
+- (basse) frontière consommée par `FindAll` : deux URL à identifiants collées, la seconde masquée seulement à la seconde passe (idempotence) ;
+- (basse) placeholder forgé collé devant une clé ou un jeton (T38), ou dans un champ frère d'une paire ;
+- (basse) nom en chemin SSM (`/prod/db/password`) non lu par la règle des paires ;
+- trou de couverture : lecture relâchée de `PSK` et `Authorization` protégée par aucun test (mutations X3, X4 de l'acceptation).
+
+Critères du plan à lire avec les décomptes de V3 (défauts de rédaction, code conforme) : critère 1 : 85 ; critère 5 : 31, 17, 7, 16, 16, 18 ; critère 9 : `covered` renommé `inside` ; critère 19 : 18 lignes. Acceptation du 2026-09-24 : tous les critères conformes, script 8.4 à 0 violation, 22 mutations de la section 8.3 et une par constat F1 à F9 détectées (M6 et M22 d'origine sont des mutants équivalents, remplacés).
+
+---
+
 ## 1. Objectif
 
 Fournir `internal/llm/redact`, le rédacteur déterministe que `llm.Client` (T11) appliquera à toute partie de requête avant l'appel au fournisseur, et que `TestNoSecretInOutgoingRequest` (T12) utilisera pour inspecter les corps sortants. Chaque motif de `.claude/skills/llm-safety/references/redaction-patterns.md` est masqué par `[REDACTED:<kind>]` ; `Match` localise chaque masque par ses octets dans l'entrée, jamais par sa valeur ; `Redact` est idempotent ; `ContainsSecret(s)` vaut exactement « `Redact(s)` masquerait quelque chose ». Aucune décision n'est prise par un LLM (règle 1 du skill) : tout est expression régulière RE2 et règle d'exemption codée.
