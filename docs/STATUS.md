@@ -92,6 +92,12 @@ aucun
   - Critères de `prompts/M0.md` couverts : 3 (avec M0-T07 et T09), 6 (`TestFakeDeterministic`, `TestOutOfSchemaRejected`), 7 (`TestNoRouteNoCall`, `TestRetentionZeroRejectsRetentionModel`, `TestUntrustedBlockRejectedWithTools`, `TestModelMismatchRejected`), plus `TestServicePassesCheckedRoute` (T40) et `TestFakeRouteRefusedByDefault` (T41). Critères 8 et 9 : M0-T12.
   - Code de référence vérifié sur copie avant gel (aucun défaut ; 3 mutations reformulées pour compiler, amendement V1) ; 19 tests sous `-race`, 28 mutations détectées ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** avec réserves ; `acceptance-verifier` **PASS**.
   - Réserves de la revue : (moyenne) `InputSchema` des outils et schéma du prompt non contrôlés par le rédacteur (T44) ; (basses) `Usage` du fournisseur non vérifié (T45), liste d'outils non copiée après contrôle, texte rédigé pouvant dépasser 1 Mio.
+- 2026-09-24 : **M0-T12 `llm-anthropic` terminée** (plan `docs/plans/M0-llm-anthropic.md`, amendement V1) :
+  - `internal/llm/adapters/anthropic` : adaptateur `ModelProvider` sur anthropic-sdk-go v1.75.0 (MIT, épinglé en `834edd8`, sous-paquets bedrock, vertex et aws non importés). Client construit avec `option.WithoutEnvironmentDefaults()` (T46), client HTTP sans redirection ni proxy d'environnement et `Timeout` explicite (T47), `MaxRetries` 0 à 3, URL explicite obligatoire, clé `secret.Value` révélée une seule fois, `*sdk.Error` remplacée par `APIError{StatusCode, RequestID}` opaque (T48), refus avant I/O (plateforme, région, non fiable avec outils, requête invalide, contexte annulé), `output_config` json_schema et outils `strict`, `stop_reason` en liste blanche, `Usage` borné (T45 soldée), `Response.Model` lu dans la réponse.
+  - `internal/llm/domain/policy.go` : identifiants de modèle non datés acceptés (`claude-opus-5`, Bedrock `eu.anthropic.claude-opus-5`, Vertex nu), alias `latest`, `preview` et formes libres toujours refusés (41 cas).
+  - Critères de `prompts/M0.md` couverts : 8 (`TestProviderContract`, `TestResidencyEUBlocksAnthropicDirect`, `TestNoSecretInOutgoingRequest`, plus `TestAPIKeyOnlyInHeader`, `TestResponseMapping`, `TestNewValidatesConfig`), 9 (règle `sdk-confine-anthropic`).
+  - Code de référence vérifié sur copie avant gel (`provider.go` sans défaut ; jeton `preview` redondant retiré, amendement V1) ; 15 mutations sur 15 détectées ; `-race` vert ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** avec conditions ; `acceptance-verifier` **FAIL** sur le seul `govulncheck` (proxy : `vuln.go.dev` Forbidden), tous les autres critères PASS : clôture avec cette limite d'environnement, comme M0-T09.
+  - Conditions de la revue (à faire avant M0-T20 et avant tout adaptateur Bedrock ou Vertex) : (moyenne) regex trop larges, `claude-sonnet-4-5` (alias mobile documenté) et familles libres acceptés (T51) ; (moyenne) attente `Retry-After` sans délai global (T50) ; (basses) métadonnées de réponse non validées (T52), `Transport` injecté pouvant réactiver le proxy (T47), `tool_use` accepté sans outils, corps de réponse sans borne (T49). Menaces T46 à T52 ajoutées à `docs/02-THREAT-MODEL.md`.
 
 ## En cours
 Aucune tâche en cours.
@@ -111,8 +117,9 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T03 (pile de dev : exige un démon Docker, absent de la session cloud) ; sinon M0-T12 (adaptateur Anthropic contre `httptest`, critères 8 et 9), T13 ou T22.
-- Avant M0-T19 (premier prompt réel) : contrôle des secrets dans `InputSchema` et dans le schéma du prompt (T44), copie profonde des outils vérifiés ; avec M0-T12 ou T14 : validation de `Usage` (T45).
+- Prochaine tâche : `/task` M0-T13, T14, T15, T22 ou T23 ; M0-T03 et T20 exigent un démon Docker, absent de la session cloud.
+- **Avant M0-T20 et avant tout adaptateur Bedrock ou Vertex, obligatoire** (conditions de la revue M0-T12) : liste fermée des modèles publiés sans snapshot daté et date exigée sinon, jetons `preview`, `beta`, `experimental` refusés (T51) ; délai global par appel ou `MaxRetries` 0 (T50) ; borne du corps de réponse (T49) ; validation de `request-id`, `id`, `model` (T52) ; `Transport` injecté refusé s'il a un proxy (T47) ; `tool_use` accepté seulement avec outils.
+- Avant M0-T19 (premier prompt réel) : contrôle des secrets dans `InputSchema` et dans le schéma du prompt (T44), copie profonde des outils vérifiés .
 - Obligations restantes de T41 et T40 : M0-T11 refuse `PlatformFake` sauf option explicite de configuration, compare `Route.Model` et `Response.Model`, transmet exactement la route vérifiée (`TestServicePassesCheckedRoute`) et porte `TestOutOfSchemaRejected`, `TestNoRouteNoCall`, `TestRetentionZeroRejectsRetentionModel`, `TestUntrustedBlockRejectedWithTools`, `TestModelMismatchRejected` (critères 6 et 7 de M0) ; M0-T20 ne câble le faux que par `-dev`, avec un test de configuration de production sans faux.
 - Avant M0-T19 (premier prompt réel) : durcissement de `internal/llm/schema` et `prompts` (réserves de la revue M0-T09, T43).
 - Obligations pour M0-T10 à T12 (réserves de la revue M0-T08) : le service transmet exactement la route vérifiée par `CheckPolicy` (T40) ; `PlatformFake` refusé hors mode de développement explicite (T41) ; documenter et tester dans chaque fournisseur : `req.Validate()` avant toute I/O, respect de `ctx`, aucune journalisation du prompt ni du contenu, erreurs sans valeur d'entrée, comparaison `Response.Model` et `Route.Model` ; `RequestHash` réservé à la clé du faux, jamais utilisé comme identité de preuve.
@@ -229,3 +236,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-24 22:34 [harnais] phase : free -> tests
 
 - 2026-09-24 22:51 [harnais] phase : tests -> impl
+
+- 2026-09-24 23:03 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-anthropic (M0-T12) terminée
+
+- 2026-09-24 23:03 [harnais] phase : impl -> free
