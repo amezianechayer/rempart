@@ -99,6 +99,11 @@ aucun
   - Code de référence vérifié sur copie avant gel (`provider.go` sans défaut ; jeton `preview` redondant retiré, amendement V1) ; 15 mutations sur 15 détectées ; `-race` vert ; `make verify-quick` rc=0 ; `security-reviewer` **PASS** avec conditions ; `acceptance-verifier` **FAIL** sur le seul `govulncheck` (proxy : `vuln.go.dev` Forbidden), tous les autres critères PASS : clôture avec cette limite d'environnement, comme M0-T09.
   - Conditions de la revue (à faire avant M0-T20 et avant tout adaptateur Bedrock ou Vertex) : (moyenne) regex trop larges, `claude-sonnet-4-5` (alias mobile documenté) et familles libres acceptés (T51) ; (moyenne) attente `Retry-After` sans délai global (T50) ; (basses) métadonnées de réponse non validées (T52), `Transport` injecté pouvant réactiver le proxy (T47), `tool_use` accepté sans outils, corps de réponse sans borne (T49). Menaces T46 à T52 ajoutées à `docs/02-THREAT-MODEL.md`.
 
+- 2026-09-24 : **M0-T13 `loop-findings` terminée** (plan `docs/plans/M0-loop-findings.md`, amendement V1) :
+  - `internal/loops/domain/findings.go` (bibliothèque standard seulement) : `Severity.Weight` (100, 20, 5, 1, 0 ; inconnue : 100), `Sort` (copie, ordre total : poids, gravité, fichier, ligne, code, ressource, source, message), `Fingerprint` (SHA-256 hex des couples code et ressource de gravité medium ou plus, inconnue incluse, triés, dédoublonnés, encodés en netstring contre les collisions ; liste vide : SHA-256 de l'entrée vide), `Score` (somme des poids, doublons compris), `Top`.
+  - 8 tests dont deux propriétés `rapid` ; code de référence identique au plan, vérifié sur copie ; 10 mutations sur 10 détectées (M6 et M10 réécrites pour compiler, amendement V1) ; `make verify-quick` rc=0 ; revue sécurité non requise (fiche) ; `acceptance-verifier` : tous les critères PASS, FAIL sur le seul `make verify` (govulncheck, `vuln.go.dev` Forbidden), clôture avec cette limite d'environnement comme M0-T09 et M0-T12.
+  - Pour M0-T14 : une empreinte vide répétée (échec sans finding medium ou plus) vaut stagnation, à tester ; une montée de gravité ne change pas l'empreinte, surveiller aussi `Score` ; l'encodage est figé (rejeu Temporal). Proposition : reporter netstring, dédoublonnage et ordre total dans le skill `loop-engineering` (`normalized-findings.md`), modification à signaler ici.
+
 ## En cours
 Aucune tâche en cours.
 
@@ -117,7 +122,7 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T13, T14, T15, T22 ou T23 ; M0-T03 et T20 exigent un démon Docker, absent de la session cloud.
+- Prochaine tâche : `/task` M0-T14 (dépend de T13), T15, T22 ou T23 ; M0-T03 et T20 exigent un démon Docker, absent de la session cloud.
 - **Avant M0-T20 et avant tout adaptateur Bedrock ou Vertex, obligatoire** (conditions de la revue M0-T12) : liste fermée des modèles publiés sans snapshot daté et date exigée sinon, jetons `preview`, `beta`, `experimental` refusés (T51) ; délai global par appel ou `MaxRetries` 0 (T50) ; borne du corps de réponse (T49) ; validation de `request-id`, `id`, `model` (T52) ; `Transport` injecté refusé s'il a un proxy (T47) ; `tool_use` accepté seulement avec outils.
 - Avant M0-T19 (premier prompt réel) : contrôle des secrets dans `InputSchema` et dans le schéma du prompt (T44), copie profonde des outils vérifiés .
 - Obligations restantes de T41 et T40 : M0-T11 refuse `PlatformFake` sauf option explicite de configuration, compare `Route.Model` et `Response.Model`, transmet exactement la route vérifiée (`TestServicePassesCheckedRoute`) et porte `TestOutOfSchemaRejected`, `TestNoRouteNoCall`, `TestRetentionZeroRejectsRetentionModel`, `TestUntrustedBlockRejectedWithTools`, `TestModelMismatchRejected` (critères 6 et 7 de M0) ; M0-T20 ne câble le faux que par `-dev`, avec un test de configuration de production sans faux.
@@ -240,3 +245,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-24 23:03 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-anthropic (M0-T12) terminée
 
 - 2026-09-24 23:03 [harnais] phase : impl -> free
+
+- 2026-09-24 23:16 [harnais] phase : free -> tests
+
+- 2026-09-24 23:28 [harnais] phase : tests -> impl
+
+- 2026-09-24 23:30 [harnais] PHASE FREE (discipline TDD suspendue) : tâche loop-findings (M0-T13) terminée
+
+- 2026-09-24 23:30 [harnais] phase : impl -> free
