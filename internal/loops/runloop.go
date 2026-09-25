@@ -94,7 +94,7 @@ type LoopResult struct {
 
 // RunLoop proposes and verifies until the verifier accepts a candidate, or a
 // budget, a stagnation or a failed activity escalates. An escalation is a
-// result, not an error: only an invalid spec fails the workflow.
+// result, not an error: only an invalid spec or a cancellation ends in error.
 func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (LoopResult, error) {
 	if err := spec.Validate(); err != nil {
 		return LoopResult{}, err
@@ -140,6 +140,9 @@ func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (Loop
 		}
 		var prop ProposeResponse
 		perr := workflow.ExecuteActivity(pctx, spec.ProposeActivity, req).Get(ctx, &prop)
+		if ctx.Err() != nil { // cancellation is no proposer failure (obligation b)
+			return LoopResult{}, ctx.Err()
+		}
 		if perr != nil {
 			prop.Tokens = failedTokens(perr)
 		}
@@ -168,6 +171,9 @@ func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (Loop
 		var vr VerifyResult
 		vreq := VerifyRequest{Payload: payload, Candidate: prop.Candidate, Iteration: it}
 		if err := workflow.ExecuteActivity(ctx, spec.VerifyActivity, vreq).Get(ctx, &vr); err != nil {
+			if ctx.Err() != nil { // cancellation is no verifier failure (obligation b)
+				return LoopResult{}, ctx.Err()
+			}
 			return escalate(ReasonActivityFailed) // Temporal retries only
 		}
 		fp, score := domain.Fingerprint(vr.Findings), domain.Score(vr.Findings)

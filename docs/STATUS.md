@@ -276,3 +276,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-25 12:44 [harnais] PHASE FREE (discipline TDD suspendue) : tâche runloop (M0-T14) terminée
 
 - 2026-09-25 12:44 [harnais] phase : impl -> free
+
+- 2026-09-25 21:48 [harnais] phase : free -> tests
+
+- 2026-09-25 22:10 [harnais] phase : tests -> impl

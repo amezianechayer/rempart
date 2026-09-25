@@ -569,3 +569,22 @@ func TestRunLoopLimitsFrozen(t *testing.T) {
 		t.Errorf("limits %v, want %v", got, frozen)
 	}
 }
+
+func TestRunLoopCanceled(t *testing.T) {
+	for _, name := range []string{proposeName, verifyName} {
+		t.Run(name, func(t *testing.T) {
+			s := newScript(fail(high("A")), pass())
+			var fn any = s.propose
+			if name == verifyName {
+				fn = s.verify
+			}
+			_, err := execute(t, testSpec(), s, func(env *testsuite.TestWorkflowEnvironment) {
+				env.OnActivity(name, mock.Anything, mock.Anything).Return(fn).After(30 * time.Minute)
+				env.RegisterDelayedCallback(env.CancelWorkflow, 10*time.Minute)
+			})
+			if !temporal.IsCanceledError(err) {
+				t.Fatalf("error %v: a cancellation is neither an escalation nor a failure", err)
+			}
+		})
+	}
+}
