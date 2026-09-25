@@ -47,6 +47,7 @@ opa-test:
 
 arch-test:
 	go test -count=1 ./internal/archtest/...
+	go tool workflowcheck ./internal/loops/...
 
 # Evals : livrées par M0-T23 (cmd/rempart-evals). Avant : code 2, aucune action.
 evals:
