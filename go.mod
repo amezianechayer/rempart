@@ -10,6 +10,8 @@ tool (
 require (
 	github.com/anthropics/anthropic-sdk-go v1.75.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/stretchr/testify v1.11.1
+	go.temporal.io/sdk v1.49.0
 	pgregory.net/rapid v1.3.0
 )
 
@@ -31,13 +33,11 @@ require (
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.temporal.io/api v1.63.5 // indirect
-	go.temporal.io/sdk v1.49.0 // indirect
 	go.temporal.io/sdk/contrib/tools/workflowcheck v0.5.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/mod v0.41.0 // indirect

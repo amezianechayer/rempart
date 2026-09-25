@@ -1,4 +1,4 @@
-// Package loops holds the Temporal workflows, one per loop.
-//
-// No code yet: created by M0-T01 from docs/00-VISION.md section 4.
+// Package loops holds the generic loop workflow RunLoop and, later, one
+// workflow per product loop. RunLoop knows no domain: payload and candidates
+// are opaque JSON, findings are normalized by package domain.
 package loops

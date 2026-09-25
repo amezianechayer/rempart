@@ -253,3 +253,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-24 23:30 [harnais] PHASE FREE (discipline TDD suspendue) : tâche loop-findings (M0-T13) terminée
 
 - 2026-09-24 23:30 [harnais] phase : impl -> free
+
+- 2026-09-25 10:32 [harnais] phase : free -> tests
+
+- 2026-09-25 10:39 [harnais] phase : tests -> impl

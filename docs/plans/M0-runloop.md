@@ -4,7 +4,7 @@
 
 ## 0. Amendements
 
-(aucun)
+- V1 (2026-09-25, `test-author`, étape A2) : mutation M13 réécrite pour compiler, même sens (findings de la dernière itération au lieu de ceux du meilleur) : `NEW` = `res.Status, res.Reason, res.Best, res.Remaining = StatusEscalated, r, best, domain.Sort(append(remaining[:0:0], last...))`, détectée par T9. Code de référence et tests inchangés ; 15 mutations sur 15 détectées ; points non vérifiés 1 à 4 levés (workflowcheck sans faux positif, frontière d'horloge exacte, testify indirect compilable) ; `go mod tidy` exige le réseau (proxy de modules), testify et le SDK Temporal passent en dépendances directes.
 
 ## 1. Objet et périmètre
 `RunLoop` : proposer, vérifier, diagnostiquer ; budgets itérations, tokens, temps ; stagnation ; escalade ; meilleur candidat ; sans domaine. Critère 2 de `prompts/M0.md`, première partie. Dans : `internal/loops/{doc.go,spec.go,runloop.go,runloop_test.go}`, `go.mod`, `go.sum`, `Makefile` (étape 0), `docs/STATUS.md`. Hors : approbations (T15), workflow de démonstration et câblage worker (T19, T20), annulation du workflow (traitée comme un échec d'activité), `ContinueAsNew` et chiffrement des payloads (M1, ADR 0001), spans OpenTelemetry et métriques (M1).
