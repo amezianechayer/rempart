@@ -1,0 +1,36 @@
+diff --git a/.claude/hooks/post_edit_check.py b/.claude/hooks/post_edit_check.py
+--- a/.claude/hooks/post_edit_check.py
++++ b/.claude/hooks/post_edit_check.py
+@@ -5,6 +5,7 @@
+ En cas d'erreur, exit 2 : le message est renvoyé à Claude pour correction immédiate.
+ Les outils absents sont ignorés (bootstrap).
+ En phase tests, un test Go peut appeler du code pas encore écrit : on n'y vérifie que la syntaxe, pas `go vet`.
++Un fichier hors du dépôt n'est ni formaté ni vérifié : `go vet ./<chemin absolu>` échouerait depuis le dépôt.
+ """
+ import json
+ import shutil
+@@ -30,6 +31,10 @@ def main() -> None:
+     path = (data.get("tool_input") or {}).get("file_path", "")
+     if not path or not Path(path).exists():
+         sys.exit(0)
++    try:
++        Path(path).resolve().relative_to(PROJECT_DIR.resolve())
++    except ValueError:
++        sys.exit(0)  # hors du dépôt (copie de vérification, scratchpad) : ni formatage ni vérification
+     r = rel(path)
+     ext = Path(path).suffix
+
+diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
+--- a/.claude/hooks/test_hooks.sh
++++ b/.claude/hooks/test_hooks.sh
+@@ -138,5 +138,9 @@
+   printf 'package loops\n\nfunc TestNew(t *testing.T) {\n' > "$LT"
+   phase tests; check 1 "$(state_cmd phase impl)" "impl refusé : erreur de syntaxe"
+   check 2 "$(edit_json "$LT" | hook "$T/.claude/hooks/post_edit_check.py")" "post_edit : erreur de syntaxe signalée"
++  OUTSIDE="$(mktemp -d)"
++  printf 'package x\n\nfunc {\n' > "$OUTSIDE/x_test.go"
++  check 0 "$(edit_json "$OUTSIDE/x_test.go" | hook "$T/.claude/hooks/post_edit_check.py")" "post_edit hors du dépôt : ignoré"
++  rm -rf "$OUTSIDE"
+   rm -f "$LT"
+   phase impl; check 0 "$(state_cmd phase tests --reason 'retour : test mal spécifié')" "retour en tests avec raison"
+ else
