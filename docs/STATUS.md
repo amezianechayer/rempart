@@ -118,7 +118,7 @@ aucun
   - Revues : `security-reviewer` **PASS** (conditions ci-dessous) ; `acceptance-verifier` **PASS** ; `make verify` bloqué au seul `govulncheck` (`vuln.go.dev` 403 ; le relecteur signale aussi un binaire govulncheck construit en go1.26 à reconstruire en go1.27).
   - Menaces : T56 (rejeu d'approbation), T57 (différentiel d'analyse JSON) ajoutées ; T18, T41 étendues.
 ## En cours
-Aucune tâche en cours.
+M0-T22 `evals-core` : plan `docs/plans/M0-evals-core.md` rédigé (complet, 36 Ko, dernière passe de réduction interrompue), en phase free, aucun test ni code. **En pause** : limite hebdomadaire d'usage atteinte le 2026-09-25 (réinitialisation le 2026-09-29 à 14 h UTC) ; `test-author`, `security-reviewer` et `acceptance-verifier` sont indisponibles d'ici là, et le protocole exige leur indépendance. Reprise : relire le plan, `phase tests`, `test-author` (A1, A2 sur copie).
 
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
 
