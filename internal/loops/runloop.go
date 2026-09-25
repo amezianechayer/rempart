@@ -2,6 +2,7 @@ package loops
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"time"
 
@@ -24,6 +25,12 @@ type ProposeRequest struct {
 type ProposeResponse struct {
 	Candidate json.RawMessage `json:"candidate"`
 	Tokens    int             `json:"tokens"`
+}
+
+// ProposeFailure is the detail of a proposer ApplicationError that spent
+// tokens; untrusted, bounded like ProposeResponse.Tokens (T10, T45).
+type ProposeFailure struct {
+	Tokens int `json:"tokens"`
 }
 
 // VerifyRequest is the input of the verifier activity.
@@ -65,6 +72,7 @@ const (
 type IterationTrace struct {
 	Iteration   int    `json:"iteration"`
 	Strategy    string `json:"strategy"`
+	Failed      bool   `json:"failed"`
 	Verified    bool   `json:"verified"`
 	Fingerprint string `json:"fingerprint,omitempty"`
 	Score       int    `json:"score"`
@@ -102,6 +110,8 @@ func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (Loop
 			NonRetryableErrorTypes: NonRetryableErrorTypes(),
 		},
 	})
+	// T10: one attempt per paid call; RunLoop retries within the budgets.
+	pctx := workflow.WithRetryPolicy(ctx, temporal.RetryPolicy{MaximumAttempts: 1})
 	start := workflow.Now(ctx)
 	timeUp := func() bool { return workflow.Now(ctx).Sub(start) >= spec.Budget.MaxWallTime }
 
@@ -113,6 +123,7 @@ func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (Loop
 		haveBest        bool
 		lastFP          string
 		same, strat     int
+		failures        int
 	)
 	escalate := func(r Reason) (LoopResult, error) {
 		res.Status, res.Reason, res.Best, res.Remaining = StatusEscalated, r, best, remaining
@@ -128,16 +139,28 @@ func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (Loop
 			Findings: domain.Top(last, MaxFindingsToPropose), Iteration: it,
 		}
 		var prop ProposeResponse
-		if err := workflow.ExecuteActivity(ctx, spec.ProposeActivity, req).Get(ctx, &prop); err != nil {
-			return escalate(ReasonActivityFailed)
+		perr := workflow.ExecuteActivity(pctx, spec.ProposeActivity, req).Get(ctx, &prop)
+		if perr != nil {
+			prop.Tokens = failedTokens(perr)
 		}
 		if prop.Tokens < 0 || prop.Tokens > MaxTokensLimit {
 			return escalate(ReasonInvalidResponse)
 		}
 		res.Iterations, res.Tokens = it, res.Tokens+prop.Tokens
-		res.Trace = append(res.Trace, IterationTrace{Iteration: it, Strategy: req.Strategy, Tokens: prop.Tokens})
+		res.Trace = append(res.Trace, IterationTrace{Iteration: it, Strategy: req.Strategy, Failed: perr != nil, Tokens: prop.Tokens})
 		if res.Tokens > spec.Budget.MaxTokens {
 			return escalate(ReasonBudgetTokens)
+		}
+		if perr != nil {
+			failures++
+			if !retryable(perr) || failures >= MaxActivityAttempts {
+				return escalate(ReasonActivityFailed)
+			}
+			continue // same request; time checked first
+		}
+		failures = 0
+		if emptyCandidate(prop.Candidate) { // T53: empty desired state
+			return escalate(ReasonInvalidResponse)
 		}
 		if timeUp() { // T10: no verification past the wall time budget
 			return escalate(ReasonBudgetTime)
@@ -145,7 +168,7 @@ func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (Loop
 		var vr VerifyResult
 		vreq := VerifyRequest{Payload: payload, Candidate: prop.Candidate, Iteration: it}
 		if err := workflow.ExecuteActivity(ctx, spec.VerifyActivity, vreq).Get(ctx, &vr); err != nil {
-			return escalate(ReasonActivityFailed)
+			return escalate(ReasonActivityFailed) // Temporal retries only
 		}
 		fp, score := domain.Fingerprint(vr.Findings), domain.Score(vr.Findings)
 		tr := &res.Trace[len(res.Trace)-1]
@@ -156,6 +179,9 @@ func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (Loop
 			}
 			res.Status, res.Best, res.Remaining = StatusConverged, prop.Candidate, domain.Sort(vr.Findings)
 			return res, nil
+		}
+		if len(vr.Findings) == 0 { // T53: failure without finding
+			return escalate(ReasonInvalidResponse)
 		}
 		if !haveBest || score < bestScore {
 			best, bestScore, remaining, haveBest = prop.Candidate, score, domain.Sort(vr.Findings), true
@@ -185,4 +211,25 @@ func blocking(f []domain.Finding) bool {
 	return slices.ContainsFunc(f, func(x domain.Finding) bool {
 		return x.Severity.Weight() >= domain.SeverityMedium.Weight()
 	})
+}
+
+// failedTokens reads the ProposeFailure detail: 0 if absent, -1 if undecodable.
+func failedTokens(err error) int {
+	var ae *temporal.ApplicationError
+	var f ProposeFailure
+	if errors.As(err, &ae) && ae.HasDetails() && ae.Details(&f) != nil {
+		return -1
+	}
+	return f.Tokens
+}
+
+// retryable reports a retryable application error (no timeout, cancellation or panic).
+func retryable(err error) bool {
+	var ae *temporal.ApplicationError
+	return errors.As(err, &ae) && !ae.NonRetryable() && !slices.Contains(NonRetryableErrorTypes(), ae.Type())
+}
+
+// emptyCandidate reports a candidate without content (encoding/json compacted it).
+func emptyCandidate(c json.RawMessage) bool {
+	return slices.Contains([]string{"", "null", `""`, "{}", "[]"}, string(c))
 }

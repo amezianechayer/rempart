@@ -30,6 +30,7 @@ const (
 	MaxStrategies        = 10
 	MaxFindingsToPropose = 20
 	MaxActivityAttempts  = 3
+	MaxEscalateAfter     = 10
 )
 
 // Budget bounds one run; every field is required.
@@ -75,7 +76,7 @@ func (s LoopSpec) Validate() error {
 		return invalidSpec("token budget")
 	case b.MaxWallTime <= 0 || b.MaxWallTime > MaxWallTimeLimit:
 		return invalidSpec("wall time budget")
-	case s.SwitchAfter < 1 || s.SwitchAfter >= s.EscalateAfter:
+	case s.SwitchAfter < 1 || s.SwitchAfter >= s.EscalateAfter || s.EscalateAfter > MaxEscalateAfter:
 		return invalidSpec("stagnation thresholds")
 	case s.ActivityTimeout < MinActivityTimeout || s.ActivityTimeout > MaxActivityTimeout:
 		return invalidSpec("activity timeout")

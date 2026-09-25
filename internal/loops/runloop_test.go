@@ -37,6 +37,7 @@ func high(code string) domain.Finding { return fnd(domain.SeverityHigh, code) }
 type step struct {
 	tokens                int
 	ok                    bool
+	cand                  json.RawMessage
 	findings              []domain.Finding
 	proposeErr, verifyErr error
 }
@@ -73,7 +74,11 @@ func (s *script) propose(_ context.Context, req ProposeRequest) (ProposeResponse
 	if st.proposeErr != nil {
 		return ProposeResponse{}, st.proposeErr
 	}
-	return ProposeResponse{Candidate: candidate(req.Iteration), Tokens: st.tokens}, nil
+	c := candidate(req.Iteration)
+	if st.cand != nil {
+		c = st.cand
+	}
+	return ProposeResponse{Candidate: c, Tokens: st.tokens}, nil
 }
 
 func (s *script) verify(_ context.Context, req VerifyRequest) (VerifyResult, error) {
@@ -205,7 +210,7 @@ func TestRunLoopStagnationEscalates(t *testing.T) {
 		steps []step
 	}{
 		{"same findings", []step{fail(high("A")), fail(high("A")), fail(high("A")), pass()}},
-		{"no blocking finding", []step{fail(), fail(fnd(domain.SeverityLow, "L")), fail(fnd(domain.SeverityInfo, "I")), pass()}},
+		{"no blocking finding", []step{fail(fnd(domain.SeverityInfo, "I0")), fail(fnd(domain.SeverityLow, "L")), fail(fnd(domain.SeverityInfo, "I")), pass()}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -396,6 +401,7 @@ func TestRunLoopInvalidSpecRejected(t *testing.T) {
 		with(func(s *LoopSpec) { s.ActivityTimeout = -time.Second }),
 		with(func(s *LoopSpec) { s.ActivityTimeout = MinActivityTimeout - time.Millisecond }),
 		with(func(s *LoopSpec) { s.ActivityTimeout = MaxActivityTimeout + time.Second }),
+		with(func(s *LoopSpec) { s.EscalateAfter = MaxEscalateAfter + 1 }),
 	}
 	isInvalidSpec := func(err error) bool {
 		var ae *temporal.ApplicationError
@@ -412,6 +418,7 @@ func TestRunLoopInvalidSpecRejected(t *testing.T) {
 		with(func(s *LoopSpec) {
 			s.Budget = Budget{MaxIterations: MaxIterationsLimit, MaxTokens: MaxTokensLimit, MaxWallTime: MaxWallTimeLimit}
 			s.ActivityTimeout = MaxActivityTimeout
+			s.SwitchAfter, s.EscalateAfter = MaxEscalateAfter-1, MaxEscalateAfter
 		}),
 		with(func(s *LoopSpec) {
 			s.Budget = Budget{MaxIterations: 1, MaxTokens: 1, MaxWallTime: time.Second}
@@ -436,10 +443,11 @@ func TestRunLoopInvalidSpecRejected(t *testing.T) {
 
 func TestRunLoopValidationErrorNotRetried(t *testing.T) {
 	for _, typ := range NonRetryableErrorTypes() {
-		s := newScript(step{proposeErr: temporal.NewApplicationError("rejected", typ)})
-		want(t, run(t, testSpec(), s, nil), StatusEscalated, ReasonActivityFailed, 0)
-		if p, _ := s.calls(); p != 1 {
-			t.Errorf("%s: %d attempts, want 1", typ, p)
+		s := newScript(step{proposeErr: temporal.NewApplicationError("rejected", typ, ProposeFailure{Tokens: 40})}, pass())
+		res := run(t, testSpec(), s, nil)
+		want(t, res, StatusEscalated, ReasonActivityFailed, 1)
+		if p, _ := s.calls(); p != 1 || res.Tokens != 40 || !res.Trace[0].Failed {
+			t.Errorf("%s: %d attempts, tokens %d, trace %+v", typ, p, res.Tokens, res.Trace)
 		}
 	}
 	s := newScript(step{tokens: 10, verifyErr: temporal.NewApplicationError("rejected", ErrTypeValidation)})
@@ -455,19 +463,109 @@ func TestRunLoopValidationErrorNotRetried(t *testing.T) {
 
 func TestRunLoopActivityFailureEscalates(t *testing.T) {
 	transient := errors.New("transient")
-	s := newScript(fail(high("A")), step{proposeErr: transient})
+	e := step{proposeErr: transient}
+	s := newScript(fail(high("A")), e, e, e, pass())
 	res := run(t, testSpec(), s, nil)
-	want(t, res, StatusEscalated, ReasonActivityFailed, 1)
+	want(t, res, StatusEscalated, ReasonActivityFailed, 1+MaxActivityAttempts)
 	if p, _ := s.calls(); p != 1+MaxActivityAttempts {
 		t.Errorf("proposer attempts %d", p)
 	}
 	if string(res.Best) != `{"n":1}` || !slices.Equal(res.Remaining, []domain.Finding{high("A")}) {
 		t.Errorf("best %s, remaining %v", res.Best, res.Remaining)
 	}
-	s = newScript(step{tokens: 10, verifyErr: transient})
+	s = newScript(step{tokens: 10, verifyErr: transient}, pass())
 	res = run(t, testSpec(), s, nil)
 	want(t, res, StatusEscalated, ReasonActivityFailed, 1)
-	if _, v := s.calls(); v != MaxActivityAttempts || res.Best != nil {
-		t.Errorf("verifier attempts %d, best %s", v, res.Best)
+	if p, v := s.calls(); p != 1 || v != MaxActivityAttempts || res.Best != nil {
+		t.Errorf("verifier: calls %d %d, best %s", p, v, res.Best)
+	}
+}
+
+func TestRunLoopProposerFailuresCounted(t *testing.T) {
+	failed := func(detail any) step {
+		return step{proposeErr: temporal.NewApplicationError("llm call failed", "Transient", detail)}
+	}
+	s := newScript(fail(high("A")), failed(ProposeFailure{Tokens: 7}), failed(ProposeFailure{Tokens: 5}), pass())
+	res := run(t, testSpec(), s, nil)
+	want(t, res, StatusConverged, "", 4)
+	tr := res.Trace
+	if p, v := s.calls(); p != 4 || v != 2 || res.Tokens != 32 || tr[1].Tokens != 7 || !tr[2].Failed || tr[2].Verified || tr[3].Failed {
+		t.Errorf("calls %d %d, tokens %d, trace %+v", p, v, res.Tokens, tr)
+	}
+	other := step{proposeErr: temporal.NewNonRetryableApplicationError("llm", "Other", nil)}
+	want(t, run(t, testSpec(), newScript(other, pass()), nil), StatusEscalated, ReasonActivityFailed, 1)
+	for _, d := range []any{ProposeFailure{Tokens: -1}, ProposeFailure{Tokens: MaxTokensLimit + 1}, "tokens"} {
+		s := newScript(failed(d), pass())
+		res := run(t, testSpec(), s, nil)
+		want(t, res, StatusEscalated, ReasonInvalidResponse, 0)
+		if p, _ := s.calls(); p != 1 || res.Tokens != 0 {
+			t.Errorf("detail %v: calls %d, tokens %d", d, p, res.Tokens)
+		}
+	}
+	t.Run("consecutive failures only, request and stagnation kept", func(t *testing.T) {
+		f := failed(ProposeFailure{Tokens: 1})
+		s := newScript(fail(high("A")), f, fail(high("A")), f, f, pass())
+		res := run(t, testSpec(), s, nil)
+		want(t, res, StatusConverged, "", 6)
+		sent := s.sent()
+		if got := strategiesOf(sent); !slices.Equal(got, []string{"s1", "s1", "s1", "s2", "s2", "s2"}) || res.Tokens != 33 {
+			t.Errorf("strategies %v, tokens %d", got, res.Tokens)
+		}
+		for i, r := range sent[1:] {
+			if string(r.Best) != `{"n":1}` || !slices.Equal(r.Findings, []domain.Finding{high("A")}) {
+				t.Errorf("proposal %d: best %s, findings %v", i+2, r.Best, r.Findings)
+			}
+		}
+	})
+	t.Run("failed calls spend the token budget", func(t *testing.T) {
+		spec := testSpec()
+		spec.Budget.MaxTokens = 15
+		s := newScript(fail(high("A")), failed(ProposeFailure{Tokens: 6}), pass())
+		res := run(t, spec, s, nil)
+		want(t, res, StatusEscalated, ReasonBudgetTokens, 2)
+		if p, v := s.calls(); p != 2 || v != 1 || res.Tokens != 16 || !res.Trace[1].Failed {
+			t.Errorf("calls %d %d, tokens %d, trace %+v", p, v, res.Tokens, res.Trace)
+		}
+	})
+}
+
+func TestRunLoopEmptyCandidateRejected(t *testing.T) {
+	for _, c := range []string{"null", `""`, "{}", " [ ] "} {
+		s := newScript(step{tokens: 10, ok: true, cand: json.RawMessage(c)}, pass())
+		res := run(t, testSpec(), s, nil)
+		want(t, res, StatusEscalated, ReasonInvalidResponse, 1)
+		if _, v := s.calls(); v != 0 || res.Tokens != 10 || res.Best != nil {
+			t.Errorf("candidate %q: %d verifies, tokens %d, best %s", c, v, res.Tokens, res.Best)
+		}
+	}
+	s := newScript(pass(), pass())
+	res := run(t, testSpec(), s, func(env *testsuite.TestWorkflowEnvironment) {
+		env.RegisterActivityWithOptions(func(ctx context.Context, req ProposeRequest) (map[string]int, error) {
+			r, err := s.propose(ctx, req)
+			return map[string]int{"tokens": r.Tokens}, err // no candidate key
+		}, activity.RegisterOptions{Name: proposeName})
+	})
+	want(t, res, StatusEscalated, ReasonInvalidResponse, 1)
+	if p, v := s.calls(); p != 1 || v != 0 || res.Tokens != 10 || res.Best != nil {
+		t.Errorf("absent candidate: calls %d %d, tokens %d, best %s", p, v, res.Tokens, res.Best)
+	}
+}
+
+func TestRunLoopFailureWithoutFindingRejected(t *testing.T) {
+	res := run(t, testSpec(), newScript(fail(high("A")), fail(), pass()), nil)
+	want(t, res, StatusEscalated, ReasonInvalidResponse, 2)
+	if !res.Trace[1].Verified || string(res.Best) != `{"n":1}` || !slices.Equal(res.Remaining, []domain.Finding{high("A")}) {
+		t.Errorf("best %s, remaining %v", res.Best, res.Remaining)
+	}
+}
+
+func TestRunLoopLimitsFrozen(t *testing.T) {
+	got := []any{
+		DefaultSwitchAfter, DefaultEscalateAfter, DefaultActivityTimeout, MaxIterationsLimit, MaxTokensLimit, MaxWallTimeLimit,
+		MinActivityTimeout, MaxActivityTimeout, MaxStrategies, MaxFindingsToPropose, MaxActivityAttempts, MaxEscalateAfter,
+	}
+	frozen := []any{2, 3, 5 * time.Minute, 100, 10_000_000, 24 * time.Hour, time.Second, 30 * time.Minute, 10, 20, 3, 10}
+	if !slices.Equal(got, frozen) {
+		t.Errorf("limits %v, want %v", got, frozen)
 	}
 }

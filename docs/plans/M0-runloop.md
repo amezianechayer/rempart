@@ -5,6 +5,8 @@
 ## 0. Amendements
 
 - V1 (2026-09-25, `test-author`, étape A2) : mutation M13 réécrite pour compiler, même sens (findings de la dernière itération au lieu de ceux du meilleur) : `NEW` = `res.Status, res.Reason, res.Best, res.Remaining = StatusEscalated, r, best, domain.Sort(append(remaining[:0:0], last...))`, détectée par T9. Code de référence et tests inchangés ; 15 mutations sur 15 détectées ; points non vérifiés 1 à 4 levés (workflowcheck sans faux positif, frontière d'horloge exacte, testify indirect compilable) ; `go mod tidy` exige le réseau (proxy de modules), testify et le SDK Temporal passent en dépendances directes.
+- V2 (2026-09-25, `architect`, revue `security-reviewer` : PASS conditionné par les constats moyens 1 à 3 ; constats bas 4 à 6 inclus) : le proposeur n'est plus repris par Temporal (`MaximumAttempts: 1`) ; chaque appel, réussi ou non, est une itération comptée (tokens d'échec lus dans le détail `ProposeFailure`, trace `Failed`) ; un échec rejouable est repris par la boucle, au plus `MaxActivityAttempts` fois d'affilée ; candidat sans contenu et échec sans finding mènent à `invalid_response` ; bornes de `spec.go` figées (T18) ; `EscalateAfter <= 10` ; escalade sur échec du vérificateur figée (T14). T3, T12, T13, T14 modifiés, T15 à T18 ajoutés (18 tests), mutations M16 à M21 ; D2 à D5, D8, D10 à D12 amendés. Détail en section 11, qui prime sur les sections 3 à 7 et 9.
+- V3 (2026-09-25, `test-author`, étape V2-A2) : 11.2 inchangé. Tests renforcés au-delà de 11.3 (mutations exploratoires qui survivaient) : T15 gagne `consecutive failures only, request and stagnation kept` (A, échec, A, échec, échec, succès : convergence en 6, stratégies s1 s1 s1 s2 s2 s2, 33 tokens, meilleur et findings renvoyés) et `failed calls spend the token budget` (budget 15, 10 puis échec à 6 : `budget_tokens`, 16 tokens) ; T16 gagne le candidat absent (proposeur réenregistré sans clé `candidate`) ; messages d'échec de T13, T14, T16 alignés sur les conditions contrôlées. Mutations ajoutées au critère 12 : M22 ligne `failures = 0` supprimée (T15) ; M23 `""` retiré de `emptyCandidate` (T16) ; M24 `if perr == nil && res.Tokens > spec.Budget.MaxTokens {` (T15) ; M25, M26, M27 `same = 0`, `last = nil`, `strat = 0` insérés après `failures++` (T15). 27 mutations sur 27 détectées sur copie.
 
 ## 1. Objet et périmètre
 `RunLoop` : proposer, vérifier, diagnostiquer ; budgets itérations, tokens, temps ; stagnation ; escalade ; meilleur candidat ; sans domaine. Critère 2 de `prompts/M0.md`, première partie. Dans : `internal/loops/{doc.go,spec.go,runloop.go,runloop_test.go}`, `go.mod`, `go.sum`, `Makefile` (étape 0), `docs/STATUS.md`. Hors : approbations (T15), workflow de démonstration et câblage worker (T19, T20), annulation du workflow (traitée comme un échec d'activité), `ContinueAsNew` et chiffrement des payloads (M1, ADR 0001), spans OpenTelemetry et métriques (M1).
@@ -887,3 +889,221 @@ Points non vérifiés (à lever en A2 sur copie, sinon amendement V1) :
 | F1 | M1 à M15 sur copie finale | principal | 15 détectées |
 | F2 | `security-reviewer`, puis `acceptance-verifier` | subagents | PASS |
 | F3 | `docs/STATUS.md`, `phase free`, commit `feat(loops): generic RunLoop workflow with budgets, stagnation and escalation (M0-T14)` | principal | `git status --porcelain` vide |
+
+## 11. Amendement V2
+
+Prime sur les sections 3 à 7 et 9 ; pas d'ADR (contrat interne, réversible avant T19).
+
+### 11.1 Décisions
+**Constat 1.** Proposeur à une tentative (`MaximumAttempts: 1`). Chaque appel est une itération ; en échec, ses tokens viennent du détail `ProposeFailure` de l'`ApplicationError` (0 sans détail, -1 si indécodable), bornés comme D3, comptés et tracés (`Failed`) avant toute escalade. **Reprise dans la boucle** : une `ApplicationError` rejouable (ni `NonRetryable()`, ni type de `NonRetryableErrorTypes()`) est reprise à l'itération suivante, même requête ; un échec non rejouable, ou le `MaxActivityAttempts`-ième consécutif, escalade `activity_failed`. Motif : la robustesse de V1 (3 appels) sans reprise invisible, chaque appel étant compté et soumis aux budgets, temps compris ; escalader au premier échec enverrait toute panne brève à l'humain. Délai, annulation, panique : escalade sans reprise. Sans attente : le client LLM reprend les pannes de transport (T50).
+
+**Constat 2.** Candidat absent, `null`, `""`, `{}` ou `[]` : tokens comptés, `invalid_response`, sans vérification. Blancs : `encoding/json` compacte la sortie de `RawMessage.MarshalJSON` (T16 : `" [ ] "`).
+
+**Constat 3.** Échec sans finding : `invalid_response`, symétrique de D7 ; l'exclure du meilleur laisserait le proposeur sans signal et masquerait l'anomalie. T3 : `fail()` du cas `no blocking finding` devient `fail(fnd(domain.SeverityInfo, "I0"))` (empreinte vide répétée, scores 0, 1, 0, meilleur `{"n":1}`).
+
+**Constats 4 à 6.** T18 ; T14 (itération 2 valide, une seule proposition) ; `MaxEscalateAfter = 10` (T12).
+
+**Remplacements.** D2 : plus `EscalateAfter <= MaxEscalateAfter`. D3 : (3) vaut aussi pour les tokens d'échec ; après (4), échec : escalade ou itération suivante (succès : compteur à 0), puis candidat vide : `invalid_response` ; après (8), échec sans finding : `invalid_response`. D4 : proposeur au plus `ActivityTimeout`, dépassement maximal inchangé. D5 : `Iterations` et `Tokens` incluent les échecs. D8 : meilleur parmi les vérifiés non OK avec finding. D10 : « échec sans finding » retiré ; un échec du proposeur ne touche pas la stagnation. D11 : `RetryPolicy` de la section 4 pour le vérificateur seul. D12 : plus `ProposeFailure`, `IterationTrace.Failed`, `MaxEscalateAfter`.
+
+### 11.2 Diffs de `spec.go` et `runloop.go`
+```diff
+--- spec.go
+ 	MaxActivityAttempts  = 3
++	MaxEscalateAfter     = 10
+ )
+@@ Validate
+-	case s.SwitchAfter < 1 || s.SwitchAfter >= s.EscalateAfter:
++	case s.SwitchAfter < 1 || s.SwitchAfter >= s.EscalateAfter || s.EscalateAfter > MaxEscalateAfter:
+--- runloop.go
+ 	"encoding/json"
++	"errors"
+ 	"slices"
+@@ après ProposeResponse
++// ProposeFailure is the detail of a proposer ApplicationError that spent
++// tokens; untrusted, bounded like ProposeResponse.Tokens (T10, T45).
++type ProposeFailure struct {
++	Tokens int `json:"tokens"`
++}
++
+@@ IterationTrace
+ 	Strategy    string `json:"strategy"`
++	Failed      bool   `json:"failed"`
+@@ RunLoop
++	// T10: one attempt per paid call; RunLoop retries within the budgets.
++	pctx := workflow.WithRetryPolicy(ctx, temporal.RetryPolicy{MaximumAttempts: 1})
+ 	start := workflow.Now(ctx)
+@@
+ 		same, strat     int
++		failures        int
+ 	)
+@@
+ 		var prop ProposeResponse
+-		if err := workflow.ExecuteActivity(ctx, spec.ProposeActivity, req).Get(ctx, &prop); err != nil {
+-			return escalate(ReasonActivityFailed)
+-		}
++		perr := workflow.ExecuteActivity(pctx, spec.ProposeActivity, req).Get(ctx, &prop)
++		if perr != nil {
++			prop.Tokens = failedTokens(perr)
++		}
+ 		if prop.Tokens < 0 || prop.Tokens > MaxTokensLimit {
+@@
+-		res.Trace = append(res.Trace, IterationTrace{Iteration: it, Strategy: req.Strategy, Tokens: prop.Tokens})
++		res.Trace = append(res.Trace, IterationTrace{Iteration: it, Strategy: req.Strategy, Failed: perr != nil, Tokens: prop.Tokens})
+@@
+ 			return escalate(ReasonBudgetTokens)
+ 		}
++		if perr != nil {
++			failures++
++			if !retryable(perr) || failures >= MaxActivityAttempts {
++				return escalate(ReasonActivityFailed)
++			}
++			continue // same request; time checked first
++		}
++		failures = 0
++		if emptyCandidate(prop.Candidate) { // T53: empty desired state
++			return escalate(ReasonInvalidResponse)
++		}
+ 		if timeUp() { // T10: no verification past the wall time budget
+@@
+ 		if err := workflow.ExecuteActivity(ctx, spec.VerifyActivity, vreq).Get(ctx, &vr); err != nil {
+-			return escalate(ReasonActivityFailed)
++			return escalate(ReasonActivityFailed) // Temporal retries only
+@@
+ 			return res, nil
+ 		}
++		if len(vr.Findings) == 0 { // T53: failure without finding
++			return escalate(ReasonInvalidResponse)
++		}
+ 		if !haveBest || score < bestScore {
+@@ fin
++
++// failedTokens reads the ProposeFailure detail: 0 if absent, -1 if undecodable.
++func failedTokens(err error) int {
++	var ae *temporal.ApplicationError
++	var f ProposeFailure
++	if errors.As(err, &ae) && ae.HasDetails() && ae.Details(&f) != nil {
++		return -1
++	}
++	return f.Tokens
++}
++
++// retryable reports a retryable application error (no timeout, cancellation or panic).
++func retryable(err error) bool {
++	var ae *temporal.ApplicationError
++	return errors.As(err, &ae) && !ae.NonRetryable() && !slices.Contains(NonRetryableErrorTypes(), ae.Type())
++}
++
++// emptyCandidate reports a candidate without content (encoding/json compacted it).
++func emptyCandidate(c json.RawMessage) bool {
++	return slices.Contains([]string{"", "null", `""`, "{}", "[]"}, string(c))
++}
+```
+
+### 11.3 Tests
+T15 à T18 : fonctions ci-dessous, après T14. T3 : section 11.1. T12 : `with(func(s *LoopSpec) { s.EscalateAfter = MaxEscalateAfter + 1 }),` en fin de `invalid` ; `s.SwitchAfter, s.EscalateAfter = MaxEscalateAfter-1, MaxEscalateAfter` dans le cas valide 1. Assistants, T13, T14 : diff exact.
+```diff
+@@ type step struct
+ 	ok                    bool
++	cand                  json.RawMessage
+@@ func (s *script) propose
+-	return ProposeResponse{Candidate: candidate(req.Iteration), Tokens: st.tokens}, nil
++	c := candidate(req.Iteration)
++	if st.cand != nil {
++		c = st.cand
++	}
++	return ProposeResponse{Candidate: c, Tokens: st.tokens}, nil
+@@ T13
+-		s := newScript(step{proposeErr: temporal.NewApplicationError("rejected", typ)})
+-		want(t, run(t, testSpec(), s, nil), StatusEscalated, ReasonActivityFailed, 0)
+-		if p, _ := s.calls(); p != 1 {
++		s := newScript(step{proposeErr: temporal.NewApplicationError("rejected", typ, ProposeFailure{Tokens: 40})}, pass())
++		res := run(t, testSpec(), s, nil)
++		want(t, res, StatusEscalated, ReasonActivityFailed, 1)
++		if p, _ := s.calls(); p != 1 || res.Tokens != 40 || !res.Trace[0].Failed {
+@@ T14
+-	s := newScript(fail(high("A")), step{proposeErr: transient})
++	e := step{proposeErr: transient}
++	s := newScript(fail(high("A")), e, e, e, pass())
+ 	res := run(t, testSpec(), s, nil)
+-	want(t, res, StatusEscalated, ReasonActivityFailed, 1)
++	want(t, res, StatusEscalated, ReasonActivityFailed, 1+MaxActivityAttempts)
+@@
+-	s = newScript(step{tokens: 10, verifyErr: transient})
++	s = newScript(step{tokens: 10, verifyErr: transient}, pass())
+@@
+-	if _, v := s.calls(); v != MaxActivityAttempts || res.Best != nil {
++	if p, v := s.calls(); p != 1 || v != MaxActivityAttempts || res.Best != nil {
+```
+```go
+func TestRunLoopProposerFailuresCounted(t *testing.T) {
+	failed := func(detail any) step {
+		return step{proposeErr: temporal.NewApplicationError("llm call failed", "Transient", detail)}
+	}
+	s := newScript(fail(high("A")), failed(ProposeFailure{Tokens: 7}), failed(ProposeFailure{Tokens: 5}), pass())
+	res := run(t, testSpec(), s, nil)
+	want(t, res, StatusConverged, "", 4)
+	tr := res.Trace
+	if p, v := s.calls(); p != 4 || v != 2 || res.Tokens != 32 || tr[1].Tokens != 7 || !tr[2].Failed || tr[2].Verified || tr[3].Failed {
+		t.Errorf("calls %d %d, tokens %d, trace %+v", p, v, res.Tokens, tr)
+	}
+	other := step{proposeErr: temporal.NewNonRetryableApplicationError("llm", "Other", nil)}
+	want(t, run(t, testSpec(), newScript(other, pass()), nil), StatusEscalated, ReasonActivityFailed, 1)
+	for _, d := range []any{ProposeFailure{Tokens: -1}, ProposeFailure{Tokens: MaxTokensLimit + 1}, "tokens"} {
+		s := newScript(failed(d), pass())
+		res := run(t, testSpec(), s, nil)
+		want(t, res, StatusEscalated, ReasonInvalidResponse, 0)
+		if p, _ := s.calls(); p != 1 || res.Tokens != 0 {
+			t.Errorf("detail %v: calls %d, tokens %d", d, p, res.Tokens)
+		}
+	}
+}
+
+func TestRunLoopEmptyCandidateRejected(t *testing.T) {
+	for _, c := range []string{"null", `""`, "{}", " [ ] "} {
+		s := newScript(step{tokens: 10, ok: true, cand: json.RawMessage(c)}, pass())
+		res := run(t, testSpec(), s, nil)
+		want(t, res, StatusEscalated, ReasonInvalidResponse, 1)
+		if _, v := s.calls(); v != 0 || res.Tokens != 10 || res.Best != nil {
+			t.Errorf("candidate %q: %d verifies, best %s", c, v, res.Best)
+		}
+	}
+}
+
+func TestRunLoopFailureWithoutFindingRejected(t *testing.T) {
+	res := run(t, testSpec(), newScript(fail(high("A")), fail(), pass()), nil)
+	want(t, res, StatusEscalated, ReasonInvalidResponse, 2)
+	if !res.Trace[1].Verified || string(res.Best) != `{"n":1}` || !slices.Equal(res.Remaining, []domain.Finding{high("A")}) {
+		t.Errorf("best %s, remaining %v", res.Best, res.Remaining)
+	}
+}
+
+func TestRunLoopLimitsFrozen(t *testing.T) {
+	got := []any{
+		DefaultSwitchAfter, DefaultEscalateAfter, DefaultActivityTimeout, MaxIterationsLimit, MaxTokensLimit, MaxWallTimeLimit,
+		MinActivityTimeout, MaxActivityTimeout, MaxStrategies, MaxFindingsToPropose, MaxActivityAttempts, MaxEscalateAfter,
+	}
+	frozen := []any{2, 3, 5 * time.Minute, 100, 10_000_000, 24 * time.Hour, time.Second, 30 * time.Minute, 10, 20, 3, 10}
+	if !slices.Equal(got, frozen) {
+		t.Errorf("limits %v, want %v", got, frozen)
+	}
+}
+```
+
+### 11.4 Critères et mutations
+Critère 1 : `18` ; `0`. Critère 4 : `encoding/json errors internal/loops/domain go.temporal.io/sdk/temporal go.temporal.io/sdk/workflow slices time`. Critère 12 (nouveau) : M1 à M21 détectées (script de la section 7). Autres inchangés. Mutations (`spec.go` pour M21, sinon `runloop.go`) :
+
+| # | `OLD` | `NEW` | `EXPECTED` |
+|---|---|---|---|
+| M16 | `pctx := workflow.WithRetryPolicy(ctx, temporal.RetryPolicy{MaximumAttempts: 1})` | `pctx := ctx` | T14, T15 |
+| M17 | `prop.Tokens = failedTokens(perr)` | `prop.Tokens = 0` | T15 |
+| M18 | `if emptyCandidate(prop.Candidate) { // T53: empty desired state` | faux | T16 |
+| M19 | `if len(vr.Findings) == 0 { // T53: failure without finding` | faux | T17 |
+| M20 | `return escalate(ReasonActivityFailed) // Temporal retries only` | `continue` | T14 |
+| M21 | `MaxIterationsLimit   = 100` | `MaxIterationsLimit   = 1_000_000` | T18 |
+
+### 11.5 Menaces, obligations, tâches
+T10 renforcé ; résidu à reporter au modèle : tokens d'un appel interrompu par délai ou panique inconnus, comptés 0. T45 : détail d'échec borné. T53 : candidat vide et échec sans finding refusés.
+
+Obligations hors V2 : (a) tailles des findings et candidats bornées, avant T19 ; (b) annulation distinguée d'une panne, avant T20 ; (c) `WorkflowExecutionTimeout >= MaxWallTime + 3 x ActivityTimeout + 3 s` plus marge, T20 ; (d) T54 (non enregistré, spécifications constantes), avant T19 et T20 ; (e) T16 : `workflow.GetVersion` pour constantes et commandes, M1 ; (f) stagnation sur les seuls codes, M1 ; (g) skill `loop-engineering` en T19, signalé dans `docs/STATUS.md`.
+
+Tâches : (1) `test-author`, `phase tests`, 11.3 ; `go vet ./internal/loops` : erreurs sur `ProposeFailure`, `MaxEscalateAfter`, `Failed` seulement. (2) `test-author`, sur copie : 11.2, 11.3, critères 1 à 12, `workflowcheck` muet sous `errors.As` et `Details` ; sinon V3. (3) Principal : `phase impl`, 11.2. (4) `security-reviewer`, puis `acceptance-verifier` : PASS. (5) `docs/STATUS.md` (V2, résidu T10, (g)), `phase free`, commit `fix(loops): count failed proposer calls, refuse empty candidates and findingless failures (M0-T14)`.
