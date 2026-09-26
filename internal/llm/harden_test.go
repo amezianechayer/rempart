@@ -101,9 +101,11 @@ func TestToolsCopiedBeforeCheck(t *testing.T) {
 	}
 }
 
-// TestEscapedSecretInSchemasRefused (T44, T64): a secret written with JSON
-// escapes is read by the model as the secret itself. Whichever check refuses
-// it, it never reaches the provider and is never echoed.
+// TestEscapedSecretInSchemasRefused (T44, T64, V2): the model reads the
+// decoded schema. A secret hidden from the raw bytes by an escape, including
+// the admitted \" and \n, or split between a key and its value, never
+// reaches the provider, from a tool or from the prompt schema, and is never
+// echoed.
 func TestEscapedSecretInSchemasRefused(t *testing.T) {
 	cases := map[string]struct{ schema, secret string }{
 		"escaped key prefix":    {objSchema(`"name":{"type":"string","description":"use \u0041`+fakeAWSKey()[1:]+`"}`, `"name"`), fakeAWSKey()},
@@ -112,26 +114,59 @@ func TestEscapedSecretInSchemasRefused(t *testing.T) {
 		"escaped slashes":       {`{"title":"` + strings.ReplaceAll(fakeAWSSecret(), "/", `\/`) + `","type":"object","additionalProperties":false}`, fakeAWSSecret()},
 		"escaped property name": {objSchema(`"\u0041`+fakeAWSKey()[1:]+`":{"type":"string"}`, `"\u0041`+fakeAWSKey()[1:]+`"`), fakeAWSKey()},
 	}
+	schemas := map[string]string{}
 	for name, c := range cases {
+		var decoded any
+		if err := json.Unmarshal([]byte(c.schema), &decoded); err != nil || strings.Contains(c.schema, c.secret) ||
+			!strings.Contains(fmt.Sprint(decoded), c.secret) {
+			t.Fatalf("fixture %s: the escapes must hide the secret from the raw text only (%v)", name, err)
+		}
+		schemas[name] = c.schema
+	}
+	// Cases of the security review (V2): admitted escapes only.
+	texts := map[string]string{
+		"authorization header": `Call with Authorization: \"Basic RkFLRTpFWEFNUExF\"`,
+		"name value lines":     `- name: DB_PASSWORD\n  value: Zq8hunter2Lp`,
+		"unclosed pair":        `\"password\": \"Zq8hunter2Lp`,
+		"pair with a quote":    `{\"password\":\"Zq8hun\\\"ter2Lp\"}`,
+		"escaped escape":       `use \\u0041` + fakeAWSKey()[1:],
+	}
+	for name, e := range texts {
+		schemas["description, "+name] = `{"type":"object","description":"` + e + `","properties":{},"required":[],"additionalProperties":false}`
+		schemas["enum, "+name] = objSchema(`"name":{"type":"string","enum":["`+e+`"]}`, `"name"`)
+		schemas["const, "+name] = objSchema(`"name":{"const":"`+e+`"}`, `"name"`)
+	}
+	schemas["const pair"] = objSchema(`"name":{"const":{"Authorization":"\"Basic RkFLRTpFWEFNUExF\""}}`, `"name"`)
+	schemas["const key"] = objSchema(`"name":{"const":{"Authorization: \"Basic RkFLRTpFWEFNUExF\"":1}}`, `"name"`)
+	schemas["const quoted password"] = objSchema(`"name":{"const":{"password":"Zq8hun\"ter2Lp"}}`, `"name"`)
+	// Visible in the raw bytes only: the name and value members of one object.
+	schemas["const name value members"] = objSchema(`"name":{"const":{"name":"DB_PASSWORD","value":"Zq8hunter2Lp"}}`, `"name"`)
+	if len(schemas) != 5+3*len(texts)+4 {
+		t.Fatalf("case table: %d schemas", len(schemas))
+	}
+	for name, s := range schemas {
 		t.Run("tool "+name, func(t *testing.T) {
-			var decoded any
-			if err := json.Unmarshal([]byte(c.schema), &decoded); err != nil || strings.Contains(c.schema, c.secret) ||
-				!strings.Contains(fmt.Sprint(decoded), c.secret) {
-				t.Fatalf("fixture: the escapes must hide the secret from the raw text only (%v)", err)
-			}
 			e := newEnv(t, configK(), policyPA(), stepV())
-			tools := []domain.ToolSpec{{Name: "lookup", Description: "Look up a record by name", InputSchema: json.RawMessage(c.schema)}}
+			tools := []domain.ToolSpec{{Name: "lookup", Description: "Look up a record by name", InputSchema: json.RawMessage(s)}}
 			o := withToolsM(tools).run(e.c, ctxFor(t, tenantA), call0(t))
 			assertNoIO(t, e, o)
-			if o.err != nil && (strings.Contains(o.err.Error(), "EXAMPLE") || strings.Contains(o.err.Error(), "FAKE")) {
+			if o.err != nil && (strings.Contains(o.err.Error(), "EXAMPLE") || strings.Contains(o.err.Error(), "FAKE") ||
+				strings.Contains(o.err.Error(), "hunter") || strings.Contains(o.err.Error(), "RkFL")) {
 				t.Errorf("error %q echoes the secret", o.err)
 			}
 		})
+		t.Run("prompt schema "+name, func(t *testing.T) { assertPromptSchemaRefused(t, s) })
 	}
+}
+
+// assertPromptSchemaRefused: a prompt whose schema is s never reaches the
+// provider: LoadFS refuses it, or both methods fail without I/O.
+func assertPromptSchemaRefused(t *testing.T, s string) {
+	t.Helper()
 	const id = "test.escapedleak.v1"
 	pfs := promptFS()
 	pfs[id+"/system.txt"] = &fstest.MapFile{Data: []byte("Reply with a JSON greeting.\n")}
-	pfs[id+"/schema.json"] = &fstest.MapFile{Data: []byte(objSchema(`"greeting":{"type":"string","description":"\u0041`+fakeAWSKey()[1:]+`"}`, `"greeting"`))}
+	pfs[id+"/schema.json"] = &fstest.MapFile{Data: []byte(s)}
 	p, err := prompts.LoadFS(pfs, id)
 	if err != nil {
 		if !errors.Is(err, prompts.ErrInvalidPrompt) {
@@ -140,17 +175,15 @@ func TestEscapedSecretInSchemasRefused(t *testing.T) {
 		return
 	}
 	for _, m := range bothMethods() {
-		t.Run("prompt schema, "+m.name, func(t *testing.T) {
-			f := newFake(t, stepV())
-			rr := countingStatic(t, map[tenancy.ID]domain.TenantPolicy{tenantA: policyPA()})
-			c, err := NewClient(f, rr, pfs, configK())
-			if err != nil {
-				t.Fatal(err)
-			}
-			call := call0(t)
-			call.PromptID, call.PromptHash = id, p.Hash
-			assertNoIO(t, env{fake: f, rr: rr, c: c}, m.run(c, ctxFor(t, tenantA), call), ErrSecretInPrompt)
-		})
+		f := newFake(t, stepV())
+		rr := countingStatic(t, map[tenancy.ID]domain.TenantPolicy{tenantA: policyPA()})
+		c, err := NewClient(f, rr, pfs, configK())
+		if err != nil {
+			t.Fatal(err)
+		}
+		call := call0(t)
+		call.PromptID, call.PromptHash = id, p.Hash
+		assertNoIO(t, env{fake: f, rr: rr, c: c}, m.run(c, ctxFor(t, tenantA), call), ErrSecretInPrompt)
 	}
 }
 

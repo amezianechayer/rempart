@@ -193,7 +193,8 @@ func (c *Client) loadPrompt(call Call) (prompts.Prompt, error) {
 		return prompts.Prompt{}, ErrPromptMismatch
 	}
 	r := redact.New() // a secret in the system prompt or its schema is refused, never masked
-	if r.ContainsSecret(p.System) || r.ContainsSecret(string(p.Schema.Raw())) {
+	secret, err := secretInTexts(r, p.Schema.Raw())
+	if err != nil || secret || r.ContainsSecret(p.System) || r.ContainsSecret(string(p.Schema.Raw())) {
 		return prompts.Prompt{}, ErrSecretInPrompt
 	}
 	return p, nil

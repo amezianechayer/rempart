@@ -62,12 +62,14 @@ func TestLoadFSRejectsLinks(t *testing.T) {
 	}
 }
 
-// sizedFS serves m, declares size for name and counts the bytes read from it.
+// sizedFS serves m, declares size for name, from Lstat and from the open file,
+// and counts the bytes read from it.
 type sizedFS struct {
-	m    fstest.MapFS
-	name string
-	size int64
-	read *int
+	m      fstest.MapFS
+	name   string
+	size   int64
+	read   *int
+	opened *int
 }
 
 func (s sizedFS) Open(name string) (fs.File, error) {
@@ -75,7 +77,10 @@ func (s sizedFS) Open(name string) (fs.File, error) {
 	if err != nil || name != s.name {
 		return f, err
 	}
-	return countingFile{File: f, read: s.read}, nil
+	if s.opened != nil {
+		*s.opened++
+	}
+	return countingFile{File: f, read: s.read, size: s.size}, nil
 }
 
 func (s sizedFS) Lstat(name string) (fs.FileInfo, error) {
@@ -98,6 +103,16 @@ func (i sizedInfo) Size() int64 { return i.size }
 type countingFile struct {
 	fs.File
 	read *int
+	size int64
+}
+
+// Stat declares size too: Lstat and the open file lie together.
+func (f countingFile) Stat() (fs.FileInfo, error) {
+	fi, err := f.File.Stat()
+	if err != nil {
+		return nil, err
+	}
+	return sizedInfo{FileInfo: fi, size: f.size}, nil
 }
 
 func (f countingFile) Read(p []byte) (int, error) {
@@ -123,10 +138,13 @@ func TestLoadFSBoundedRead(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			m := promptFS("p.v1", small, []byte(smallSchema))
 			m["p.v1/"+c.file] = &fstest.MapFile{Data: c.data}
-			read := 0
-			wantInvalid(t, sizedFS{m: m, name: "p.v1/" + c.file, size: c.declared, read: &read}, "p.v1")
+			read, opened := 0, 0
+			wantInvalid(t, sizedFS{m: m, name: "p.v1/" + c.file, size: c.declared, read: &read, opened: &opened}, "p.v1")
 			if read > c.maxRead {
 				t.Errorf("%d bytes read, want at most %d", read, c.maxRead)
+			}
+			if c.maxRead == 0 && opened != 0 { // declared too large: refused before opening
+				t.Errorf("file opened %d times, want 0", opened)
 			}
 		})
 	}
@@ -177,5 +195,79 @@ func TestLoadFSUnreadableEntry(t *testing.T) {
 	wantInvalid(t, lstatErrFS{m}, "p.v1")
 	if _, err := LoadFS(lstatErrFS{m}, "p.v1"); errors.Is(err, ErrUnknownPrompt) {
 		t.Errorf("LoadFS = %v, want no ErrUnknownPrompt", err)
+	}
+}
+
+// openStatFS serves m with a faithful Lstat, but the file opened for name
+// reports mode, size or err, as if the entry had been replaced between Lstat
+// and Open (V2).
+type openStatFS struct {
+	m    fstest.MapFS
+	name string
+	mode fs.FileMode
+	size int64
+	err  error
+}
+
+func (s openStatFS) Open(name string) (fs.File, error) {
+	f, err := s.m.Open(name)
+	if err != nil || name != s.name {
+		return f, err
+	}
+	return statFile{File: f, s: s}, nil
+}
+
+func (s openStatFS) Lstat(name string) (fs.FileInfo, error) { return s.m.Lstat(name) }
+
+func (s openStatFS) ReadLink(name string) (string, error) { return s.m.ReadLink(name) }
+
+type statFile struct {
+	fs.File
+	s openStatFS
+}
+
+func (f statFile) Stat() (fs.FileInfo, error) {
+	if f.s.err != nil {
+		return nil, f.s.err
+	}
+	fi, err := f.File.Stat()
+	if err != nil {
+		return nil, err
+	}
+	return statInfo{FileInfo: fi, mode: f.s.mode, size: f.s.size}, nil
+}
+
+type statInfo struct {
+	fs.FileInfo
+	mode fs.FileMode
+	size int64
+}
+
+func (i statInfo) Mode() fs.FileMode { return i.mode }
+
+func (i statInfo) Size() int64 { return i.size }
+
+func (i statInfo) IsDir() bool { return i.mode.IsDir() }
+
+// TestLoadFSRechecksOpenFile: the open file is checked again, a regular file
+// of at most the bound, whatever Lstat said (V2).
+func TestLoadFSRechecksOpenFile(t *testing.T) {
+	small := []byte("text\n")
+	limits := map[string]int64{"system.txt": MaxSystemBytes, "schema.json": 64 << 10}
+	for file, limit := range limits {
+		actual := int64(len(small))
+		if file == "schema.json" {
+			actual = int64(len(smallSchema))
+		}
+		fsFor := func(mode fs.FileMode, size int64, err error) openStatFS {
+			return openStatFS{m: promptFS("p.v1", small, []byte(smallSchema)), name: "p.v1/" + file, mode: mode, size: size, err: err}
+		}
+		for _, mode := range []fs.FileMode{fs.ModeSymlink, fs.ModeDir, fs.ModeDevice, fs.ModeNamedPipe, fs.ModeSocket, fs.ModeIrregular} {
+			wantInvalid(t, fsFor(mode, actual, nil), "p.v1")
+		}
+		wantInvalid(t, fsFor(0, limit+1, nil), "p.v1")
+		wantInvalid(t, fsFor(0, actual, fs.ErrPermission), "p.v1")
+		mustLoad(t, fsFor(0, actual, nil), "p.v1") // witness: faithful Stat
+		mustLoad(t, fsFor(0, limit, nil), "p.v1")  // witness: the bound is inclusive
 	}
 }

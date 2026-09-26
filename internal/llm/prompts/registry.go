@@ -104,7 +104,8 @@ func entry(fsys fs.FS, name string, dir bool) (fs.FileInfo, error) {
 }
 
 // readBounded reads the regular file name: its declared size is checked
-// before opening, the bytes read after, never more than limit + 1.
+// before opening, the type and size of the open file again, the bytes read
+// after, never more than limit + 1.
 func readBounded(fsys fs.FS, name string, limit int) ([]byte, error) {
 	fi, err := entry(fsys, name, false)
 	if err != nil {
@@ -116,6 +117,10 @@ func readBounded(fsys fs.FS, name string, limit int) ([]byte, error) {
 	f, err := fsys.Open(name)
 	if err != nil {
 		return nil, fmt.Errorf("%w: unreadable file", ErrInvalidPrompt)
+	}
+	if st, serr := f.Stat(); serr != nil || !st.Mode().IsRegular() || st.Size() > int64(limit) {
+		_ = f.Close() // the entry changed between Lstat and Open (V2)
+		return nil, fmt.Errorf("%w: file changed or too large", ErrInvalidPrompt)
 	}
 	b, rerr := io.ReadAll(io.LimitReader(f, int64(limit)+1))
 	if cerr := f.Close(); rerr != nil || cerr != nil {

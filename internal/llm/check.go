@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 
 	"github.com/amezianechayer/rempart/internal/llm/domain"
 	"github.com/amezianechayer/rempart/internal/llm/redact"
@@ -29,7 +30,8 @@ func textSize(msgs []domain.Message) int {
 
 // checkTools checks a deep copy of tools and returns it with the compiled
 // schemas: the provider receives exactly the checked bytes (T44). A secret in
-// a name, a description or the raw input schema is refused before compiling;
+// a name, a description, the raw input schema or one of its decoded texts is
+// refused before compiling;
 // the description is under the admission list of the schema texts.
 func checkTools(tools []domain.ToolSpec) ([]domain.ToolSpec, map[string]*schema.Schema, error) {
 	if len(tools) == 0 {
@@ -53,6 +55,13 @@ func checkTools(tools []domain.ToolSpec) ([]domain.ToolSpec, map[string]*schema.
 		if r.ContainsSecret(t.Name) || r.ContainsSecret(t.Description) || r.ContainsSecret(string(t.InputSchema)) {
 			return nil, nil, ErrSecretInPrompt
 		}
+		secret, err := secretInTexts(r, t.InputSchema)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", ErrInvalidTools, err)
+		}
+		if secret {
+			return nil, nil, ErrSecretInPrompt
+		}
 		s, err := schema.CompileSchema(t.InputSchema)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w: %w", ErrInvalidTools, err)
@@ -60,6 +69,16 @@ func checkTools(tools []domain.ToolSpec) ([]domain.ToolSpec, map[string]*schema.
 		schemas[t.Name] = s
 	}
 	return checked, schemas, nil
+}
+
+// secretInTexts reports whether a decoded text of the schema raw holds a
+// secret: the model reads the decoded text, not the raw bytes (V2).
+func secretInTexts(r *redact.Redactor, raw json.RawMessage) (bool, error) {
+	texts, err := schema.Texts(raw)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(texts, r.ContainsSecret), nil
 }
 
 // redactMessages returns a redacted deep copy and the number of secrets masked.

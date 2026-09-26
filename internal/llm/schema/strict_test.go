@@ -273,7 +273,8 @@ func TestEveryCodePointAdmission(t *testing.T) {
 }
 
 // TestSchemaRawAdmission: the reviewed bytes are the bytes the model reads.
-// A JSON escape other than \", \\ and \n would let a reviewer or a secret
+// A JSON escape other than \", \\ and \n, or a decoded backslash that reads
+// as an escape (\\u0041, \\x41), would let a reviewer or a secret
 // scanner read another text than the model (a secret hidden behind
 // \u0041), and a carriage return or a tab between tokens can hide text on a
 // terminal: both are refused, the escape or the byte never quoted (D3, T64).
@@ -287,6 +288,12 @@ func TestSchemaRawAdmission(t *testing.T) {
 		`{"type":"object","additionalProperties":false,"required":["\u0070w"],"properties":{"pw":{"type":"string"}}}`,
 		`{"type":"object","additionalProperties":false,"required":["pw"],"properties":{"\u0070w":{"type":"string"}}}`,
 		wrap(`{"enum":["\u0041"]}`),
+		wrap(`{"type":"string","description":"a\\u0041b"}`),
+		wrap(`{"type":"string","description":"a\\x41b"}`),
+		wrap(`{"type":"string","description":"a\\U0001F600b"}`),
+		wrap(`{"type":"string","description":"a\\x{41}b"}`),
+		wrap(`{"type":"string","pattern":"^\\u00e9$"}`),
+		wrap(`{"const":"\\\\\\u0041"}`),
 		"{\"type\":\"object\",\r\"additionalProperties\":false}",
 		"{\"type\":\"object\",\t\"additionalProperties\":false}",
 	} {
@@ -298,6 +305,7 @@ func TestSchemaRawAdmission(t *testing.T) {
 	for _, s := range []string{
 		wrap(`{"type":"string","description":"say \"hi\", a\\b, line 1\nline 2","pattern":"^a\\.b$"}`),
 		"{\"type\":\"object\",\n\"additionalProperties\":false}\n",
+		wrap(`{"type":"string","description":"a\\uz, \\xyz, \\d, \\n, \\\\, end \\","pattern":"^\\d+\\.\\w$"}`),
 	} {
 		if _, err := CompileSchema([]byte(s)); err != nil {
 			t.Errorf("CompileSchema(%s) = %v, want nil", s, err)
