@@ -122,7 +122,7 @@ aucun
   - Revues : **six revues sécurité**, cinq BLOCK successifs sur la même classe (texte relu différent de la donnée évaluée : repli de casse Unicode, clés YAML non chaîne, invisibles par catégorie puis par propriété, glyphes vides), deux changements d'approche consignés (V4 : validation de l'arbre avant conversion ; V10 : liste d'admission au lieu de listes de refus) ; sixième revue **PASS** ; `acceptance-verifier` **PASS** (8 critères, 40 mutations sur 40, 14 tests, `-race`) ; `make verify` bloqué au seul `govulncheck` (`vuln.go.dev` 403).
   - Menaces : T58 à T67 ajoutées ou étendues.
 ## En cours
-Aucune tâche en cours.
+M0-T19a `llm-harden` en cours (plan `docs/plans/M0-demo-prep.md`). Amendement A3 retenu sur délégation de l'humain : M0-T19 découpée en T19a à T19d, M0 passe à 22 tâches (`docs/plans/M0-overview.md`, section 0 bis). A1 prime sur la fiche : pas de `ContinueAsNew` en M0. Décisions humaines ouvertes (section 13 du plan) : (1) relire A3 ; (3) liste d'admission ASCII et français pour les prompts ; (4) avant T20, câblage du vérificateur factice (étiquette de build avec ADR, binaire de développement distinct, ou vérificateur qui refuse tout) ; (5) avant T20, `-llm=anthropic` refusé en M0 sauf décision contraire ; (6) forme canonique du signal d'approbation en T19b, à confirmer avant M4.
 
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
 
