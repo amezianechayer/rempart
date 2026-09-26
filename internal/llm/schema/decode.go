@@ -83,6 +83,9 @@ func decodeValue(dec *json.Decoder, depth int) (any, string) {
 
 // DecodeStrict parses one JSON value like Validate; errors never quote data.
 func DecodeStrict(data []byte) (any, error) {
+	if len(data) > MaxOutputBytes {
+		return nil, errors.New("schema: input too large")
+	}
 	v, reason := decodeStrict(data)
 	if reason != "" {
 		return nil, errors.New("schema: " + reason)

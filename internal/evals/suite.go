@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -62,32 +63,41 @@ type PathCheck struct {
 }
 
 func LoadSuite(fsys fs.FS, dir string) (Suite, error) {
+	lfs, ok := fsys.(fs.ReadLinkFS)
+	if !ok || !validSuiteName(dir) || !realDir(lfs, dir) {
+		return Suite{}, fmt.Errorf("%w: file system or directory", ErrInvalidSuite)
+	}
 	var s Suite
-	file := path.Join(dir, "suite.yaml")
-	if err := decodeFile(fsys, file, &s); err != nil {
+	file, cases := path.Join(dir, "suite.yaml"), path.Join(dir, "cases")
+	if err := decodeFile(lfs, file, &s); err != nil {
 		return Suite{}, err
 	}
 	if !validSuiteName(s.Name) || (dir != s.Name && !strings.HasSuffix(dir, "/"+s.Name)) ||
-		!token(s.Loop, 32, loopSet) || !token(s.Target, 32, nameSet) || len(s.Watch) > 64 {
+		!token(s.Loop, 32, loopSet) || !token(s.Target, 32, nameSet) || len(s.Watch) > 64 ||
+		slices.ContainsFunc(s.Watch, func(p string) bool { return !validPattern(p) }) {
 		return Suite{}, invalid(file, "header")
 	}
-	entries, err := fs.ReadDir(fsys, path.Join(dir, "cases"))
-	if err != nil || len(entries) == 0 || len(entries) > 1000 {
-		return Suite{}, invalid(dir, "cases")
+	if !realDir(lfs, cases) {
+		return Suite{}, invalid(cases, "not a directory")
 	}
-	for _, e := range entries {
-		name := path.Join(dir, "cases", e.Name())
-		if !strings.HasSuffix(name, ".yaml") || !e.Type().IsRegular() {
-			return Suite{}, invalid(name, "not a regular .yaml file")
+	entries, err := fs.ReadDir(lfs, cases)
+	if err != nil || len(entries) == 0 || len(entries) > 1000 {
+		return Suite{}, invalid(cases, "count")
+	}
+	for i, e := range entries {
+		id, isYAML := strings.CutSuffix(e.Name(), ".yaml")
+		if !isYAML || !token(id, 64, lower+"0123456789-") {
+			return Suite{}, fmt.Errorf("%w: %s: entry %d: name", ErrInvalidSuite, cases, i)
 		}
+		name := path.Join(cases, e.Name())
 		c := Case{Runs: 1}
-		if err := decodeFile(fsys, name, &c); err != nil {
+		if err := decodeFile(lfs, name, &c); err != nil {
 			return Suite{}, err
 		}
 		if _, _, err := compileCase(c); err != nil {
 			return Suite{}, fmt.Errorf("%w: %s: %w", ErrInvalidSuite, name, err)
 		}
-		if c.ID+".yaml" != e.Name() || c.Loop != s.Loop {
+		if c.ID != id || c.Loop != s.Loop {
 			return Suite{}, invalid(name, "id or loop")
 		}
 		s.Cases = append(s.Cases, c)
@@ -95,26 +105,28 @@ func LoadSuite(fsys fs.FS, dir string) (Suite, error) {
 	return s, nil
 }
 
-func decodeFile(fsys fs.FS, name string, out any) error {
-	info, err := fs.Lstat(fsys, name)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > MaxFileBytes {
+func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
+	data, ok := readRegular(fsys, name)
+	if !ok {
 		return invalid(name, "file")
 	}
-	data, err := fs.ReadFile(fsys, name)
 	var doc yaml.Node
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	if err != nil || dec.Decode(&doc) != nil || !errors.Is(dec.Decode(new(yaml.Node)), io.EOF) || !plain(&doc, 0) {
+	if dec.Decode(&doc) != nil || !errors.Is(dec.Decode(new(yaml.Node)), io.EOF) || !plain(&doc, 0) {
 		return invalid(name, "not one plain YAML document")
 	}
 	var v any
 	if doc.Decode(&v) != nil {
 		return invalid(name, "duplicate key")
 	}
+	if !exactKeys(v, reflect.TypeOf(out)) {
+		return invalid(name, "key")
+	}
 	js, err := json.Marshal(v)
 	strict := json.NewDecoder(bytes.NewReader(js))
 	strict.DisallowUnknownFields()
 	if err != nil || strict.Decode(out) != nil {
-		return invalid(name, "key, number, type or field")
+		return invalid(name, "number, type or field")
 	}
 	return nil
 }
@@ -137,4 +149,58 @@ func validSuiteName(s string) bool {
 
 func invalid(name, reason string) error {
 	return fmt.Errorf("%w: %s: %s", ErrInvalidSuite, name, reason)
+}
+
+func realDir(fsys fs.ReadLinkFS, dir string) bool {
+	parts := strings.Split(dir, "/")
+	for i := range parts {
+		if info, err := fsys.Lstat(strings.Join(parts[:i+1], "/")); err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+func readRegular(fsys fs.ReadLinkFS, name string) ([]byte, bool) {
+	if info, err := fsys.Lstat(name); err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, false
+	}
+	info, err := f.Stat()
+	data, rerr := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
+	return data, f.Close() == nil && err == nil && info.Mode().IsRegular() && rerr == nil && len(data) <= MaxFileBytes
+}
+
+func exactKeys(v any, t reflect.Type) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Slice:
+		a, isSlice := v.([]any)
+		return !isSlice || !slices.ContainsFunc(a, func(e any) bool { return !exactKeys(e, t.Elem()) })
+	case reflect.Struct:
+		m, isMap := v.(map[string]any)
+		for k, x := range m {
+			f, found := jsonField(t, k)
+			if !found || !exactKeys(x, f) {
+				return false
+			}
+		}
+		return isMap || reflect.ValueOf(v).Kind() != reflect.Map
+	}
+	return true
+}
+
+func jsonField(t reflect.Type, key string) (reflect.Type, bool) {
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if name, _, _ := strings.Cut(f.Tag.Get("json"), ","); f.IsExported() && name != "-" && name != "" && name == key {
+			return f.Type, true
+		}
+	}
+	return nil, false
 }

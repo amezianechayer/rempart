@@ -100,7 +100,7 @@ func compileChecks(list []PathCheck) ([]check, error) {
 		if err != nil {
 			return nil, err
 		}
-		if (pc.Contains != nil && pc.Equals != nil) || string(pc.Contains) == `""` {
+		if pc.Contains != nil && pc.Equals != nil {
 			return nil, errors.New("path check value")
 		}
 		raw, match := pc.Equals, equalJSON
@@ -110,8 +110,8 @@ func compileChecks(list []PathCheck) ([]check, error) {
 		ch := check{steps: steps, match: func(any) bool { return true }}
 		if raw != nil {
 			want, err := decodeJSON(raw)
-			if err != nil {
-				return nil, err
+			if err != nil || (pc.Contains != nil && want == "") {
+				return nil, errors.New("path check value")
 			}
 			ch.match = func(v any) bool { return match(v, want) }
 		}
@@ -121,9 +121,6 @@ func compileChecks(list []PathCheck) ([]check, error) {
 }
 
 func decodeJSON(data []byte) (any, error) {
-	if len(data) > schema.MaxOutputBytes {
-		return nil, errors.New("too large")
-	}
 	return schema.DecodeStrict(data)
 }
 

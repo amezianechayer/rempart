@@ -295,3 +295,9 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-25 23:34 [harnais] phase : free -> tests
 
 - 2026-09-26 00:06 [harnais] phase : tests -> impl
+
+- 2026-09-26 00:47 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T22 amendement V2 (BLOCK de la revue sécurité : clés exactes, noms non fiables, liens, bornes de baseline)
+
+- 2026-09-26 00:47 [harnais] phase : impl -> tests
+
+- 2026-09-26 01:07 [harnais] phase : tests -> impl
