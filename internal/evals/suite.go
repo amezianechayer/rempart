@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"path"
 	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -23,6 +26,9 @@ const (
 	nameSet      = lower + "0123456789_-"
 	loopSet      = alnum + "_-"
 )
+
+// jsonInt is the JSON integer grammar.
+var jsonInt = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 
 var (
 	ErrInvalidSuite = errors.New("evals: invalid suite")
@@ -132,10 +138,36 @@ func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
 }
 
 func plain(n *yaml.Node, depth int) bool {
-	if depth > 32 || n.Kind == yaml.AliasNode || n.Anchor != "" || n.Style&yaml.TaggedStyle != 0 || n.Tag == "!!merge" {
+	if depth > 32 || n.Kind == yaml.AliasNode || n.Anchor != "" || n.Style&yaml.TaggedStyle != 0 || n.Tag == "!!merge" || !jsonScalar(n) {
 		return false
 	}
-	return !slices.ContainsFunc(n.Content, func(c *yaml.Node) bool { return !plain(c, depth+1) })
+	for i, c := range n.Content {
+		if (n.Kind == yaml.MappingNode && i%2 == 0 && c.ShortTag() != "!!str") || !plain(c, depth+1) {
+			return false
+		}
+	}
+	return true
+}
+
+// jsonScalar admits strings, nulls, exact booleans and numbers that read back
+// exactly as written (D15, V5).
+func jsonScalar(n *yaml.Node) bool {
+	if n.Kind != yaml.ScalarNode {
+		return true
+	}
+	switch n.ShortTag() {
+	case "!!str", "!!null":
+		return true
+	case "!!bool":
+		return n.Value == "true" || n.Value == "false"
+	case "!!int":
+		_, err := strconv.ParseInt(n.Value, 10, 64)
+		return err == nil && jsonInt.MatchString(n.Value) && n.Value != "-0"
+	case "!!float":
+		f, err := strconv.ParseFloat(n.Value, 64)
+		return err == nil && !math.IsInf(f, 0) && !math.IsNaN(f) && strconv.FormatFloat(f, 'f', -1, 64) == n.Value
+	}
+	return false
 }
 
 func token(s string, limit int, set string) bool {

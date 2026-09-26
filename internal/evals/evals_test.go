@@ -159,7 +159,7 @@ func TestLoadSuiteRejectsUnknownFields(t *testing.T) {
 			t.Errorf("fs %d: %v", i, err)
 		}
 	}
-	s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{n: null, x: 0x1F}")), "s")
+	s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{n: null, x: 31}")), "s")
 	if _, ferr := LoadSuite(suiteFS(caseF, full), "s"); ferr != nil || err != nil || string(s.Cases[0].Input) != `{"n":null,"x":31}` {
 		t.Errorf("accepted: %v, %v", ferr, err)
 	}
@@ -556,6 +556,90 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 	s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{ſ: 1, S: 2}")), "s")
 	if err != nil || string(s.Cases[0].Input) != `{"S":2,"ſ":1}` {
 		t.Errorf("opaque input: %v", err)
+	}
+	// D15 (T62): the YAML tree is checked before any conversion, at any depth,
+	// opaque input, contains and equals included. A key that is not a string
+	// (two distinct keys would become one JSON key, the visible value lost) or
+	// a scalar JSON would not spell the same way is refused before case
+	// validation, and the reason never quotes it.
+	for i, c := range [][2]string{
+		{caseF, edit("{a: 1}", "{1: canary, 0x1: b}")},
+		{caseF, edit("{a: 1}", "{1: canary, +1: b}")},
+		{caseF, edit("{a: 1}", "{0o1: canary, 1: b}")},
+		{caseF, edit("{a: 1}", "{1: canary, 01: b}")},
+		{caseF, edit("{a: 1}", "{-0: canary, 0: b}")},
+		{caseF, edit("{a: 1}", "[{1: canary, 0x1: b}]")},
+		{caseF, edit("{a: 1}", "{1: canary}")},
+		{caseF, edit("{a: 1}", "{s: x, t: y, 1: canary}")},
+		{caseF, edit("{a: 1}", "{true: canary}")},
+		{caseF, edit("{a: 1}", "{null: canary}")},
+		{caseF, edit("{a: 1}", "{2001-12-14: canary}")},
+		{caseF, edit("{a: 1}", "{l: [x, {1.5: canary}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, equals: {1: canary, 0x1: y}}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, contains: [{1: canary}]}]}")},
+		{caseF, edit("{a: 1}", "{canary: 2001-12-14}")},
+		{caseF, edit("{a: 1}", "{canary: 2001-12-14 10:00:00}")},
+		{caseF, edit("{a: 1}", "{canary: 0x1F}")},
+		{caseF, edit("{a: 1}", "{canary: 01}")},
+		{caseF, edit("{a: 1}", "{canary: True}")},
+		{caseF, edit("{a: 1}", "{canary: FALSE}")},
+		{caseF, edit("{a: 1}", "{canary: +1}")},
+		{caseF, edit("{a: 1}", "{canary: .5}")},
+		{caseF, edit("{a: 1}", "{canary: 1.}")},
+		{caseF, edit("{a: 1}", "{canary: 1_000}")},
+		{caseF, edit("{a: 1}", "{canary: 0b1}")},
+		{caseF, edit("{a: 1}", "{canary: 0o17}")},
+		{caseF, edit("{a: 1}", "{canary: -.inf}")},
+		{caseF, edit("{a: 1}", "{canary: .nan}")},
+		{caseF, edit("{a: 1}", "{c: [1, [2, 0x1F]], canary: 1}")},
+		// V5: a number is kept only if it reads back exactly as written.
+		{caseF, edit("{a: 1}", "{canary: 98765432109876543210}")},
+		{caseF, edit("{a: 1}", "{canary: 0.30000000000000001}")},
+		{caseF, edit("{a: 1}", "{canary: 1.50}")},
+		{caseF, edit("{a: 1}", "{canary: -0}")},
+		{caseF, edit("{a: 1}", "{canary: -0.0}")},
+		{caseF, edit("{a: 1}", "{canary: 1e3}")},
+		{caseF, edit("{a: 1}", "{canary: 1E3}")},
+		{caseF, edit("{a: 1}", "{canary: 1e-7}")},
+		{caseF, edit("{a: 1}", "{canary: 12345678901234567890}")},
+		{caseF, edit("{a: 1}", "{canary: 9223372036854775808}")},
+		{caseF, edit("{a: 1}", "{canary: -9223372036854775809}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, equals: 1.50}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, contains: [1e3]}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, equals: 2001-12-14}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, contains: 0x1F}]}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, equals: [True]}]}")},
+		{caseF, edit(sc, "{status: converged, escalation: True}")},
+		{caseF, caseY + "runs: 0x2\n"},
+		{caseF, caseY + "runs: 02\n"},
+		{"s/suite.yaml", suiteY + "1: canary\n"},
+	} {
+		_, err := LoadSuite(suiteFS(c[0], c[1]), "s")
+		reason, _ := strings.CutPrefix(fmt.Sprint(err), ErrInvalidSuite.Error()+": "+c[0])
+		if !errors.Is(err, ErrInvalidSuite) || errors.Is(err, ErrInvalidCase) ||
+			strings.ContainsAny(reason, "0123456789") || strings.Contains(reason, "canary") || strings.Contains(strings.ToLower(reason), "true") {
+			t.Errorf("tree %d: %v", i, err)
+		}
+	}
+	// Quoted keys and JSON spelled scalars are kept verbatim, at any depth.
+	for i, c := range [][2]string{
+		{`{"1": a, "0x1": b}`, `{"0x1":"b","1":"a"}`},
+		{`{n: 1, f: 1.5, b: true, c: false, z: null, s: "2001-12-14"}`, `{"b":true,"c":false,"f":1.5,"n":1,"s":"2001-12-14","z":null}`},
+		{`{l: [0, -1, 10, 0.25, -0.5, true, false, null, '0x1F', "True", x]}`, `{"l":[0,-1,10,0.25,-0.5,true,false,null,"0x1F","True","x"]}`},
+		{`[{k: [{"2": "01"}]}]`, `[{"k":[{"2":"01"}]}]`},
+		{
+			`{l: [1.5, -2.25, 0, -7, 0.1, 1234567.5, 0.00001, 9223372036854775807, -9223372036854775808]}`,
+			`{"l":[1.5,-2.25,0,-7,0.1,1234567.5,0.00001,9223372036854775807,-9223372036854775808]}`,
+		},
+	} {
+		s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", c[0])), "s")
+		if err != nil || string(s.Cases[0].Input) != c[1] {
+			t.Errorf("verbatim %d: %v", i, err)
+		}
+	}
+	if s, err := LoadSuite(suiteFS(caseF, edit(sc, `{must_include: [{path: $.a, equals: {"1": [1.5, false]}}]}`)), "s"); err != nil ||
+		string(s.Cases[0].Expect.MustInclude[0].Equals) != `{"1":[1.5,false]}` {
+		t.Errorf("verbatim equals: %v", err)
 	}
 	for i, js := range []string{
 		`{"report":{"Success_Rate":1,"success_rate":0}}`, `{"report":{"avg_toKens":1}}`,
