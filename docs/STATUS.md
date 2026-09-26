@@ -301,3 +301,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-26 00:47 [harnais] phase : impl -> tests
 
 - 2026-09-26 01:07 [harnais] phase : tests -> impl
+
+- 2026-09-26 01:25 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T22 amendement V4 (seconde revue BLOCK : clés YAML non chaîne, changement d'approche)
+
+- 2026-09-26 01:25 [harnais] phase : impl -> tests

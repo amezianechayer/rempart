@@ -9,13 +9,38 @@ diff --git a/.claude/hooks/guard_edit.py b/.claude/hooks/guard_edit.py
  )
  # baseline.json, ou une baseline par couple (plateforme, modèle) sous evals/<boucle>/baseline/ (ADR 0002).
  BASELINE = re.compile(r"^evals/.+/baseline(\.json|/.+\.json)$", re.I)
-+# suite.yaml (cible, motifs watch) est gelé en phase impl comme les cas : T58, T61.
++# suite.yaml (cible, motifs watch), imbriqué ou non, est gelé en phase impl comme les cas : T58, T61.
  TEST_FILE = re.compile(
 -    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|"
-+    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|^evals/[^/]+/suite\.yaml$|"
++    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|^evals/.*/suite\.yaml$|"
      r"^modules/.*/tests?/|\.tftest\.hcl$|^evals/security/lab/)",
      re.I,
  )
+diff --git a/.claude/hooks/guard_bash.py b/.claude/hooks/guard_bash.py
+--- a/.claude/hooks/guard_bash.py
++++ b/.claude/hooks/guard_bash.py
+@@ -17,3 +17,5 @@
+
+ HARNESS_PATH = re.compile(r"(\.claude/(settings|hooks|bin|state|agents|commands)\b|\bclaude\.md\b)", re.I)
++# T58, T63 : baselines, suites et cas d'eval ne s'écrivent jamais par commande ; l'outil d'édition reste gardé par phase.
++EVAL_DATA_PATH = re.compile(r"evals/\S*(baseline|suite\.yaml|/cases/)", re.I)
+ HARMLESS_REDIRECT = re.compile(r"\d?>>?\s*/dev/null|\d>&\d")
+@@ -36,3 +38,4 @@
+     (r"\bgo\s+test\b[^|;&]*\s-skip\b", "exclusion de tests via -skip interdite dans le flux normal."),
+-    (r"\bg?make\b[^|;&]*\bupdate-baseline\b|--write-baseline\b",
++    # T63 : le paquet flag de Go accepte un ou deux tirets.
++    (r"\bg?make\b[^|;&]*\bupdate-baseline\b|(^|\s)-{1,2}write-baseline\b",
+      "la mise à jour des baselines d'eval se fait par une PR humaine explicite."),
+@@ -71,6 +74,9 @@
+     if touches_harness(norm):
+         block(
+             "BLOQUÉ : modification du harnais interdite. Pour changer de phase : "
+             f"`python3 .claude/bin/rempart-state phase <tests|impl|free>`.\nCommande : {cmd}"
+         )
++    if EVAL_DATA_PATH.search(norm) and WRITERS.search(HARMLESS_REDIRECT.sub(" ", norm)):
++        block("BLOQUÉ : écriture par commande dans les baselines, suites ou cas d'eval interdite (T58, T63) ; "
++              f"utilise l'outil d'édition, gardé par phase.\nCommande : {cmd}")
+     sys.exit(0)
 diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
 --- a/.claude/hooks/test_hooks.sh
 +++ b/.claude/hooks/test_hooks.sh
@@ -27,7 +52,7 @@ diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
  edit 0 "$TN/internal/x/x.go" "package x"
  edit 2 "$TN/internal/x/x.go" "k := \"$K\""
  edit 0 "$TN/internal/x/testdata/k.txt" "EXAMPLE $K"
-@@ -55,9 +56,11 @@
+@@ -55,9 +56,12 @@
  edit 2 "$TN/internal/x/x.go" "package x"
  edit 0 "$TN/internal/x/x_test.go" "package x"
  edit 0 "$TN/docs/plans/M0-x.md"
@@ -36,9 +61,22 @@ diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
  edit 2 "$TN/internal/x/x_test.go" "package x"
  edit 2 "$TN/evals/intent/cases/a.yaml"
 +edit 2 "$TN/evals/intent/suite.yaml"
++edit 2 "$TN/evals/a/b/suite.yaml"
  edit 2 "$TN/internal/x/x.go" "t.Skipf(\"plus tard\")"
  edit 0 "$TN/internal/x/x.go" "package x"
  phase free
+@@ -77,5 +81,11 @@
+ cmd 0 "ls .claude/hooks"
+ cmd 2 "go run ./cmd/rempart-evals --suite all --write-baseline"
++cmd 2 "go run ./cmd/rempart-evals --suite all -write-baseline"
+ cmd 2 "make update-baseline"
++cmd 2 "cp /tmp/b.json evals/intent/baseline/anthropic/m.json"
++cmd 2 "sed -i s/0.9/0.1/ evals/intent/baseline.json"
++cmd 2 "echo 'watch: []' > evals/a/b/suite.yaml"
++cmd 2 "tee evals/intent/cases/c.yaml < /tmp/c"
++cmd 0 "cat evals/intent/suite.yaml"
+ cmd 2 "git push origin +main"
+ cmd 2 "git push --force-with-lease origin main"
 diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS
 new file mode 100644
 --- /dev/null
