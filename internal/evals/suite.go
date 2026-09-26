@@ -34,7 +34,7 @@ var jsonInt = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 
 // ambiguous matches the plain scalars that YAML 1.1 or the core schema read as
 // a boolean, a null or a number while yaml v3 reads a string (V6).
-var ambiguous = regexp.MustCompile(`(?i)^(y|yes|n|no|on|off|true|false|null|~|[-+]?\.(inf|nan)|[-+]?0[box][0-9a-f_]*|` +
+var ambiguous = regexp.MustCompile(`(?i)^(y|yes|n|no|on|off|true|false|null|~|[-+]?\.(inf|nan)|[-+]?0[box][0-9a-f_]*|[-+]?\.[0-9.]*|=|` +
 	`[-+]?\.?[0-9][0-9_]*(:[0-9_]+)*(\.[0-9_.]*)?(e[-+]?[0-9]+)?)$`)
 
 // zone is where a node sits: a typed field, opaque content that may hold null
@@ -159,13 +159,17 @@ func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
 	return nil
 }
 
-// visible reports whether every rune of data has one visible reading (D16):
-// valid UTF-8, no control, format or separator rune but the space, the line
-// feed and a carriage return before a line feed.
+// visible reports whether every rune of data has one visible reading (D16, V8):
+// valid UTF-8 and assigned, with no control, format, separator, private use,
+// noncharacter, variation selector or default ignorable rune but the space,
+// the line feed and a carriage return before a line feed. Unassigned is spelled
+// out: since Unicode 17 (Go 1.27) unicode.C also holds the unassigned runes.
 func visible(data []byte) bool {
 	for i, r := range string(data) {
 		if r != ' ' && r != '\n' && (r != '\r' || !bytes.HasPrefix(data[i+1:], []byte("\n"))) &&
-			unicode.In(r, unicode.Cc, unicode.Cf, unicode.Z) {
+			(unicode.In(r, unicode.Cc, unicode.Cf, unicode.Z, unicode.Co, unicode.Noncharacter_Code_Point,
+				unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) ||
+				!unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S, unicode.Z, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs)) {
 			return false
 		}
 	}
@@ -203,7 +207,7 @@ func plain(n *yaml.Node, depth int, z zone, src [][]rune) bool {
 	return true
 }
 
-// jsonScalar admits unambiguous strings, nulls where allowed, exact booleans
+// jsonScalar admits unambiguous strings, spelled nulls where allowed, exact booleans
 // and numbers that read back exactly as written (D15, V5, V6).
 func jsonScalar(n *yaml.Node, nulls bool) bool {
 	if n.Kind != yaml.ScalarNode {
@@ -213,7 +217,7 @@ func jsonScalar(n *yaml.Node, nulls bool) bool {
 	case "!!str":
 		return n.Style != 0 || !ambiguous.MatchString(n.Value)
 	case "!!null":
-		return nulls
+		return nulls && n.Value == "null"
 	case "!!bool":
 		return n.Value == "true" || n.Value == "false"
 	case "!!int":

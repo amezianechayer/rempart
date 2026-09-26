@@ -562,7 +562,7 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 	// (two distinct keys would become one JSON key, the visible value lost) or
 	// a scalar JSON would not spell the same way is refused before case
 	// validation, and the reason never quotes it.
-	for i, c := range [][2]string{
+	tree := [][2]string{
 		{caseF, edit("{a: 1}", "{1: canary, 0x1: b}")},
 		{caseF, edit("{a: 1}", "{1: canary, +1: b}")},
 		{caseF, edit("{a: 1}", "{0o1: canary, 1: b}")},
@@ -695,7 +695,36 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 		{caseF, edit(sc, "{must_include: [{path: $.a, equals: [on, 1:20]}]}")},
 		{caseF, edit(sc, "{status: yes}")},
 		{caseF, caseY + "tags: [on]\n"},
-	} {
+		// V8: a null in input or equals is spelled null; implicit and ~ are refused.
+		{caseF, edit("{a: 1}", "{a: , canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: ~, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: Null, canary: 1}")},
+		{caseF, edit("{a: 1}", "{l: [x, {k: NULL}], canary: 1}")},
+		{caseF, edit("{a: 1}", "{canary}")},
+		{caseF, edit("input: {a: 1}", "input:")},
+		{caseF, edit("input: {a: 1}", "input: ~")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, equals: }]}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, equals: ~}]}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, equals: [~]}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, equals: {k: }}]}")},
+		// V8: . and = are a float and a !!value in YAML 1.1.
+		{caseF, edit("{a: 1}", "{a: ., canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: =, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: -., canary: 1}")},
+		{caseF, edit("{a: 1}", "{=: canary}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: .}]}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, equals: [=]}]}")},
+	}
+	// V8 (D16): every invisible rune the fourth review found, whatever its
+	// category, in contains, in a key and in input.
+	for _, x := range []string{"\u2065", "\u034f", "\u3164", "\u115f", "\u17b4", "\u180b", "\ufe0f", "\U000E0080", "\ue000", "\ufdd0", "\U0010FFFF", "\U000E01EF", "\u0378", "\U00040000"} {
+		tree = append(tree,
+			[2]string{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: \"public"+x+"_bucket\"}]}")},
+			[2]string{caseF, edit("{a: 1}", "{\"a"+x+"\": canary}")},
+			[2]string{caseF, edit("{a: 1}", "{a: public"+x+"_bucket, canary: 1}")},
+		)
+	}
+	for i, c := range tree {
 		_, err := LoadSuite(suiteFS(c[0], c[1]), "s")
 		reason, _ := strings.CutPrefix(fmt.Sprint(err), ErrInvalidSuite.Error()+": "+c[0])
 		if !errors.Is(err, ErrInvalidSuite) || errors.Is(err, ErrInvalidCase) ||
@@ -716,7 +745,7 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 		},
 		// V6: visible escapes, accents, quoted ambiguous scalars, null inside input.
 		{
-			`{a: "\u200b", b: "\t", c: é, d: "yes", e: '1:20', f: "on", g: "%x", h: ~, contains: null, equals: [null]}`,
+			`{a: "\u200b", b: "\t", c: é, d: "yes", e: '1:20', f: "on", g: "%x", h: null, contains: null, equals: [null]}`,
 			"{\"a\":\"\u200b\",\"b\":\"\\t\",\"c\":\"é\",\"contains\":null,\"d\":\"yes\",\"e\":\"1:20\",\"equals\":[null],\"f\":\"on\",\"g\":\"%x\",\"h\":null}",
 		},
 	} {
@@ -729,7 +758,7 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 		string(s.Cases[0].Expect.MustInclude[0].Equals) != `{"1":[1.5,false]}` {
 		t.Errorf("verbatim equals: %v", err)
 	}
-	if s, err := LoadSuite(suiteFS(caseF, edit(sc, `{must_include: [{path: $.a, equals: null}, {path: $.b, equals: {k: [~]}}]}`)), "s"); err != nil ||
+	if s, err := LoadSuite(suiteFS(caseF, edit(sc, `{must_include: [{path: $.a, equals: null}, {path: $.b, equals: {k: [null]}}]}`)), "s"); err != nil ||
 		string(s.Cases[0].Expect.MustInclude[1].Equals) != `{"k":[null]}` {
 		t.Errorf("null equals: %v", err)
 	}
@@ -742,6 +771,11 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 	}
 	if s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", `{a: é, b: "!x"}`)), "s"); err != nil || string(s.Cases[0].Input) != `{"a":"é","b":"!x"}` {
 		t.Errorf("bang after accent: %v", err)
+	}
+	// V8: accents (composed or not), a plain emoji and a spelled null are kept.
+	if s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{a: é, b: \U0001F600, c: \"\u00e9\U0001F512\", d: null, e: e\u0301}")), "s"); err != nil ||
+		string(s.Cases[0].Input) != "{\"a\":\"é\",\"b\":\"\U0001F600\",\"c\":\"é\U0001F512\",\"d\":null,\"e\":\"e\u0301\"}" {
+		t.Errorf("visible runes: %v", err)
 	}
 	for i, js := range []string{
 		`{"report":{"Success_Rate":1,"success_rate":0}}`, `{"report":{"avg_toKens":1}}`,

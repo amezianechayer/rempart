@@ -317,3 +317,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-26 11:58 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T22 amendement V8 (quatrième revue BLOCK : invisibles par propriété Unicode, null implicite)
 
 - 2026-09-26 11:58 [harnais] phase : impl -> tests
+
+- 2026-09-26 12:18 [harnais] phase : tests -> impl
