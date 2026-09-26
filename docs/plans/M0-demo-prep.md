@@ -4,7 +4,9 @@
 
 ## 0. Amendements
 
-(aucun)
+BASE : `7ec0ce0`.
+
+- V1 (2026-09-26, `test-author`, étape A2) : (1) **sécurité** : un secret écrit derrière un échappement JSON (`\u0041KIA...`) passait `ContainsSecret` sur les octets bruts et atteignait le fournisseur ; `admittedRaw` remplace `admittedDoc` : tous les octets bruts d'un schéma passent `AdmittedText`, seuls les échappements `\"`, `\\` et `\n` sont admis (restreint D3 et D6) ; (2) **sécurité** : la description d'un outil échappait à D3 ; `checkTools` la refuse hors liste (`ErrInvalidTools`) ; (3) critère 5 exécuté en `LC_ALL=C.UTF-8` avec contrôle du code retour de grep ; (4) critère 4 avec `git add -N` pour voir les fichiers nouveaux ; (5) critère 8 : M4, X16, X25 équivalentes, retirées du compte ; (6) point 10.3 : seuil de 10 s sous `-race` inatteignable (rédacteur à ~45 µs par octet), `TestRedactedTextBounded` réécrit, environ 14 s, seuil relevé à 30 s ; (7) gofumpt sur 5.6 ; (8) résidu T43 : `fs.Lstat` se replie sur `fs.Stat` pour un FS sans `ReadLinkFS` (`embed.FS`, sans liens possibles) ; (9) tests ajoutés : `TestStrictFormsExhaustive`, `TestStrictKeywordsAtDepth`, `TestEveryCodePointAdmission`, `TestSchemaRawAdmission`, `TestStrictNameLengths`, `TestLoadFSUnreadableEntry`, `TestEscapedSecretInSchemasRefused`, `TestToolDescriptionAdmissionList` ; patch appliqué par `git apply`, jamais retapé (piège des échappements).
 
 ## 1. Objet
 

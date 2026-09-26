@@ -119,9 +119,12 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 	if textSize(call.Messages) > MaxRequestTextBytes { // S6
 		return Result{}, nil, ErrRequestTooLarge
 	}
-	var toolSchemas map[string]*schema.Schema
-	if withTools { // S7
-		if toolSchemas, err = checkTools(tools); err != nil {
+	var (
+		toolSchemas map[string]*schema.Schema
+		checked     []domain.ToolSpec
+	)
+	if withTools { // S7: the provider gets the checked copy (T44)
+		if checked, toolSchemas, err = checkTools(tools); err != nil {
 			return Result{}, nil, err
 		}
 	}
@@ -134,6 +137,9 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 		return Result{}, nil, err
 	}
 	msgs, redactions := redactMessages(call.Messages) // S12
+	if textSize(msgs) > MaxRequestTextBytes {         // S12b: masks may lengthen the text
+		return Result{}, nil, ErrRequestTooLarge
+	}
 	req := domain.Request{
 		PromptID: prompt.ID, PromptHash: prompt.Hash, System: prompt.System,
 		Messages: msgs, Schema: prompt.Schema.Raw(), MaxTokens: call.MaxTokens,
@@ -148,7 +154,7 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 		}
 		var resp domain.Response
 		if withTools {
-			resp, err = c.provider.WithTools(ctx, route, req, tools)
+			resp, err = c.provider.WithTools(ctx, route, req, checked)
 		} else {
 			resp, err = c.provider.Structured(ctx, route, req)
 		}
@@ -186,7 +192,8 @@ func (c *Client) loadPrompt(call Call) (prompts.Prompt, error) {
 	if call.PromptHash != p.Hash {
 		return prompts.Prompt{}, ErrPromptMismatch
 	}
-	if redact.New().ContainsSecret(p.System) {
+	r := redact.New() // a secret in the system prompt or its schema is refused, never masked
+	if r.ContainsSecret(p.System) || r.ContainsSecret(string(p.Schema.Raw())) {
 		return prompts.Prompt{}, ErrSecretInPrompt
 	}
 	return p, nil

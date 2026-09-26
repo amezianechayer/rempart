@@ -334,3 +334,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-26 13:40 [harnais] PHASE FREE (discipline TDD suspendue) : tâche evals-core (M0-T22) terminée
 
 - 2026-09-26 13:40 [harnais] phase : impl -> free
+
+- 2026-09-26 18:46 [harnais] phase : free -> tests
+
+- 2026-09-26 19:25 [harnais] phase : tests -> impl
