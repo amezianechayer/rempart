@@ -124,7 +124,7 @@ M0-T22 `evals-core` : plan `docs/plans/M0-evals-core.md` rédigé (complet, 36 K
 
 Préalables humains (étape H0 du plan) :
 1. ~~Valider le découpage et répondre aux questions Q1 à Q5~~ : fait le 2026-09-23.
-2. Appliquer les propositions 0001 (harnais), 0002 (CLAUDE.md), 0003 (garde make et bac à sable) puis 0004 (`post_edit_check` hors du dépôt), redémarrer Claude Code. M0-T01 a été faite sans elles (écarts consignés ci-dessus).
+2. Appliquer les propositions 0001 (harnais), 0002 (CLAUDE.md), 0003 (garde make et bac à sable), 0004 (`post_edit_check` hors du dépôt) puis 0005 (suites d'eval gelées en phase impl, `CODEOWNERS`, **condition avant M0-T23**), redémarrer Claude Code ; activer « Require review from Code Owners » sur la branche par défaut. M0-T01 a été faite sans elles (écarts consignés ci-dessus).
 3. ~~Trancher les ADR 0001, 0002 et 0003~~ : acceptés le 2026-09-23.
 4. ~~Poste Linux, macOS ou WSL2, `bash scripts/check-tools.sh` vert ; `git tag m0-start`~~ : fait le 2026-09-23 dans une session Claude Code cloud (conteneur Linux) à la demande de l'humain (« continue et fais le nécessaire »). Outils installés : Go 1.27.1 (dernière stable), golangci-lint v2.13.2, gofumpt v0.12.0, govulncheck v1.8.0, OPA 1.20.2 ; `bash scripts/check-tools.sh` affiche `Outils requis pour M0 : OK.` ; démon Docker non joignable dans ce conteneur (nécessaire à partir de M0-T03). Tag `m0-start` posé sur `1eca7a7` par l'agent. Jalon courant réglé à M0 (`rempart-state milestone M0`, l'état n'est pas versionné). Le tag n'a pas pu être poussé depuis la session cloud : `git tag m0-start 1eca7a7 && git push origin m0-start` depuis le poste de l'humain.
 5. Relire les modifications des skills `loop-engineering`, `intent-to-spec`, `safe-autonomy` et `agent-evals`.
