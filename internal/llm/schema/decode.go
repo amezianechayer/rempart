@@ -80,3 +80,12 @@ func decodeValue(dec *json.Decoder, depth int) (any, string) {
 	}
 	return arr, ""
 }
+
+// DecodeStrict parses one JSON value like Validate; errors never quote data.
+func DecodeStrict(data []byte) (any, error) {
+	v, reason := decodeStrict(data)
+	if reason != "" {
+		return nil, errors.New("schema: " + reason)
+	}
+	return v, nil
+}

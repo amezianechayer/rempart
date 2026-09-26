@@ -4,7 +4,7 @@
 
 ## 0. Amendements
 
-(vide)
+- V1 (2026-09-26, `test-author`, étape A2) : code de la section 5 identique, `doc.go` compris. Corrections : (1) I1 : `go mod tidy` après l'installation du code (sinon `go.yaml.in/yaml/v3` reste `// indirect` et le critère 2 échoue) ; (2) mutations M5, M10, M13 réécrites pour compiler (imports inutilisés) : M5 `NEW` = `!errors.Is(io.EOF, io.EOF)`, M10 `NEW` = `return ok && x == s && strings.Contains(x, s)`, M13 `NEW` = `if slices.Contains(c.Tags, "") {` ; (3) tests reformatés par gofumpt v0.12 ; (4) précision de D2 : le chargeur YAML compte la profondeur depuis le document, `DecodeStrict` depuis `input` ; le chargeur est donc plus strict, le test épingle 33 niveaux. Tests renforcés (11 fonctions inchangées, lignes ajoutées aux tables) après mutations exploratoires X1 à X69 : toutes tuées sauf 5 équivalentes. 15 mutations sur 15 détectées. Question pour la revue : les messages d'erreur citent le chemin du fichier, donnée non fiable (T59).
 
 ## 1. Périmètre
 
