@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -29,6 +31,23 @@ const (
 
 // jsonInt is the JSON integer grammar.
 var jsonInt = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
+
+// ambiguous matches the plain scalars that YAML 1.1 or the core schema read as
+// a boolean, a null or a number while yaml v3 reads a string (V6).
+var ambiguous = regexp.MustCompile(`(?i)^(y|yes|n|no|on|off|true|false|null|~|[-+]?\.(inf|nan)|[-+]?0[box][0-9a-f_]*|` +
+	`[-+]?\.?[0-9][0-9_]*(:[0-9_]+)*(\.[0-9_.]*)?(e[-+]?[0-9]+)?)$`)
+
+// zone is where a node sits: a typed field, opaque content that may hold null
+// (input, equals) or opaque content that may not (contains).
+type zone int
+
+const (
+	typed zone = iota
+	nullable
+	opaque
+)
+
+var zones = map[string]zone{"input": nullable, "equals": nullable, "contains": opaque}
 
 var (
 	ErrInvalidSuite = errors.New("evals: invalid suite")
@@ -116,9 +135,12 @@ func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
 	if !ok {
 		return invalid(name, "file")
 	}
+	if !visible(data) || bytes.HasPrefix(data, []byte("%")) || bytes.Contains(data, []byte("\n%")) {
+		return invalid(name, "character or directive")
+	}
 	var doc yaml.Node
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	if dec.Decode(&doc) != nil || !errors.Is(dec.Decode(new(yaml.Node)), io.EOF) || !plain(&doc, 0) {
+	if dec.Decode(&doc) != nil || !errors.Is(dec.Decode(new(yaml.Node)), io.EOF) || !plain(&doc, 0, typed, runeLines(data)) {
 		return invalid(name, "not one plain YAML document")
 	}
 	var v any
@@ -137,27 +159,61 @@ func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
 	return nil
 }
 
-func plain(n *yaml.Node, depth int) bool {
-	if depth > 32 || n.Kind == yaml.AliasNode || n.Anchor != "" || n.Style&yaml.TaggedStyle != 0 || n.Tag == "!!merge" || !jsonScalar(n) {
+// visible reports whether every rune of data has one visible reading (D16):
+// valid UTF-8, no control, format or separator rune but the space, the line
+// feed and a carriage return before a line feed.
+func visible(data []byte) bool {
+	for i, r := range string(data) {
+		if r != ' ' && r != '\n' && (r != '\r' || !bytes.HasPrefix(data[i+1:], []byte("\n"))) &&
+			unicode.In(r, unicode.Cc, unicode.Cf, unicode.Z) {
+			return false
+		}
+	}
+	return utf8.Valid(data)
+}
+
+func runeLines(data []byte) [][]rune {
+	var lines [][]rune
+	for line := range strings.SplitSeq(string(data), "\n") {
+		lines = append(lines, []rune(line))
+	}
+	return lines
+}
+
+// bang reports whether the source text of n starts with the non-specific tag
+// "!", which yaml v3 drops (T65); Line and Column count runes from 1.
+func bang(n *yaml.Node, src [][]rune) bool {
+	return n.Line >= 1 && n.Line <= len(src) && n.Column >= 1 && n.Column <= len(src[n.Line-1]) && src[n.Line-1][n.Column-1] == '!'
+}
+
+func plain(n *yaml.Node, depth int, z zone, src [][]rune) bool {
+	if depth > 32 || n.Kind == yaml.AliasNode || n.Anchor != "" || n.Style&yaml.TaggedStyle != 0 || n.Tag == "!!merge" ||
+		bang(n, src) || !jsonScalar(n, z == nullable) {
 		return false
 	}
 	for i, c := range n.Content {
-		if (n.Kind == yaml.MappingNode && i%2 == 0 && c.ShortTag() != "!!str") || !plain(c, depth+1) {
+		cz := z
+		if z == typed && n.Kind == yaml.MappingNode && i%2 == 1 {
+			cz = zones[n.Content[i-1].Value]
+		}
+		if (n.Kind == yaml.MappingNode && i%2 == 0 && c.ShortTag() != "!!str") || !plain(c, depth+1, cz, src) {
 			return false
 		}
 	}
 	return true
 }
 
-// jsonScalar admits strings, nulls, exact booleans and numbers that read back
-// exactly as written (D15, V5).
-func jsonScalar(n *yaml.Node) bool {
+// jsonScalar admits unambiguous strings, nulls where allowed, exact booleans
+// and numbers that read back exactly as written (D15, V5, V6).
+func jsonScalar(n *yaml.Node, nulls bool) bool {
 	if n.Kind != yaml.ScalarNode {
 		return true
 	}
 	switch n.ShortTag() {
-	case "!!str", "!!null":
-		return true
+	case "!!str":
+		return n.Style != 0 || !ambiguous.MatchString(n.Value)
+	case "!!null":
+		return nulls
 	case "!!bool":
 		return n.Value == "true" || n.Value == "false"
 	case "!!int":

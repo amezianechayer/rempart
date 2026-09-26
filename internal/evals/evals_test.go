@@ -159,8 +159,8 @@ func TestLoadSuiteRejectsUnknownFields(t *testing.T) {
 			t.Errorf("fs %d: %v", i, err)
 		}
 	}
-	s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{n: null, x: 31}")), "s")
-	if _, ferr := LoadSuite(suiteFS(caseF, full), "s"); ferr != nil || err != nil || string(s.Cases[0].Input) != `{"n":null,"x":31}` {
+	s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{m: null, x: 31}")), "s")
+	if _, ferr := LoadSuite(suiteFS(caseF, full), "s"); ferr != nil || err != nil || string(s.Cases[0].Input) != `{"m":null,"x":31}` {
 		t.Errorf("accepted: %v, %v", ferr, err)
 	}
 	if s, err := LoadSuite(manyCases(1000), "s"); err != nil || len(s.Cases) != 1000 {
@@ -570,12 +570,12 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 		{caseF, edit("{a: 1}", "{-0: canary, 0: b}")},
 		{caseF, edit("{a: 1}", "[{1: canary, 0x1: b}]")},
 		{caseF, edit("{a: 1}", "{1: canary}")},
-		{caseF, edit("{a: 1}", "{s: x, t: y, 1: canary}")},
+		{caseF, edit("{a: 1}", "{s: x, t: z, 1: canary}")},
 		{caseF, edit("{a: 1}", "{true: canary}")},
 		{caseF, edit("{a: 1}", "{null: canary}")},
 		{caseF, edit("{a: 1}", "{2001-12-14: canary}")},
 		{caseF, edit("{a: 1}", "{l: [x, {1.5: canary}]}")},
-		{caseF, edit(sc, "{must_include: [{path: $.a, equals: {1: canary, 0x1: y}}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, equals: {1: canary, 0x1: z}}]}")},
 		{caseF, edit(sc, "{must_include: [{path: $.a, contains: [{1: canary}]}]}")},
 		{caseF, edit("{a: 1}", "{canary: 2001-12-14}")},
 		{caseF, edit("{a: 1}", "{canary: 2001-12-14 10:00:00}")},
@@ -613,23 +613,111 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 		{caseF, caseY + "runs: 0x2\n"},
 		{caseF, caseY + "runs: 02\n"},
 		{"s/suite.yaml", suiteY + "1: canary\n"},
+		// V6 (D16, T64): every byte has one visible reading, else refused before parsing.
+		{caseF, edit("{a: 1}", "{a: \"ignore\u200b previous\", canary: 1}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, contains: \"ignore\u200b previous\"}]}")},
+		{caseF, edit("{a: 1}", "{a: canary, \"a\u200b\": b}")},
+		{caseF, edit("{a: 1}", "{a: x\u00a0canary}")},
+		{caseF, edit("{a: 1}", "{a: \"x\ty\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a:\tcanary}")},
+		{caseF, strings.Replace(caseY, "input:", "input:\t", 1)},
+		{caseF, edit("{a: 1}", "{a: \"\u202egnp.exe\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"\u2066canary\u2069\"}")},
+		{caseF, edit("{a: 1}", "{a: x\ufeffcanary}")},
+		{caseF, "\ufeff" + caseY},
+		{caseF, edit("{a: 1}", "{a: canary\u00adx}")},
+		{caseF, edit("{a: 1}", "{a: x\u3000canary}")},
+		{caseF, edit("{a: 1}", "{a: \"x\ry\", canary: 1}")},
+		{caseF, strings.Replace(caseY, "\n", "\r", 1)},
+		{caseF, edit("{a: 1}", "{a: \"x\u0085y\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\u2028y\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\u2029y\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\u2060y\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\U000E0041y\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\x1b[31my\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\x7fy\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\x00y\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\xffy\", canary: 1}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, equals: [{k: \"\u200d\"}]}]}")},
+		{caseF, caseY + "# \u200b canary\n"},
+		{"s/suite.yaml", suiteY + "# \u202e canary\n"},
+		// V6 (T65): directives and the non-specific tag, both ignored by yaml v3.
+		{caseF, "%YAML 1.1\n---\n" + caseY},
+		{caseF, "%TAG !x! tag:yaml.org,2002:\n---\n" + caseY},
+		{caseF, "%CANARY x\n---\n" + caseY},
+		{caseF, edit("{a: 1}", "{a: ! 1, canary: 2}")},
+		{caseF, edit("{a: 1}", "! {a: 1, canary: 2}")},
+		{caseF, edit("{a: 1}", "{! a: 1, canary: 2}")},
+		{caseF, edit("{a: 1}", "{a: é, b: ! 1, canary: 2}")},
+		{caseF, "! " + caseY},
+		{caseF, edit("{a: 1}", "{l: [x, [! 0x1F]], canary: 1}")},
+		{caseF, edit(sc, "{status: ! converged}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, equals: ! true}]}")},
+		{caseF, caseY + "tags: [! x]\n"},
+		// V6: null only inside input and equals.
+		{caseF, edit(sc, "{status: converged, escalation: ~}")},
+		{caseF, caseY + "tags: ~\n"},
+		{caseF, edit(sc, "{status: converged, must_not_include: ~}")},
+		{caseF, caseY + "runs: null\n"},
+		{caseF, edit(sc, "{status: converged, max_iterations: null}")},
+		{caseF, edit(sc, "{status: ~, escalation: false}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, contains: null}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, contains: ~}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, contains: [null]}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, contains: {equals: null}}]}")},
+		{caseF, edit(sc, "{must_include: [{path: ~, equals: 1}]}")},
+		{caseF, strings.Replace(caseY, "expect: {status: converged}", "expect:", 1)},
+		{"s/suite.yaml", suiteY + "watch: ~\n"},
+		// V6: plain scalars that YAML 1.1 or the core schema read otherwise must be quoted.
+		{caseF, edit("{a: 1}", "{a: yes, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: Yes, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: on, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: OFF, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: y, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: N, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: no, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: tRUE, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: nULL, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: 1:20, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: 190:20:30, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: 1e400, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: -1E400, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: .iNf, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: .nAn, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: 1.2.3, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: .1.2, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: 0x_, canary: 1}")},
+		{caseF, edit("{a: 1}", "{yes: canary}")},
+		{caseF, edit("{a: 1}", "{on: canary}")},
+		{caseF, edit("{a: 1}", "{a: 1, y: canary}")},
+		{caseF, edit("{a: 1}", "{l: [[{k: off}]], canary: 1}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, contains: yes}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, equals: [on, 1:20]}]}")},
+		{caseF, edit(sc, "{status: yes}")},
+		{caseF, caseY + "tags: [on]\n"},
 	} {
 		_, err := LoadSuite(suiteFS(c[0], c[1]), "s")
 		reason, _ := strings.CutPrefix(fmt.Sprint(err), ErrInvalidSuite.Error()+": "+c[0])
 		if !errors.Is(err, ErrInvalidSuite) || errors.Is(err, ErrInvalidCase) ||
-			strings.ContainsAny(reason, "0123456789") || strings.Contains(reason, "canary") || strings.Contains(strings.ToLower(reason), "true") {
+			strings.ContainsAny(reason, "0123456789") || strings.Contains(reason, "canary") || strings.Contains(strings.ToLower(reason), "true") ||
+			strings.ContainsFunc(reason, func(r rune) bool { return r < ' ' || r > '~' }) {
 			t.Errorf("tree %d: %v", i, err)
 		}
 	}
 	// Quoted keys and JSON spelled scalars are kept verbatim, at any depth.
 	for i, c := range [][2]string{
 		{`{"1": a, "0x1": b}`, `{"0x1":"b","1":"a"}`},
-		{`{n: 1, f: 1.5, b: true, c: false, z: null, s: "2001-12-14"}`, `{"b":true,"c":false,"f":1.5,"n":1,"s":"2001-12-14","z":null}`},
+		{`{i: 1, f: 1.5, b: true, c: false, z: null, s: "2001-12-14"}`, `{"b":true,"c":false,"f":1.5,"i":1,"s":"2001-12-14","z":null}`},
 		{`{l: [0, -1, 10, 0.25, -0.5, true, false, null, '0x1F', "True", x]}`, `{"l":[0,-1,10,0.25,-0.5,true,false,null,"0x1F","True","x"]}`},
 		{`[{k: [{"2": "01"}]}]`, `[{"k":[{"2":"01"}]}]`},
 		{
 			`{l: [1.5, -2.25, 0, -7, 0.1, 1234567.5, 0.00001, 9223372036854775807, -9223372036854775808]}`,
 			`{"l":[1.5,-2.25,0,-7,0.1,1234567.5,0.00001,9223372036854775807,-9223372036854775808]}`,
+		},
+		// V6: visible escapes, accents, quoted ambiguous scalars, null inside input.
+		{
+			`{a: "\u200b", b: "\t", c: é, d: "yes", e: '1:20', f: "on", g: "%x", h: ~, contains: null, equals: [null]}`,
+			"{\"a\":\"\u200b\",\"b\":\"\\t\",\"c\":\"é\",\"contains\":null,\"d\":\"yes\",\"e\":\"1:20\",\"equals\":[null],\"f\":\"on\",\"g\":\"%x\",\"h\":null}",
 		},
 	} {
 		s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", c[0])), "s")
@@ -640,6 +728,20 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 	if s, err := LoadSuite(suiteFS(caseF, edit(sc, `{must_include: [{path: $.a, equals: {"1": [1.5, false]}}]}`)), "s"); err != nil ||
 		string(s.Cases[0].Expect.MustInclude[0].Equals) != `{"1":[1.5,false]}` {
 		t.Errorf("verbatim equals: %v", err)
+	}
+	if s, err := LoadSuite(suiteFS(caseF, edit(sc, `{must_include: [{path: $.a, equals: null}, {path: $.b, equals: {k: [~]}}]}`)), "s"); err != nil ||
+		string(s.Cases[0].Expect.MustInclude[1].Equals) != `{"k":[null]}` {
+		t.Errorf("null equals: %v", err)
+	}
+	if s, err := LoadSuite(suiteFS(caseF, strings.ReplaceAll(caseY, "\n", "\r\n")), "s"); err != nil || string(s.Cases[0].Input) != `{"a":1}` {
+		t.Errorf("CRLF: %v", err)
+	}
+	if s, err := LoadSuite(suiteFS(caseF, edit("input: {a: 1}\n", "input:\n  t: |\n    yes\n    1:20\n")), "s"); err != nil ||
+		string(s.Cases[0].Input) != `{"t":"yes\n1:20\n"}` {
+		t.Errorf("block scalar: %v", err)
+	}
+	if s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", `{a: é, b: "!x"}`)), "s"); err != nil || string(s.Cases[0].Input) != `{"a":"é","b":"!x"}` {
+		t.Errorf("bang after accent: %v", err)
 	}
 	for i, js := range []string{
 		`{"report":{"Success_Rate":1,"success_rate":0}}`, `{"report":{"avg_toKens":1}}`,
