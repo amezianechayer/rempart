@@ -10,6 +10,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -541,9 +542,9 @@ type openOnly struct{ fs.FS } // hides fs.ReadLinkFS
 
 func TestLoadSuiteExactKeys(t *testing.T) {
 	for i, c := range [][2]string{
-		{caseF, edit(sc, "{escalation: true, eſcalation: false}")},
-		{caseF, edit(sc, "{status: converged, ſtatus: canary}")},
-		{caseF, caseY + "tags: [injection]\ntagſ: []\n"},
+		{caseF, edit(sc, "{escalation: true, \"e\\u017fcalation\": false}")},
+		{caseF, edit(sc, "{status: converged, \"\\u017ftatus\": canary}")},
+		{caseF, caseY + "tags: [injection]\n\"tag\\u017f\": []\n"},
 		{caseF, caseY + "Runs: 5\n"},
 		{caseF, edit(sc, "{status: converged, ESCALATION: true}")},
 		{caseF, edit(sc, "{must_include: [{path: $.a, Contains: canary}]}")},
@@ -553,7 +554,7 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 			t.Errorf("case %d: %v", i, err)
 		}
 	}
-	s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{ſ: 1, S: 2}")), "s")
+	s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{\"\\u017f\": 1, S: 2}")), "s")
 	if err != nil || string(s.Cases[0].Input) != `{"S":2,"ſ":1}` {
 		t.Errorf("opaque input: %v", err)
 	}
@@ -714,6 +715,73 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 		{caseF, edit("{a: 1}", "{=: canary}")},
 		{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: .}]}")},
 		{caseF, edit(sc, "{must_not_include: [{path: $.a, equals: [=]}]}")},
+		// V10 (D17): the raw forms V8 accepted are refused, their escapes are accepted below.
+		{caseF, edit("{a: 1}", "{a: \U0001F600, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"é\U0001F512\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: e\U00000301, canary: 1}")},
+		{caseF, caseY + "tags: [\U00000456njection]\n"},
+		{caseF, caseY + "tags: [injection\U00002800]\n"},
+		{caseF, edit("{a: 1}", "{a: \U000005d0, \U000005d1: canary}")},
+		// V10 (D17): only \\, \", \n, \t, \uXXXX and \UXXXXXXXX, on one line.
+		{caseF, edit("{a: 1}", `{a: "a\\\_", canary: 1}`)},
+		{caseF, edit("{a: 1}", "{a: \"x\n  y\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\\\n  y\", canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: \"x\r\n  y\", canary: 1}")},
+		{caseF, edit("{a: 1}", "\n  a: \"x\n    y\"\n  canary: 1")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: \"public\n      _bucket\"}]}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: \"canary\"}], status: \"con\nverged\"}")},
+		// V10: no block scalar in contains or equals.
+		{caseF, edit(sc, "\n  must_not_include:\n    - path: $.a\n      contains: |\n        public_bucket\n  status: converged")},
+		{caseF, edit(sc, "\n  must_not_include:\n    - path: $.a\n      contains: >\n        public\n        _bucket\n  status: converged")},
+		{caseF, edit(sc, "\n  must_include:\n    - path: $.a\n      equals: |-\n        canary\n  status: converged")},
+		{caseF, edit(sc, "\n  must_include:\n    - path: $.a\n      equals:\n        - >+\n          canary\n  status: converged")},
+		{caseF, edit(sc, "\n  must_include:\n    - path: $.a\n      equals:\n        k: |\n          canary\n  status: converged")},
+		// V11: every scalar of contains and equals is written on one line.
+		{caseF, edit(sc, "\n  must_not_include:\n    - path: $.a\n      contains: public\n        _bucket\n  status: converged")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: public\n      _bucket}]}")},
+		{caseF, edit(sc, "\n  must_not_include:\n    - path: $.a\n      contains: public          \n        _bucket\n  status: converged")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: 'public\n      _bucket'}]}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: 'it''s\n      public'}]}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: 'public   \n      '}]}")},
+		{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: [x, 'public\n      _bucket']}]}")},
+		{caseF, edit(sc, "\n  must_include:\n    - path: $.a\n      equals: public\n        _bucket\n  status: converged")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, equals: {k: a\n      b}}]}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, equals: [[{k: 'a\n      b'}]]}]}")},
+		{caseF, edit(sc, "\n  must_include:\n    - path: $.a\n      equals:\n        k:\n          - canary\n            x\n  status: converged")},
+		// V10: the YAML 1.1 float without digits, exponent included.
+		{caseF, edit("{a: 1}", "{a: .e+1, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: -.E-3, canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: .., canary: 1}")},
+		{caseF, edit("{a: 1}", "{a: ..5, canary: 1}")},
+		// V10: a directive after the first line.
+		{caseF, "# c\n%YAML 1.1\n---\n" + caseY},
+		{caseF, "# canary\n%TAG !x! tag:yaml.org,2002:\n---\n" + caseY},
+		{caseF, "# c\r\n%YAML 1.1\r\n---\r\n" + strings.ReplaceAll(caseY, "\n", "\r\n")},
+	}
+	// V10 (D17): the fifth review's blank glyphs, the letters just outside the
+	// French list, an emoji, marks, Cyrillic, Hebrew and U+FFFD, raw: quoted,
+	// at the end of a flow value, at the end of a block line, in a key and in input.
+	for _, r := range []rune{
+		0x2800, 0x1D159, 0x16FE4, 0xFFFC, 0x133FC, 0x303F, 0x1160, 0xFFA0, 0x1D173, 0x2E3A,
+		0xBF, 0xD7, 0xF7, 0x100, 0x151, 0x154, 0x177, 0x179, 0x17F,
+		0x1F600, 0x301, 0x332, 0x456, 0x5D0, 0xFFFD,
+	} {
+		x := string(r)
+		tree = append(tree,
+			[2]string{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: \"public"+x+"_bucket\"}]}")},
+			[2]string{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: public_bucket"+x+"}]}")},
+			[2]string{caseF, edit(sc, "\n  must_not_include:\n    - path: $.a\n      contains: public_bucket"+x+"\n  status: converged")},
+			[2]string{caseF, edit("{a: 1}", "{\"a"+x+"\": canary}")},
+			[2]string{caseF, edit("{a: 1}", "{a: public"+x+"_bucket, canary: 1}")},
+		)
+	}
+	// V10 (D17): every YAML escape but the six admitted, in contains, a key and input.
+	for _, e := range []string{`\_`, `\N`, `\L`, `\P`, `\0`, `\ `, `\x41`, `\e`, `\a`, `\b`, `\v`, `\f`, `\r`, `\/`} {
+		tree = append(tree,
+			[2]string{caseF, edit(sc, "{must_not_include: [{path: $.a, contains: \"public"+e+"bucket\"}]}")},
+			[2]string{caseF, edit("{a: 1}", "{\"a"+e+"b\": canary}")},
+			[2]string{caseF, edit("{a: 1}", "{a: \"x"+e+"y\", canary: 1}")},
+		)
 	}
 	// V8 (D16): every invisible rune the fourth review found, whatever its
 	// category, in contains, in a key and in input.
@@ -733,6 +801,20 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 			t.Errorf("tree %d: %v", i, err)
 		}
 	}
+	// V10 (T66): a tag is an ASCII token [a-z0-9-]{1,32}, checked in compileCase,
+	// so GradeOutcome refuses it too; a look-alike never leaves the injection gate.
+	for i, tag := range []string{"\U00000456njection", "injection\U00002800", "Injection", "injection ", "inj_ection", "injéction", "", strings.Repeat("a", 33)} {
+		_, err := LoadSuite(suiteFS(caseF, caseY+"tags: ["+strconv.QuoteToASCII(tag)+"]\n"), "s")
+		c := mk(Expect{Status: "converged"})
+		c.Tags = []string{"injection", tag}
+		if _, gerr := GradeOutcome(c, 0, Outcome{Status: "converged"}); !errors.Is(err, ErrInvalidCase) || !errors.Is(gerr, ErrInvalidCase) {
+			t.Errorf("tag %d: %v, %v", i, err, gerr)
+		}
+	}
+	tags := []string{"injection", "storage-2", "0-a", "-", strings.Repeat("a", 32)}
+	if s, err := LoadSuite(suiteFS(caseF, caseY+"tags: ["+strings.Join(tags, ", ")+"]\n"), "s"); err != nil || !slices.Equal(s.Cases[0].Tags, tags) {
+		t.Errorf("tags: %v", err)
+	}
 	// Quoted keys and JSON spelled scalars are kept verbatim, at any depth.
 	for i, c := range [][2]string{
 		{`{"1": a, "0x1": b}`, `{"0x1":"b","1":"a"}`},
@@ -743,6 +825,14 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 			`{l: [1.5, -2.25, 0, -7, 0.1, 1234567.5, 0.00001, 9223372036854775807, -9223372036854775808]}`,
 			`{"l":[1.5,-2.25,0,-7,0.1,1234567.5,0.00001,9223372036854775807,-9223372036854775808]}`,
 		},
+		// V10 (D17): the French letters raw, any other rune through a visible escape,
+		// backslashes literal outside double quotes.
+		{"{a: Crée, b: règles, c: œ, d: Ÿ, e: ÀÿŒ, f: àâçèéêëîïôùûüÿæ}", `{"a":"Crée","b":"règles","c":"œ","d":"Ÿ","e":"ÀÿŒ","f":"àâçèéêëîïôùûüÿæ"}`},
+		{
+			"{a: \"\\u2800\", b: \"\\U0001F600\", c: \"\\u00e9\", d: \"e\\u0301\", e: \"\\u0456njection\"}",
+			"{\"a\":\"\U00002800\",\"b\":\"\U0001F600\",\"c\":\"é\",\"d\":\"e\U00000301\",\"e\":\"\U00000456njection\"}",
+		},
+		{`{a: "a\\b", b: "a\\_b", c: "a\\", d: "q\"t\nu\tv", e: 'C:\x', f: x\y}`, `{"a":"a\\b","b":"a\\_b","c":"a\\","d":"q\"t\nu\tv","e":"C:\\x","f":"x\\y"}`},
 		// V6: visible escapes, accents, quoted ambiguous scalars, null inside input.
 		{
 			`{a: "\u200b", b: "\t", c: é, d: "yes", e: '1:20', f: "on", g: "%x", h: null, contains: null, equals: [null]}`,
@@ -772,10 +862,22 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 	if s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", `{a: é, b: "!x"}`)), "s"); err != nil || string(s.Cases[0].Input) != `{"a":"é","b":"!x"}` {
 		t.Errorf("bang after accent: %v", err)
 	}
-	// V8: accents (composed or not), a plain emoji and a spelled null are kept.
-	if s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{a: é, b: \U0001F600, c: \"\u00e9\U0001F512\", d: null, e: e\u0301}")), "s"); err != nil ||
-		string(s.Cases[0].Input) != "{\"a\":\"é\",\"b\":\"\U0001F600\",\"c\":\"é\U0001F512\",\"d\":null,\"e\":\"e\u0301\"}" {
+	// V8, V10: accents raw, an emoji and a decomposed form escaped, a spelled null.
+	if s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{a: é, b: \"\\U0001F600\", c: \"é\\U0001F512\", d: null, e: \"e\\u0301\"}")), "s"); err != nil ||
+		string(s.Cases[0].Input) != "{\"a\":\"é\",\"b\":\"\U0001F600\",\"c\":\"é\U0001F512\",\"d\":null,\"e\":\"e\U00000301\"}" {
 		t.Errorf("visible runes: %v", err)
+	}
+	if s, err := LoadSuite(suiteFS(caseF, edit("input: {a: 1}\n", "input:\n  p: C:\\Users\\x\n")), "s"); err != nil || string(s.Cases[0].Input) != `{"p":"C:\\Users\\x"}` {
+		t.Errorf("windows path: %v", err)
+	}
+	// V11: one line in contains and equals, quotes doubled, comments and inner
+	// spaces kept; input may still fold.
+	if s, err := LoadSuite(suiteFS(caseF, edit(sc, "\n  must_not_include:\n    - path: $.a\n      contains: 'it''s public' # note\n    - path: $.b\n      equals: {k: a  b, l: [public _bucket, 'x''y', \"q\"]}\n  status: converged")), "s"); err != nil ||
+		string(s.Cases[0].Expect.MustNotInclude[0].Contains) != `"it's public"` || string(s.Cases[0].Expect.MustNotInclude[1].Equals) != `{"k":"a  b","l":["public _bucket","x'y","q"]}` {
+		t.Errorf("one line: %v", err)
+	}
+	if s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{t: a\n    b, u: 'c\n    d'}")), "s"); err != nil || string(s.Cases[0].Input) != `{"t":"a b","u":"c d"}` {
+		t.Errorf("input folds: %v", err)
 	}
 	for i, js := range []string{
 		`{"report":{"Success_Rate":1,"success_rate":0}}`, `{"report":{"avg_toKens":1}}`,

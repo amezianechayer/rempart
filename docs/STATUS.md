@@ -323,3 +323,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-26 12:39 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T22 amendement V10 (cinquième revue BLOCK : liste d'admission des caractères)
 
 - 2026-09-26 12:39 [harnais] phase : impl -> tests
+
+- 2026-09-26 13:18 [harnais] phase : tests -> impl

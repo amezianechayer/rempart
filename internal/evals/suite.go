@@ -14,8 +14,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -34,20 +32,25 @@ var jsonInt = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 
 // ambiguous matches the plain scalars that YAML 1.1 or the core schema read as
 // a boolean, a null or a number while yaml v3 reads a string (V6).
-var ambiguous = regexp.MustCompile(`(?i)^(y|yes|n|no|on|off|true|false|null|~|[-+]?\.(inf|nan)|[-+]?0[box][0-9a-f_]*|[-+]?\.[0-9.]*|=|` +
+var ambiguous = regexp.MustCompile(`(?i)^(y|yes|n|no|on|off|true|false|null|~|[-+]?\.(inf|nan)|[-+]?0[box][0-9a-f_]*|[-+]?\.[0-9.]*(e[-+]?[0-9]+)?|=|` +
 	`[-+]?\.?[0-9][0-9_]*(:[0-9_]+)*(\.[0-9_.]*)?(e[-+]?[0-9]+)?)$`)
 
-// zone is where a node sits: a typed field, opaque content that may hold null
-// (input, equals) or opaque content that may not (contains).
+// tagToken is the grammar of a tag (V10, T66).
+var tagToken = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+
+// zone is where a node sits: a typed field or the opaque content of input,
+// equals or contains. Null is spelled only in input and equals (V8); equals and
+// contains hold no block scalar (V10) and every scalar on one line (V11).
 type zone int
 
 const (
 	typed zone = iota
-	nullable
-	opaque
+	inInput
+	inEquals
+	inContains
 )
 
-var zones = map[string]zone{"input": nullable, "equals": nullable, "contains": opaque}
+var zones = map[string]zone{"input": inInput, "equals": inEquals, "contains": inContains}
 
 var (
 	ErrInvalidSuite = errors.New("evals: invalid suite")
@@ -135,7 +138,7 @@ func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
 	if !ok {
 		return invalid(name, "file")
 	}
-	if !visible(data) || bytes.HasPrefix(data, []byte("%")) || bytes.Contains(data, []byte("\n%")) {
+	if !admitted(data) || bytes.HasPrefix(data, []byte("%")) || bytes.Contains(data, []byte("\n%")) {
 		return invalid(name, "character or directive")
 	}
 	var doc yaml.Node
@@ -159,21 +162,20 @@ func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
 	return nil
 }
 
-// visible reports whether every rune of data has one visible reading (D16, V8):
-// valid UTF-8 and assigned, with no control, format, separator, private use,
-// noncharacter, variation selector or default ignorable rune but the space,
-// the line feed and a carriage return before a line feed. Unassigned is spelled
-// out: since Unicode 17 (Go 1.27) unicode.C also holds the unassigned runes.
-func visible(data []byte) bool {
+// admitted reports whether every rune of data is in the closed list of D17:
+// printable ASCII, a line feed, a carriage return before a line feed, or a
+// French letter (U+00C0 to U+00FF but U+00D7 and U+00F7, U+0152, U+0153,
+// U+0178). Invalid UTF-8 decodes to U+FFFD, which is not in the list.
+func admitted(data []byte) bool {
 	for i, r := range string(data) {
-		if r != ' ' && r != '\n' && (r != '\r' || !bytes.HasPrefix(data[i+1:], []byte("\n"))) &&
-			(unicode.In(r, unicode.Cc, unicode.Cf, unicode.Z, unicode.Co, unicode.Noncharacter_Code_Point,
-				unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) ||
-				!unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S, unicode.Z, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs)) {
+		switch {
+		case r >= ' ' && r <= '~', r == '\n', r == '\r' && bytes.HasPrefix(data[i+1:], []byte("\n")):
+		case r >= 0xC0 && r <= 0xFF && r != 0xD7 && r != 0xF7, r == 0x152, r == 0x153, r == 0x178:
+		default:
 			return false
 		}
 	}
-	return utf8.Valid(data)
+	return true
 }
 
 func runeLines(data []byte) [][]rune {
@@ -184,15 +186,74 @@ func runeLines(data []byte) [][]rune {
 	return lines
 }
 
+// source returns the rest of the line of n from its first rune, Line and
+// Column counting runes from 1, or nil when n has no position in the text.
+func source(n *yaml.Node, src [][]rune) []rune {
+	if n.Line < 1 || n.Line > len(src) || n.Column < 1 || n.Column > len(src[n.Line-1]) {
+		return nil
+	}
+	return src[n.Line-1][n.Column-1:]
+}
+
 // bang reports whether the source text of n starts with the non-specific tag
-// "!", which yaml v3 drops (T65); Line and Column count runes from 1.
+// "!", which yaml v3 drops (T65).
 func bang(n *yaml.Node, src [][]rune) bool {
-	return n.Line >= 1 && n.Line <= len(src) && n.Column >= 1 && n.Column <= len(src[n.Line-1]) && src[n.Line-1][n.Column-1] == '!'
+	s := source(n, src)
+	return len(s) > 0 && s[0] == '!'
+}
+
+// escapes reports whether a double-quoted scalar closes on its own line and
+// uses only the escapes of D17: \\, \", \n, \t, \u and \U (yaml v3 checks
+// their hexadecimal digits).
+func escapes(n *yaml.Node, src [][]rune) bool {
+	if n.Style&yaml.DoubleQuotedStyle == 0 {
+		return true
+	}
+	s := source(n, src)
+	if len(s) == 0 || s[0] != '"' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		switch s[i] {
+		case '"':
+			return true
+		case '\\':
+			i++
+			if i == len(s) || !strings.ContainsRune(`\"ntuU`, s[i]) {
+				return false
+			}
+		}
+	}
+	return false
+}
+
+// oneLine reports whether a plain or single-quoted scalar is written on one
+// line (V11): its source text, from its first rune, reads back as its value.
+// Double-quoted scalars are held to one line by escapes, block scalars are
+// refused where oneLine applies.
+func oneLine(n *yaml.Node, src [][]rune) bool {
+	if n.Kind != yaml.ScalarNode || n.Style&(yaml.DoubleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
+		return true
+	}
+	want := n.Value
+	if n.Style&yaml.SingleQuotedStyle != 0 {
+		want = "'" + strings.ReplaceAll(n.Value, "'", "''") + "'"
+	}
+	s := source(n, src)
+	for _, r := range want {
+		if len(s) == 0 || s[0] != r {
+			return false
+		}
+		s = s[1:]
+	}
+	return true
 }
 
 func plain(n *yaml.Node, depth int, z zone, src [][]rune) bool {
 	if depth > 32 || n.Kind == yaml.AliasNode || n.Anchor != "" || n.Style&yaml.TaggedStyle != 0 || n.Tag == "!!merge" ||
-		bang(n, src) || !jsonScalar(n, z == nullable) {
+		bang(n, src) || !escapes(n, src) ||
+		((z == inEquals || z == inContains) && (n.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || !oneLine(n, src))) ||
+		!jsonScalar(n, z == inInput || z == inEquals) {
 		return false
 	}
 	for i, c := range n.Content {

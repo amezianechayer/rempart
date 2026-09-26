@@ -80,6 +80,7 @@ func compileCase(c Case) (inc, exc []check, err error) {
 	checks := len(e.MustInclude) + len(e.MustNotInclude)
 	_, jerr := decodeJSON(c.Input)
 	if !token(c.ID, 64, lower+"0123456789-") || !token(c.Loop, 32, loopSet) || jerr != nil || c.Runs < 1 || c.Runs > 10 ||
+		slices.ContainsFunc(c.Tags, func(t string) bool { return !tagToken.MatchString(t) }) ||
 		checks > 32 || (e.MaxIterations != nil && *e.MaxIterations < 1) || (e.MaxOpenQuestions != nil && *e.MaxOpenQuestions < 0) ||
 		(checks == 0 && e.SchemaValid == nil && e.Escalation == nil && e.Status == "" && e.MaxIterations == nil && e.MaxOpenQuestions == nil) {
 		return nil, nil, fmt.Errorf("%w: fields", ErrInvalidCase)
