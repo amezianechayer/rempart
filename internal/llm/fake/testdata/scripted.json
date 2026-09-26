@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "scripts": {
+    "demo.greeting.v1": [
+      {"response": {"output": "{\"greeting\":\"bonjour\"}", "model": "fake-model-v1", "request_id": "fake-req-1"}},
+      {"err": "provider_unavailable"}
+    ]
+  },
+  "models": {"fake-model-v1": {"native_structured_output": true, "strict_tools": true, "requires_retention": false}}
+}

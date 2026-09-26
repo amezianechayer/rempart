@@ -1,0 +1,52 @@
+diff --git a/.claude/hooks/guard_edit.py b/.claude/hooks/guard_edit.py
+--- a/.claude/hooks/guard_edit.py
++++ b/.claude/hooks/guard_edit.py
+@@ -18,11 +18,12 @@
+
+ PROTECTED = re.compile(
+-    r"^(CLAUDE\.md$|\.claude/(settings\.json|settings\.local\.json|hooks/|bin/|state/|agents/|commands/))", re.I
++    r"^(CLAUDE\.md$|\.github/CODEOWNERS$|\.claude/(settings\.json|settings\.local\.json|hooks/|bin/|state/|agents/|commands/))", re.I
+ )
+ # baseline.json, ou une baseline par couple (plateforme, modèle) sous evals/<boucle>/baseline/ (ADR 0002).
+ BASELINE = re.compile(r"^evals/.+/baseline(\.json|/.+\.json)$", re.I)
++# suite.yaml (cible, motifs watch) est gelé en phase impl comme les cas : T58, T61.
+ TEST_FILE = re.compile(
+-    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|"
++    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|^evals/[^/]+/suite\.yaml$|"
+     r"^modules/.*/tests?/|\.tftest\.hcl$|^evals/security/lab/)",
+     re.I,
+ )
+diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
+--- a/.claude/hooks/test_hooks.sh
++++ b/.claude/hooks/test_hooks.sh
+@@ -40,6 +40,7 @@
+ edit 2 "$TN/evals/intent/baseline.json"
+ edit 2 "$TN/evals/intent/baseline/anthropic/model-x.json"
+ edit 0 "$TN/evals/intent/cases/baseline-ok.yaml"
++edit 2 "$TN/.github/CODEOWNERS"
+ edit 0 "$TN/internal/x/x.go" "package x"
+ edit 2 "$TN/internal/x/x.go" "k := \"$K\""
+ edit 0 "$TN/internal/x/testdata/k.txt" "EXAMPLE $K"
+@@ -55,9 +56,11 @@
+ edit 2 "$TN/internal/x/x.go" "package x"
+ edit 0 "$TN/internal/x/x_test.go" "package x"
+ edit 0 "$TN/docs/plans/M0-x.md"
++edit 0 "$TN/evals/intent/suite.yaml"
+ phase impl
+ edit 2 "$TN/internal/x/x_test.go" "package x"
+ edit 2 "$TN/evals/intent/cases/a.yaml"
++edit 2 "$TN/evals/intent/suite.yaml"
+ edit 2 "$TN/internal/x/x.go" "t.Skipf(\"plus tard\")"
+ edit 0 "$TN/internal/x/x.go" "package x"
+ phase free
+diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS
+new file mode 100644
+--- /dev/null
++++ b/.github/CODEOWNERS
+@@ -0,0 +1,6 @@
++# Revue humaine obligatoire (règle de protection de branche « Require review from Code Owners »).
++/CLAUDE.md @amezianechayer
++/.claude/ @amezianechayer
++/.github/ @amezianechayer
++/evals/ @amezianechayer
++/docs/decisions/ @amezianechayer

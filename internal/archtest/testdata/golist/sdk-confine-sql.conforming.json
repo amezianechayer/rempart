@@ -1,0 +1,26 @@
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/graph",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/graph/ports"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/cmd/rempartd",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/graph/adapters/postgres"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/evidence/domain",
+	"Imports": [
+		"crypto/sha256"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/graph/adapters/postgres",
+	"Imports": [
+		"database/sql",
+		"github.com/jackc/pgx/v5",
+		"github.com/jackc/pgx/v5/pgxpool"
+	]
+}

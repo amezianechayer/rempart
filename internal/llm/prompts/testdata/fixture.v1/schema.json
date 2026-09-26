@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false, "required": ["count", "greeting", "tags"],
+  "properties": {
+    "greeting": {"type": "string", "minLength": 1, "maxLength": 200},
+    "count": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+    "tags": {"type": "array", "maxItems": 5, "items": {
+      "type": "object", "additionalProperties": false, "required": ["key", "level"],
+      "properties": {"key": {"type": "string", "pattern": "^[a-z]+$"}, "level": {"$ref": "#/$defs/level"}}}}
+  },
+  "$defs": {"level": {"enum": ["low", "medium", "high"]}}
+}

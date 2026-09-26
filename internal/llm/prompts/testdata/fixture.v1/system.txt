@@ -1,0 +1,1 @@
+Tu es un assistant de test. Réponds par un objet JSON conforme au schéma.

@@ -1,0 +1,5 @@
+# Deterministic for AwaitApprovals: decodes into a fixed struct of pointers to
+# bool and string; the flagged map iterations (encoding/json/v2 arshaler cache,
+# marshalObjectAny) and GC workers do not change the decoded value.
+decls:
+  (*encoding/json.Decoder).Decode: false
