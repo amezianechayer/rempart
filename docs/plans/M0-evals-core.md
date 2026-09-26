@@ -1337,3 +1337,29 @@ Tests : lignes de table dans `TestLoadSuiteExactKeys` (14 fonctions inchangées)
 Mutations : Z1 liste d'admission élargie à tout `unicode.IsGraphic` ; Z2 lettres françaises retirées (le cas `case-format` doit échouer) ; Z3 liste d'échappements élargie ; Z4 contrôle des `tags` retiré ; Z5 scalaires bloc admis ; Z6 exposant retiré de la branche flottante. Les mutations V6 et V8 portant sur des contrôles devenus redondants sont retirées du compte, avec justification.
 
 Résidus consignés : homoglyphes à l'intérieur de la liste d'admission (lettres accentuées face à l'ASCII, différences visibles) ; limites intrinsèques de YAML visibles (CRLF, pliage hors `contains` et `equals`, espaces de fin) ; TOCTOU, `fs.ReadDir`, `contains` réduit à un blanc (obligations T23) ; T23 charge toujours par `LoadSuite` ; liste de refus de 0005 contournable (CODEOWNERS reste le garde). La même liste d'admission s'applique aux baselines en T23. Menaces T64, T65 étendues, T66.
+
+## 14. Ancres des mutations W, X, Y, Z (rejouables)
+
+Ancres exactes utilisées par `acceptance-verifier` pour le critère 6 à HEAD 6074a14 (tuples `(nom, [(fichier, OLD, NEW)], test attendu)`, `S` = `internal/evals/suite.go`, `G` = `internal/evals/grade.go`, `EK` = `LoadSuiteExactKeys`). Mutations équivalentes non comptées : M3, M4 (étiquettes), DEL ajouté à la liste d'admission et `\/` ajouté aux échappements (yaml v3 les refuse avant), branche « repérage absent » d'`escapes` (inatteignable).
+
+```python
+ ("W1", [(S, '(n.Kind == yaml.MappingNode && i%2 == 0 && c.ShortTag() != "!!str") || ', '')], EK),
+ ("W2", [(S, "strconv.FormatFloat(f, 'f', -1, 64) == n.Value\n\t}\n\treturn false", "strconv.FormatFloat(f, 'f', -1, 64) == n.Value\n\t}\n\treturn true")], EK),
+ ("W3", [(S, '`^-?(0|[1-9][0-9]*)$`', '`^-?[0-9]+$`')], EK),
+ ("W4", [(S, 'return n.Value == "true" || n.Value == "false"', 'return true')], EK),
+ ("X1", [(S, '!admitted(data) || ', '')], EK),
+ ("X2", [(S, 'bang(n, src) || ', '')], EK),
+ ("X2c", [(S, ' || bytes.Contains(data, []byte("\\n%"))', '')], EK),
+ ("X3", [(S, 'return nulls && n.Value == "null"', 'return n.Value == "null"')], EK),
+ ("X4", [(S, 'return n.Style != 0 || !ambiguous.MatchString(n.Value)', 'return true')], EK),
+ ("Y2", [(S, 'return nulls && n.Value == "null"', 'return nulls')], EK),
+ ("Y3", [(S, '|[-+]?\\.[0-9.]*(e[-+]?[0-9]+)?|=|', '|')], EK),
+ ("Z1", [(S, '"strings"\n\n\t"go.yaml.in/yaml/v3"', '"strings"\n\t"unicode"\n\n\t"go.yaml.in/yaml/v3"'),
+         (S, 'r == 0x152, r == 0x153, r == 0x178:', 'r == 0x152, r == 0x153, r == 0x178, unicode.IsGraphic(r):')], EK),
+ ("Z2", [(S, '\t\tcase r >= 0xC0 && r <= 0xFF && r != 0xD7 && r != 0xF7, r == 0x152, r == 0x153, r == 0x178:\n', '')], "LoadSuiteCaseFormatExample"),
+ ("Z3", [(S, '`\\"ntuU`', '`\\"ntuU_NLP0 xeabvfr/`')], EK),
+ ("Z4", [(G, 'slices.ContainsFunc(c.Tags, func(t string) bool { return !tagToken.MatchString(t) }) ||', 'false ||')], EK),
+ ("Z5", [(S, '(n.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || !oneLine(n, src))', '!oneLine(n, src)')], EK),
+ ("Z6", [(S, '[-+]?\\.[0-9.]*(e[-+]?[0-9]+)?|=', '[-+]?\\.[0-9.]*|=')], EK),
+ ("Z7", [(S, ' || !oneLine(n, src)', '')], EK),
+```
