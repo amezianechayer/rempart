@@ -374,3 +374,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-27 11:36 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T19c amendement V2 (revue BLOCK : liens symboliques)
 
 - 2026-09-27 11:36 [harnais] phase : impl -> tests
+
+- 2026-09-27 15:03 [harnais] phase : tests -> impl

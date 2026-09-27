@@ -2,7 +2,10 @@ package archtest
 
 import (
 	"cmp"
+	"io/fs"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -141,7 +144,9 @@ func TestRunLoopNotRegistered(t *testing.T) {
 			"package loops\n\nimport \"go.temporal.io/sdk/worker\"\n\nfunc Register(r worker.Registry) { r.RegisterWorkflow(RunLoop) }\n")),
 		sc("renamed_import", "", "", addFile("internal/loops/fixture/alias.go",
 			"package fixture\n\nimport lp "+loopsImp+"\n\nvar start = lp.RunLoop\n")),
-		sc("api_renamed", "", "RunLoop not declared", srcEdit{"internal/loops/runloop.go", "func RunLoop(", "func Run("}),
+		// Renamed unexported: an exported Run taking a LoopSpec would also break
+		// loops-no-spec-entrypoint (M0-T19c V2).
+		sc("api_renamed", "", "RunLoop not declared", srcEdit{"internal/loops/runloop.go", "func RunLoop(", "func runLoop("}),
 		sc("dot_import", "no-dot-import", "dot import", addFile("internal/loops/fixture/dot.go",
 			"package fixture\n\nimport . "+loopsImp+"\n\nvar start = RunLoop\n")),
 	})
@@ -234,31 +239,234 @@ func TestSourceRulesHardening(t *testing.T) {
 }
 
 // TestReadSourcesNestedBin: Go builds and imports a package in any directory
-// named bin; only the root bin (build outputs, ignored by git) may be skipped.
-// A dev-tagged file there must not hide an import of the loops fake (T33, T41).
+// named bin, the root one included (a file forced past .gitignore). A
+// dev-tagged file there must not hide an import of the loops fake (T33, T41;
+// M0-T19c V2 removes the root bin exception).
 func TestReadSourcesNestedBin(t *testing.T) {
 	file := func(s string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(s)} }
+	dev := "//go:build dev\n\npackage bin\n\nimport _ " + fakeImp + "\n"
 	fsys := fstest.MapFS{
 		"go.mod":                        file("module " + modulePath + "\n"),
 		"bin/rempart":                   file("\x7fELF"),
+		"bin/dev.go":                    file(dev),
 		"internal/loops/runloop.go":     file("package loops\n\nfunc RunLoop() {}\n"),
 		"internal/loops/approvals.go":   file("package loops\n\nfunc AwaitApprovals() {}\n"),
 		"internal/loops/fake/fake.go":   file("package fake\n"),
-		"cmd/rempart-worker/bin/dev.go": file("//go:build dev\n\npackage bin\n\nimport _ " + fakeImp + "\n"),
+		"cmd/rempart-worker/bin/dev.go": file(dev),
 	}
 	srcs, err := ReadSources(fsys)
 	if err != nil {
 		t.Fatalf("ReadSources: %v", err)
 	}
-	if _, ok := srcs["cmd/rempart-worker/bin/dev.go"]; !ok {
-		t.Fatalf("ReadSources skipped cmd/rempart-worker/bin/dev.go: %v", slices.Sorted(maps.Keys(srcs)))
+	for _, p := range []string{"bin/dev.go", "cmd/rempart-worker/bin/dev.go"} {
+		if _, ok := srcs[p]; !ok {
+			t.Errorf("ReadSources skipped %s: %v", p, slices.Sorted(maps.Keys(srcs)))
+		}
 	}
 	got := checkSources(t, srcs)
-	want := []SourceViolation{{
-		"loops-fake-tests-only", "cmd/rempart-worker/bin/dev.go:5",
-		modulePath + "/cmd/rempart-worker/bin imports " + modulePath + "/internal/loops/fake",
-	}}
+	want := []SourceViolation{
+		{"loops-fake-tests-only", "bin/dev.go:5", modulePath + "/bin imports " + modulePath + "/internal/loops/fake"},
+		{
+			"loops-fake-tests-only", "cmd/rempart-worker/bin/dev.go:5",
+			modulePath + "/cmd/rempart-worker/bin imports " + modulePath + "/internal/loops/fake",
+		},
+	}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
+}
+
+// TestReadSourcesSymlinks (M0-T19c V2, threat T74): fs.WalkDir does not follow
+// a symbolic link, go build does. ReadSources fails closed on any symbolic
+// link outside .git, whatever its target and even in a skipped directory.
+func TestReadSourcesSymlinks(t *testing.T) {
+	file := func(s string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(s)} }
+	link := func(target string) *fstest.MapFile {
+		return &fstest.MapFile{Data: []byte(target), Mode: fs.ModeSymlink | 0o777}
+	}
+	base := func() fstest.MapFS {
+		return fstest.MapFS{
+			"go.mod":                      file("module " + modulePath + "\n"),
+			"internal/loops/runloop.go":   file("package loops\n\nfunc RunLoop() {}\n"),
+			"internal/loops/approvals.go": file("package loops\n\nfunc AwaitApprovals() {}\n"),
+			"internal/loops/fake/fake.go": file("package fake\n"),
+		}
+	}
+	cases := []struct{ name, path, target string }{
+		{"dir_to_fake", "internal/devwire", "loops/fake"},
+		{"dir_to_loops", "internal/lp", "loops"},
+		{"go_file", "internal/lp2/runloop.go", "../loops/runloop.go"},
+		{"non_go_file", "docs/notes.md", "../README.md"},
+		{"root_bin", "bin", "internal/loops/fake"},
+		{"under_underscore_dir", "internal/_x/sub", "../loops/fake"},
+		{"under_dot_dir", ".claude/skills/x", "../../internal/loops"},
+		{"under_testdata", "internal/archtest/testdata/lp", "../../loops"},
+		{"outside_repository", "internal/ext", "/usr/lib/go"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fsys := base()
+			fsys[c.path] = link(c.target)
+			srcs, err := ReadSources(fsys)
+			if err == nil {
+				t.Fatalf("ReadSources accepted the symbolic link %s -> %s (read %v)", c.path, c.target, slices.Sorted(maps.Keys(srcs)))
+			}
+			if !strings.Contains(err.Error(), c.path) {
+				t.Errorf("error %q does not name %s", err, c.path)
+			}
+		})
+	}
+	t.Run("git_dir_allowed", func(t *testing.T) {
+		fsys := base()
+		fsys[".git/hooks/pre-commit"] = link("../../scripts/pre-commit")
+		srcs, err := ReadSources(fsys)
+		if err != nil {
+			t.Fatalf("ReadSources: %v", err)
+		}
+		if got := checkSources(t, srcs); len(got) != 0 {
+			t.Errorf("violations: %v", got)
+		}
+	})
+	t.Run("real_directory_link", func(t *testing.T) {
+		root := t.TempDir()
+		writeFiles(t, root, map[string]string{
+			"go.mod":                      "module " + modulePath + "\n",
+			"internal/loops/runloop.go":   "package loops\n\nfunc RunLoop() {}\n",
+			"internal/loops/approvals.go": "package loops\n\nfunc AwaitApprovals() {}\n",
+			"internal/loops/fake/fake.go": "package fake\n",
+		})
+		symlinkOrSkip(t, "loops/fake", filepath.Join(root, "internal", "devwire"))
+		if _, err := ReadSources(os.DirFS(root)); err == nil || !strings.Contains(err.Error(), "internal/devwire") {
+			t.Errorf("ReadSources on a real directory link: err = %v, want an error naming internal/devwire", err)
+		}
+	})
+}
+
+// TestWorkflowDecodingTargets (M0-T19c V2): in the workflow code of
+// internal/loops, the SDK decodes a signal, a side effect or an error detail
+// into its target with the data converter, out of sight of workflowcheck. The
+// only admitted target is &x, x a local converter.RawValue (or nil); Get with
+// a context is admitted only on a future returned directly by
+// workflow.ExecuteActivity, ExecuteLocalActivity or ExecuteChildWorkflow.
+func TestWorkflowDecodingTargets(t *testing.T) {
+	const at = "\tres, err := "
+	withImports := fx(`"go.temporal.io/sdk/workflow"`,
+		"\"go.temporal.io/sdk/converter\"\n\t\"go.temporal.io/sdk/temporal\"\n\t\"go.temporal.io/sdk/workflow\"")
+	sig := "workflow.GetSignalChannel(ctx, loops.ApprovalSignal)"
+	before := func(code string) srcEdit { return fx(at, code+"\n"+at) }
+	runSourceCases(t, "loops-raw-decoding-target", "", []srcCase{
+		sc("receive_struct", "", "Receive target", before("\tvar a loops.Approval\n\t"+sig+".Receive(ctx, &a)")),
+		sc("receive_async_struct", "", "ReceiveAsync target", before("\tvar a loops.Approval\n\t_ = "+sig+".ReceiveAsync(&a)")),
+		sc("receive_with_timeout_struct", "", "ReceiveWithTimeout target",
+			before("\tvar a loops.Approval\n\t_, _ = "+sig+".ReceiveWithTimeout(ctx, time.Second, &a)")),
+		sc("receive_async_more_flag_struct", "", "ReceiveAsyncWithMoreFlag target",
+			before("\tvar a loops.Approval\n\t_, _ = "+sig+".ReceiveAsyncWithMoreFlag(&a)")),
+		sc("side_effect_get_struct", "", "Get target",
+			before("\tvar a loops.Approval\n\t_ = workflow.SideEffect(ctx, func(workflow.Context) any { return nil }).Get(&a)")),
+		sc("stored_future_get_struct", "", "Get target",
+			before("\tf := workflow.ExecuteActivity(ctx, verifyApproval)\n\tvar a loops.Approval\n\t_ = f.Get(ctx, &a)")),
+		sc("context_first_values_get", "", "Get target",
+			before("\tvar a loops.Approval\n\tvar ev interface{ Get(...any) error }\n\t_ = ev.Get(ctx, &a)")),
+		sc("details_struct", "", "Details target",
+			before("\tvar ae *temporal.ApplicationError\n\tvar a loops.Approval\n\t_ = ae.Details(&a)"), withImports),
+		sc("last_completion_result_struct", "", "GetLastCompletionResult target",
+			before("\tvar a loops.Approval\n\t_ = workflow.GetLastCompletionResult(ctx, &a)")),
+		sc("raw_through_pointer", "", "Receive target",
+			before("\tvar raw converter.RawValue\n\tp := &raw\n\t"+sig+".Receive(ctx, p)"), withImports),
+		sc("raw_shadowed_by_struct", "", "ReceiveAsync target",
+			before("\tvar raw converter.RawValue\n\t_ = raw\n\tfunc() {\n\t\tvar raw loops.Approval\n\t\t_ = "+sig+".ReceiveAsync(&raw)\n\t}()"), withImports),
+		sc("raw_shadowed_by_define", "", "ReceiveAsync target",
+			before("\tvar raw converter.RawValue\n\t_ = raw\n\tfunc() {\n\t\traw := loops.Approval{}\n\t\t_ = "+sig+".ReceiveAsync(&raw)\n\t}()"), withImports),
+		sc("foreign_execute_activity", "", "Get target",
+			fx(`"go.temporal.io/sdk/workflow"`, "\"go.temporal.io/sdk/workflow\"\n\twfx \"example.com/wfx\""),
+			before("\tvar a loops.Approval\n\t_ = wfx.ExecuteActivity(ctx, verifyApproval).Get(ctx, &a)")),
+		sc("raw_at_package_level", "", "Receive target",
+			fx("const verifyApproval", "var pkgRaw converter.RawValue\n\nconst verifyApproval"),
+			before("\t"+sig+".Receive(ctx, &pkgRaw)"), withImports),
+		sc("raw_type_alias", "", "Receive target",
+			fx("const verifyApproval", "type Raw = loops.Approval\n\nconst verifyApproval"),
+			before("\tvar raw Raw\n\t"+sig+".Receive(ctx, &raw)")),
+		// The SDK decodes update, validator and query arguments too.
+		sc("update_handler_struct", "", "SetUpdateHandler handler",
+			before("\t_ = workflow.SetUpdateHandler(ctx, \"approve\", func(ctx workflow.Context, a loops.Approval) error { return nil })")),
+		sc("query_handler_struct", "", "SetQueryHandler handler",
+			before("\t_ = workflow.SetQueryHandler(ctx, \"q\", func(a loops.Approval) (string, error) { return \"\", nil })")),
+		sc("update_validator_struct", "", "SetUpdateHandlerWithOptions handler", withImports, before(
+			"\t_ = workflow.SetUpdateHandlerWithOptions(ctx, \"u\", func(ctx workflow.Context, raw converter.RawValue) error { return nil },\n"+
+				"\t\tworkflow.UpdateHandlerOptions{Validator: func(ctx workflow.Context, a loops.Approval) error { return nil }})")),
+		sc("named_update_handler", "", "SetUpdateHandler handler",
+			fx("const verifyApproval", "func approve(ctx workflow.Context, a loops.Approval) error { return nil }\n\nconst verifyApproval"),
+			before("\t_ = workflow.SetUpdateHandler(ctx, \"approve\", approve)")),
+		sc("sibling_file", "", "Receive target", addFile("internal/loops/fixture/receive.go",
+			"package fixture\n\nimport (\n\t\"go.temporal.io/sdk/workflow\"\n\n\t"+loopsImp+"\n)\n\n"+
+				"func receive(ctx workflow.Context, c workflow.ReceiveChannel) (a loops.Approval) {\n\tc.Receive(ctx, &a)\n\treturn a\n}\n")),
+	})
+	t.Run("conforming", func(t *testing.T) {
+		got := checkSources(t, repoSources(t, withImports, before(
+			"\tvar raw converter.RawValue\n\t"+sig+".Receive(ctx, &raw)\n"+
+				"\t_ = "+sig+".ReceiveAsync(nil)\n"+
+				"\tvar ae *temporal.ApplicationError\n\tvar d1, d2 converter.RawValue\n\t_ = ae.Details(&d1, &d2)\n"+
+				"\tvar out loops.ApprovalCheck\n\t_ = workflow.ExecuteActivity(ctx, verifyApproval).Get(ctx, &out)\n"+
+				"\t_ = workflow.ExecuteChildWorkflow(ctx, Workflow).Get(ctx, nil)\n"+
+				"\t_ = workflow.SetUpdateHandler(ctx, \"u\", func(ctx workflow.Context, raw converter.RawValue) error { return nil })")))
+		for _, v := range got {
+			t.Errorf("%s: %s: %s", v.Pos, v.Rule, v.Detail)
+		}
+	})
+}
+
+// TestSpecEntrypoints (M0-T19c V2): no exported function, method or function
+// variable of internal/loops but RunLoop and AwaitApprovals takes a LoopSpec or
+// an ApprovalRequest, directly, through a pointer, slice, alias or struct: a
+// RunLoopV2 copy registered as a workflow would take its spec from the input.
+func TestSpecEntrypoints(t *testing.T) {
+	loopsFile := func(name, body string) srcEdit {
+		return addFile("internal/loops/"+name, "package loops\n\nimport (\n\t\"encoding/json\"\n\n\t\"go.temporal.io/sdk/workflow\"\n)\n\n"+
+			"var _ json.RawMessage\n\nvar _ workflow.Context\n\n"+body)
+	}
+	runSourceCases(t, "loops-no-spec-entrypoint", "", []srcCase{
+		sc("run_loop_v2", "", "RunLoopV2", loopsFile("v2.go",
+			"func RunLoopV2(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (LoopResult, error) {\n\treturn LoopResult{}, nil\n}\n")),
+		sc("await_approvals_v2", "", "AwaitApprovalsV2", loopsFile("v2.go",
+			"func AwaitApprovalsV2(ctx workflow.Context, req ApprovalRequest) (ApprovalResult, error) {\n\treturn ApprovalResult{}, nil\n}\n")),
+		sc("pointer_param", "", "RunLoopV2", loopsFile("v2.go", "func RunLoopV2(ctx workflow.Context, spec *LoopSpec) {}\n")),
+		sc("variadic_param", "", "AwaitAll", loopsFile("v2.go", "func AwaitAll(ctx workflow.Context, reqs ...ApprovalRequest) {}\n")),
+		sc("alias_param", "", "RunLoopV2", loopsFile("v2.go", "type SpecV2 = LoopSpec\n\nfunc RunLoopV2(ctx workflow.Context, spec SpecV2) {}\n")),
+		sc("defined_type_param", "", "RunLoopV2", loopsFile("v2.go", "type SpecV2 LoopSpec\n\nfunc RunLoopV2(ctx workflow.Context, spec SpecV2) {}\n")),
+		sc("wrapping_struct_param", "", "RunLoopV2",
+			loopsFile("v2.go", "type Input struct{ Spec LoopSpec }\n\nfunc RunLoopV2(ctx workflow.Context, in Input) {}\n")),
+		sc("exported_method", "", "Run", loopsFile("v2.go", "type Engine struct{}\n\nfunc (Engine) Run(ctx workflow.Context, spec LoopSpec) {}\n")),
+		sc("exported_func_literal_var", "", "RunLoopV3",
+			loopsFile("v2.go", "var RunLoopV3 = func(ctx workflow.Context, spec LoopSpec) {}\n")),
+		sc("exported_var_of_unexported_func", "", "RunLoopV4",
+			loopsFile("v2.go", "func runLoopV4(ctx workflow.Context, spec LoopSpec) {}\n\nvar RunLoopV4 = runLoopV4\n")),
+		sc("exported_func_typed_var", "", "RunLoopV5",
+			loopsFile("v2.go", "var RunLoopV5 func(workflow.Context, LoopSpec)\n")),
+		// An unexported copy registered from package loops, a generic copy
+		// instantiated with a spec type, in loops or outside.
+		sc("unexported_used_as_value", "", "runLoopV2",
+			loopsFile("v2.go", "func runLoopV2(ctx workflow.Context, spec LoopSpec) {}\n\nvar registry = []any{runLoopV2}\n")),
+		sc("generic_instantiated_in_loops", "", "RunG",
+			loopsFile("v2.go", "func RunG[S any](ctx workflow.Context, spec S) {}\n\nvar _ = RunG[LoopSpec]\n")),
+		sc("generic_instantiated_outside", "", "RunG",
+			loopsFile("v2.go", "func RunG[S any](ctx workflow.Context, spec S) {}\n"),
+			fx("const verifyApproval", "var runG = loops.RunG[loops.LoopSpec]\n\nconst verifyApproval")),
+		sc("generic_instantiated_with_wrapper", "", "RunG",
+			loopsFile("v2.go", "func RunG[S any](ctx workflow.Context, spec S) {}\n"),
+			addFile("cmd/rempart-worker/wire.go", "package main\n\nimport "+loopsImp+"\n\n"+
+				"type input struct{ Spec loops.LoopSpec }\n\nvar run = loops.RunG[input]\n")),
+		sc("subpackage_qualified", "", "RunFixture",
+			fx("func Register(", "func RunFixture(ctx workflow.Context, spec loops.LoopSpec) {}\n\nfunc Register(")),
+	})
+	t.Run("conforming", func(t *testing.T) {
+		// Unexported helpers (screen in approvals.go), receivers (Validate)
+		// and results (Spec in the fixture) stay admitted.
+		got := checkSources(t, repoSources(t, loopsFile("v2.go",
+			"func check(req ApprovalRequest) bool { return req.Required > 0 }\n\n"+
+				"func (s LoopSpec) Name() string { return s.ID }\n\nfunc Default() LoopSpec { return LoopSpec{} }\n\n"+
+				"func pick[T any](v T) T { return v }\n\nvar _ = pick[int]\n\nvar _ = check(ApprovalRequest{})\n")))
+		for _, v := range got {
+			t.Errorf("%s: %s: %s", v.Pos, v.Rule, v.Detail)
+		}
+	})
 }

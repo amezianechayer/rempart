@@ -49,7 +49,8 @@ func TestDecodePackages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decodePackages: %v", err)
 		}
-		want := []Package{{ImportPath: "example.com/m/a", Imports: []string{"fmt"}}}
+		// Dir is decoded since M0-T19c V2: CheckPackageDirs resolves it (T74).
+		want := []Package{{ImportPath: "example.com/m/a", Dir: "/src/m/a", Imports: []string{"fmt"}}}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("decodePackages = %#v, want %#v (test imports must not be decoded)", got, want)
 		}

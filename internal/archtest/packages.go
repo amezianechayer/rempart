@@ -17,6 +17,7 @@ import (
 // import rules need. The JSON names are those of cmd/go, not snake_case.
 type Package struct {
 	ImportPath string   `json:"ImportPath"`
+	Dir        string   `json:"Dir"`     // absolute directory, as go list reports it
 	Imports    []string `json:"Imports"` // non-test imports only; omitted by go list when empty
 }
 
