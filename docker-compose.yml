@@ -1,0 +1,65 @@
+# Pile de dev (M0-T03). Toujours : docker compose --env-file .env.dev -f docker-compose.yml
+name: rempart-dev
+
+services:
+  postgres:
+    image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make dev}
+      POSTGRES_INITDB_ARGS: "--auth-local=peer --auth-host=scram-sha-256"
+      TEMPORAL_DB_PASSWORD: ${TEMPORAL_DB_PASSWORD:?run make dev}
+      REMPART_DB_PASSWORD: ${REMPART_DB_PASSWORD:?run make dev}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/dev/postgres-init.sh:/docker-entrypoint-initdb.d/10-rempart.sh:ro
+    healthcheck:
+      # TCP : pendant l'initialisation, le serveur n'écoute que sur le socket.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    security_opt: ["no-new-privileges:true"]
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1@sha256:607d68caa111338d754771efb876c92dfcdae06d056e4530bb31cd0f37406e6a
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?run make dev}
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      SKIP_DB_CREATE: "true"
+      SKIP_DEFAULT_NAMESPACE_CREATION: "true"
+    ports:
+      - "127.0.0.1:7233:7233"
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address \"$$(hostname -i):7233\" | grep -q SERVING"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    security_opt: ["no-new-privileges:true"]
+
+  openbao:
+    image: openbao/openbao:2.4.1@sha256:597f62847dd382382056a1d6704d50465908c2040038c4611832a23269a67112
+    command: ["server", "-dev", "-dev-listen-address=0.0.0.0:8200", "-dev-no-store-token"]
+    environment:
+      BAO_DEV_ROOT_TOKEN_ID: ${OPENBAO_DEV_ROOT_TOKEN:?run make dev}
+    ports:
+      - "127.0.0.1:8200:8200"
+    healthcheck:
+      test: ["CMD", "bao", "status", "-address=http://127.0.0.1:8200"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    logging:
+      driver: none
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  pgdata: {}

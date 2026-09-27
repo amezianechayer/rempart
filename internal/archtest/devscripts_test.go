@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,7 +166,7 @@ func writeEnvFile(t *testing.T, dir string, lines []string, mode fs.FileMode) {
 // readEnvFile reads .env.dev of dir as lines; ok is false if it does not exist.
 func readEnvFile(t *testing.T, dir string) (lines []string, ok bool) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, ".env.dev"))
+	data, err := fs.ReadFile(os.DirFS(dir), ".env.dev")
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false
 	}
@@ -323,7 +324,7 @@ func checkDevEnvOutputHasNoSecret(t *testing.T, script string) []string {
 			continue
 		}
 		for _, r := range runs {
-			if strings.Contains(r.stdout, v) || strings.Contains(r.stderr, v) {
+			if strings.Contains(r.res.stdout, v) || strings.Contains(r.res.stderr, v) {
 				problems.addf("%s: output contains the value of %s", r.what, k)
 			}
 		}
@@ -386,7 +387,7 @@ func checkDevEnvSymlink(t *testing.T, script string) []string {
 		problems.addf("run executed its command with .env.dev a symlink")
 	}
 	expectExit(&problems, "ensure with .env.dev a symlink", runIn(t, dir, "bash", script, "ensure"), 2)
-	if data, err := os.ReadFile(target); err != nil || string(data) != strings.Join(fixtureLines(), "\n")+"\n" {
+	if data, err := fs.ReadFile(os.DirFS(filepath.Dir(target)), filepath.Base(target)); err != nil || string(data) != strings.Join(fixtureLines(), "\n")+"\n" {
 		problems.addf("ensure modified the target of the .env.dev symlink")
 	}
 
@@ -434,13 +435,7 @@ func malformedEnvCases() map[string][]string {
 func checkDevEnvMalformedLine(t *testing.T, script string) []string {
 	var problems problemList
 	cases := malformedEnvCases()
-	for _, name := range slices.Sorted(func(yield func(string) bool) {
-		for k := range cases {
-			if !yield(k) {
-				return
-			}
-		}
-	}) {
+	for _, name := range slices.Sorted(maps.Keys(cases)) {
 		dir := newWorkspace(t, wsIgnored)
 		writeEnvFile(t, dir, cases[name], 0o600)
 		expectExit(&problems, "run touch ran with a malformed line ("+name+")", runIn(t, dir, "bash", script, "run", "touch", "ran"), 2)
@@ -643,11 +638,6 @@ func TestDevEnvScript(t *testing.T) {
 				want: []string{"run executed its command with the wrong keys (missing_last_key)", "(extra_key_first)"},
 			},
 			{
-				name: "symlink_followed", check: "symlink",
-				old: "[[ -f $file && ! -L $file ]]", replacement: "[[ -f $file ]]",
-				want: []string{},
-			},
-			{
 				name: "constant_generator", check: "creates_file",
 				old: "gen() { od -An -N32 -tx1 /dev/urandom | tr -d ' \\n'; }", replacement: "gen() { printf '%064d' 0; }",
 				want: []string{"values are not distinct"},
@@ -681,12 +671,6 @@ func TestDevEnvScript(t *testing.T) {
 		for _, m := range mutations {
 			t.Run(m.name, func(t *testing.T) {
 				mutated := mustReplace(t, referenceDevEnv, m.old, m.replacement)
-				if len(m.want) == 0 {
-					// Documented non-detection: the mode check (stat of the link
-					// itself, 777) still refuses the link; the behaviour holds.
-					expectProblems(t, checks[m.check].run(t, writeScript(t, mutated)), nil)
-					return
-				}
 				expectProblems(t, checks[m.check].run(t, writeScript(t, mutated)), m.want)
 			})
 		}
@@ -762,7 +746,7 @@ func pgExpectedDatabases() map[string]string {
 }
 
 func pgRevokedDatabases() []string {
-	return []string{"postgres", "rempart", "temporal", "temporal_visibility", "template1"}
+	return []string{"postgres", "rempart", "template1", "temporal", "temporal_visibility"}
 }
 
 const pgOnlyGrant = "GRANT CONNECT ON DATABASE rempart TO rempart;"

@@ -459,15 +459,15 @@ volumes:
 
 // Mutation anchors shared by several negative controls.
 const (
-	composePgVolumes     = "    volumes:\n      - pgdata:"
-	composeTemporalPorts = "    ports:\n      - \"127.0.0.1:7233:7233\"\n"
-	composeOpenbaoLogs   = "    logging:\n      driver: none\n"
-	composeTemporalPwd   = "      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?run make dev}\n"
-	composeTemporalNNP   = "      start_period: 30s\n    security_opt: [\"no-new-privileges:true\"]\n"
-	composeScriptMount   = "10-rempart.sh:ro\n"
-	composeOpenbaoImage  = "openbao/openbao:2.4.1@sha256:597f62847dd382382056a1d6704d50465908c2040038c4611832a23269a67112"
-	composePostgresImage = "postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"
-	fakeDigest           = "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+	composePgVolumes      = "    volumes:\n      - pgdata:"
+	composeTemporalPorts  = "    ports:\n      - \"127.0.0.1:7233:7233\"\n"
+	composeOpenbaoLogs    = "    logging:\n      driver: none\n"
+	composeTemporalDBLine = "      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?run make dev}\n"
+	composeTemporalNNP    = "      start_period: 30s\n    security_opt: [\"no-new-privileges:true\"]\n"
+	composeScriptMount    = "10-rempart.sh:ro\n"
+	composeOpenbaoImage   = "openbao/openbao:2.4.1@sha256:597f62847dd382382056a1d6704d50465908c2040038c4611832a23269a67112"
+	composePostgresImage  = "postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"
+	fakeDigest            = "sha256:0000000000000000000000000000000000000000000000000000000000000001"
 )
 
 type composeCase struct {
@@ -518,7 +518,7 @@ func TestComposeServices(t *testing.T) {
 			{name: "valid", src: valid},
 			{
 				name: "extra_service",
-				src:  valid + "  temporal-ui:\n    image: temporalio/ui:2.0.0@" + fakeDigest + "\n",
+				src:  mustReplace(t, valid, "\nvolumes:\n", "  temporal-ui:\n    image: temporalio/ui:2.0.0@"+fakeDigest+"\n\nvolumes:\n"),
 				want: []string{"want exactly [\"openbao\" \"postgres\" \"temporal\"]"},
 			},
 			{
@@ -753,7 +753,7 @@ func TestComposeNoLiteralSecrets(t *testing.T) {
 			{name: "valid", src: valid},
 			{
 				name: "literal_password", // mutation 5
-				src:  mustReplace(t, valid, composeTemporalPwd, "      POSTGRES_PWD: FAKE-dev-password\n"),
+				src:  mustReplace(t, valid, composeTemporalDBLine, "      POSTGRES_PWD: FAKE-dev-password\n"),
 				want: []string{"service temporal: POSTGRES_PWD must be exactly ${NAME:?message}", "service temporal: environment references []"},
 			},
 			{
@@ -773,7 +773,7 @@ func TestComposeNoLiteralSecrets(t *testing.T) {
 			},
 			{
 				name: "temporal_gets_rempart_password", // mutation 6
-				src:  mustReplace(t, valid, composeTemporalPwd, composeTemporalPwd+"      REMPART_DB_PASSWORD: ${REMPART_DB_PASSWORD:?x}\n"),
+				src:  mustReplace(t, valid, composeTemporalDBLine, composeTemporalDBLine+"      REMPART_DB_PASSWORD: ${REMPART_DB_PASSWORD:?x}\n"),
 				want: []string{"service temporal: environment references [\"REMPART_DB_PASSWORD\" \"TEMPORAL_DB_PASSWORD\"]"},
 			},
 			{
@@ -1015,7 +1015,7 @@ func findComposeCalls(mf parsedMakefile, problems *problemList) []composeCall {
 				continue
 			}
 			if !strings.HasPrefix(rest, composeFlags) {
-				problems.addf("Makefile line %d: docker compose without%s(D9): %q", l.Num, strings.TrimRight(composeFlags, " "), text)
+				problems.addf("Makefile line %d: docker compose without %s (D9): %q", l.Num, strings.TrimSpace(composeFlags), text)
 				continue
 			}
 			rest = rest[len(composeFlags):]
@@ -1101,7 +1101,7 @@ func checkDevTargets(mf parsedMakefile) []string {
 			{catEnvRe, "cat .env"},
 			{dockerVolumeRmRe, "docker volume rm or prune"},
 		} {
-			if f.re.MatchString(text) {
+			if f.re.MatchString(strings.TrimLeft(text, "\t@-+ ")) {
 				problems.addf("Makefile line %d: %s not allowed (.env.dev is only read by scripts/dev-env.sh, D3): %q", l.Num, f.what, text)
 			}
 		}
