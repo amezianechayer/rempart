@@ -29,3 +29,4 @@ Plateforme agentique d'infrastructure multicloud sécurisée par construction. R
 
 ## Style
 Code, identifiants, commits en anglais (commits conventionnels). Documentation et ADR en français. Pas de tiret cadratin dans les textes produits.
+Chaque message de commit (et chaque description de PR) se termine par `Co-Authored-By: Ameziane Chayer <amezianechayer9@gmail.com>`, jamais par une ligne Co-Authored-By de Claude.

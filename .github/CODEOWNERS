@@ -1,0 +1,6 @@
+# Revue humaine obligatoire (règle de protection de branche « Require review from Code Owners »).
+/CLAUDE.md @amezianechayer
+/.claude/ @amezianechayer
+/.github/ @amezianechayer
+/evals/ @amezianechayer
+/docs/decisions/ @amezianechayer
