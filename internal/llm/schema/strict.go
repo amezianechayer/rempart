@@ -11,10 +11,26 @@ import (
 const draft2020 = "https://json-schema.org/draft/2020-12/schema"
 
 var (
-	refPattern   = regexp.MustCompile(`^#/\$defs/([A-Za-z0-9_]{1,64})$`)
-	nodeKeywords = set("type enum const properties required additionalProperties items minItems maxItems " +
-		"minLength maxLength pattern minimum maximum anyOf oneOf $ref title description")
-	typeNames = set("null boolean object array number integer string")
+	refPattern = regexp.MustCompile(`^#/\$defs/([A-Za-z0-9_]{1,64})$`)
+	defName    = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+	propName   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+	typeNames  = set("null boolean object array number integer string")
+	// forms is the closed admission list of T43: the keywords of a subschema
+	// of each form, besides title and description.
+	forms = map[string][]string{
+		"object":  {"type", "properties", "required", "additionalProperties"},
+		"array":   {"type", "items", "minItems", "maxItems"},
+		"string":  {"type", "minLength", "maxLength", "pattern", "enum", "const"},
+		"integer": {"type", "minimum", "maximum", "enum", "const"},
+		"number":  {"type", "minimum", "maximum", "enum", "const"},
+		"boolean": {"type", "enum", "const"},
+		"null":    {"type", "enum", "const"},
+		"$ref":    {"$ref"},
+		"anyOf":   {"anyOf"},
+		"oneOf":   {"oneOf"},
+		"enum":    {"enum"},
+		"const":   {"const"},
+	}
 )
 
 func set(words string) map[string]bool {
@@ -49,6 +65,9 @@ func checkStrict(doc any) (map[string]bool, error) {
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(c.defs)) {
+		if !defName.MatchString(name) {
+			return nil, notStrict("#/$defs", "definition name not allowed")
+		}
 		if err := c.node(c.defs[name], "#/$defs/"+name, false, true); err != nil {
 			return nil, err
 		}
@@ -64,43 +83,69 @@ func (c checker) node(v any, path string, root, inDefs bool) error {
 	if !ok {
 		return notStrict(path, "subschema must be an object")
 	}
-	for k := range n {
-		allowed := nodeKeywords[k] || root && (k == "$schema" || k == "$defs")
-		if !allowed {
-			return notStrict(path, "keyword not allowed")
+	form, reason := formOf(n)
+	if reason != "" {
+		return notStrict(path, reason)
+	}
+	allowed := append(slices.Clone(forms[form]), "title", "description")
+	if root {
+		allowed = append(allowed, "$schema", "$defs")
+	}
+	for _, k := range slices.Sorted(maps.Keys(n)) {
+		if !slices.Contains(allowed, k) {
+			return notStrict(path, "keyword not allowed in a subschema of this form")
 		}
 	}
-	if !hasAny(n, "type", "enum", "const", "$ref", "anyOf", "oneOf") {
-		return notStrict(path, "subschema must constrain the type")
+	switch form {
+	case "$ref":
+		return c.ref(n["$ref"], path, inDefs)
+	case "object":
+		return c.object(n, path, inDefs)
+	case "array":
+		return c.node(n["items"], path+"/items", false, inDefs)
+	case "anyOf", "oneOf":
+		return c.list(n[form], path+"/"+form, inDefs)
 	}
-	if ref, ok := n["$ref"]; ok {
-		return c.ref(n, ref, path, inDefs)
-	}
-	if t, ok := n["type"]; ok {
-		s, isString := t.(string)
-		if !isString || !typeNames[s] {
-			return notStrict(path, "type must be one type name")
-		}
-		if s == "object" {
-			if err := c.object(n, path, inDefs); err != nil {
-				return err
-			}
-		}
-		if s == "array" {
-			if err := c.node(n["items"], path+"/items", false, inDefs); err != nil {
-				return err
-			}
+	return nil
+}
+
+// formOf returns the form of n: exactly one of a type name, $ref, anyOf and
+// oneOf; without any, enum then const. reason is empty when a form is found.
+func formOf(n map[string]any) (form, reason string) {
+	var keys []string
+	for _, k := range []string{"type", "$ref", "anyOf", "oneOf"} {
+		if _, ok := n[k]; ok {
+			keys = append(keys, k)
 		}
 	}
-	for _, key := range []string{"anyOf", "oneOf"} {
-		list, ok := n[key].([]any)
-		if _, has := n[key]; has && (!ok || len(list) == 0) {
-			return notStrict(path, key+" must be a non-empty array")
+	switch {
+	case len(keys) > 1:
+		return "", "a subschema has one of type, $ref, anyOf, oneOf"
+	case len(keys) == 1 && keys[0] != "type":
+		return keys[0], ""
+	case len(keys) == 1:
+		s, ok := n["type"].(string)
+		if !ok || !typeNames[s] {
+			return "", "type must be one type name"
 		}
-		for i, item := range list {
-			if err := c.node(item, fmt.Sprintf("%s/%s/%d", path, key, i), false, inDefs); err != nil {
-				return err
-			}
+		return s, ""
+	}
+	for _, k := range []string{"enum", "const"} {
+		if _, ok := n[k]; ok {
+			return k, ""
+		}
+	}
+	return "", "subschema must constrain the type"
+}
+
+func (c checker) list(v any, path string, inDefs bool) error {
+	items, ok := v.([]any)
+	if !ok || len(items) == 0 {
+		return notStrict(path, "must be a non-empty array")
+	}
+	for i, item := range items {
+		if err := c.node(item, fmt.Sprintf("%s/%d", path, i), false, inDefs); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -131,6 +176,9 @@ func (c checker) object(n map[string]any, path string, inDefs bool) error {
 		return notStrict(path, "required must list every property exactly once")
 	}
 	for _, name := range slices.Sorted(maps.Keys(props)) {
+		if !propName.MatchString(name) {
+			return notStrict(path, "property name not allowed")
+		}
 		c.names[name] = true
 		if err := c.node(props[name], path+"/properties/"+name, false, inDefs); err != nil {
 			return err
@@ -139,12 +187,8 @@ func (c checker) object(n map[string]any, path string, inDefs bool) error {
 	return nil
 }
 
-func (c checker) ref(n map[string]any, ref any, path string, inDefs bool) error {
-	for k := range n {
-		if k != "$ref" && k != "title" && k != "description" {
-			return notStrict(path, "$ref allows only title and description beside it")
-		}
-	}
+// ref: the siblings of $ref are restricted by forms.
+func (c checker) ref(ref any, path string, inDefs bool) error {
 	s, isString := ref.(string)
 	m := refPattern.FindStringSubmatch(s)
 	if inDefs || !isString || m == nil {
@@ -154,13 +198,4 @@ func (c checker) ref(n map[string]any, ref any, path string, inDefs bool) error 
 		return notStrict(path, "$ref target is missing")
 	}
 	return nil
-}
-
-func hasAny(n map[string]any, keys ...string) bool {
-	for _, k := range keys {
-		if _, ok := n[k]; ok {
-			return true
-		}
-	}
-	return false
 }

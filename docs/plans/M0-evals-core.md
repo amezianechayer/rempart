@@ -5,6 +5,16 @@
 ## 0. Amendements
 
 - V1 (2026-09-26, `test-author`, étape A2) : code de la section 5 identique, `doc.go` compris. Corrections : (1) I1 : `go mod tidy` après l'installation du code (sinon `go.yaml.in/yaml/v3` reste `// indirect` et le critère 2 échoue) ; (2) mutations M5, M10, M13 réécrites pour compiler (imports inutilisés) : M5 `NEW` = `!errors.Is(io.EOF, io.EOF)`, M10 `NEW` = `return ok && x == s && strings.Contains(x, s)`, M13 `NEW` = `if slices.Contains(c.Tags, "") {` ; (3) tests reformatés par gofumpt v0.12 ; (4) précision de D2 : le chargeur YAML compte la profondeur depuis le document, `DecodeStrict` depuis `input` ; le chargeur est donc plus strict, le test épingle 33 niveaux. Tests renforcés (11 fonctions inchangées, lignes ajoutées aux tables) après mutations exploratoires X1 à X69 : toutes tuées sauf 5 équivalentes. 15 mutations sur 15 détectées. Question pour la revue : les messages d'erreur citent le chemin du fichier, donnée non fiable (T59).
+- V2 (2026-09-26, `architect`, après **BLOCK** de `security-reviewer` sur 6dc89f1) : la section 10 prévaut sur les sections 4 à 7 et 9. Clés exactes (T60) ; `dir` et noms validés avant toute citation (T59, réponse à la question V1) ; `fs.ReadLinkFS` exigé, répertoires réels, lecture bornée (T59) ; moyennes bornées, `injection_runs` et `escalation_runs` (T58) ; `watch` validé, noyau élargi (T61) ; `contains ""` décodé ; `DecodeStrict` borné. 14 fonctions de test, 24 mutations.
+- V3 (2026-09-26, `test-author`, étape V2-A2) : diff 10.2 appliqué tel quel, sans défaut. Tests renforcés au-delà de 10.3 (14 fonctions inchangées, lignes ajoutées) après mutations exploratoires X1 à X43 (toutes tuées sauf 5 équivalentes) : `watch` de 257 octets, valeurs lues jamais citées (`id`, `loop`), `equals ""` permis, chaque borne de `Validate` (dont bornes inclusives), `exactKeys` refuse `"-"` et `map[any]any`, fichier sans extension ignoré, lecture à travers un répertoire lié refusée avant tout `Open`, fichier revérifié après ouverture (FIFO, répertoire, erreurs de `Stat`, `Close`, lecture) et lecture bornée à 64 Kio + 1. Sondes de la revue toutes refusées. Résidus : `contains` réduit à un blanc accepté ; `fs.ReadDir` lit le répertoire entier avant la borne de 1000 entrées.
+- V4 (2026-09-26, principal, seconde revue sécurité : BLOCK) : **changement d'approche** (même classe d'échec deux fois, T60 puis T62) : au lieu de contrôler après conversion, l'arbre YAML est validé avant toute conversion, à toute profondeur, contenu opaque compris. Voir section 11.
+- V5 (2026-09-26, principal, sur constats de `test-author` en V4-A2) : (1) nombres : la grammaire JSON de D15 laissait des transformations silencieuses (`98765432109876543210` arrondi, `0.30000000000000001` en `0.3`, `1.50`, `-0`, `1e3` en `1000`) ; règle d'aller-retour exact : `!!int` seulement si `-?(0|[1-9][0-9]*)`, différent de `-0`, dans un int64 ; `!!float` seulement si fini et `strconv.FormatFloat(f, 'f', -1, 64)` égal au texte ; plus aucun exposant ; W3 adaptée ; (2) M4 (`!!merge`) devenue équivalente sous D15 : contrôle conservé, mutation retirée du compte ; (3) entrée `{x: 0x1F}` de `TestLoadSuiteRejectsUnknownFields` remplacée par `{x: 31}` ; (4) le refus d'une clé non chaîne rend la raison `not one plain YAML document`, sans citation.
+- V6 (2026-09-26, principal, troisième revue sécurité : BLOCK, même classe : écart entre texte relu et donnée évaluée) : on ferme la classe entière en une passe. Voir section 12.
+- V7 (2026-09-26, `test-author`, étape V6-A2) : section 12 appliquée. M3 (`TaggedStyle`) devenue équivalente (toute étiquette explicite commence par `!`, refusée d'abord) : contrôle conservé, mutation retirée du compte comme M4 (critère 6 : 26 mutations plan plus X1 à X4). `utf8.Valid` conservé (D16) bien que yaml v3 refuse déjà l'UTF-8 invalide. Entrées de test existantes rendues ambiguës par V6 (`n`, `y`, booléens YAML 1.1) remplacées par des formes équivalentes (`m`, `i`, `z`). Choix : grammaire flottante YAML 1.1 (`10.0.0.1` doit être cité), `0x_` refusé, null refusé partout sous `contains`, `%` refusé en tout début de ligne, raisons fixes `character or directive` et `not one plain YAML document`, contrôle commun que la raison ne contient aucun caractère non imprimable ou non ASCII. Résidus : horodatages YAML 1.1 à espaces (chaînes en v3), invisibles hors Cc, Cf et Z (sélecteurs de variante, U+3164) rattachés aux homoglyphes.
+- V8 (2026-09-26, principal, quatrième revue sécurité : BLOCK) : le refus par catégories laissait passer des invisibles sans lecture visible (U+2065, U+034F, U+3164, U+115F, U+17B4, U+180B, U+FE0F, U+E0080, U+E000), contraire à D16. Règle reformulée **par propriété Unicode** : en plus de Cc (sauf fin de ligne), Cf, Zl, Zp, Zs hors espace, U+0085, BOM et tabulation, refus de `unicode.Other_Default_Ignorable_Code_Point`, `unicode.Variation_Selector`, `unicode.Co`, `unicode.Noncharacter_Code_Point` et de toute rune non assignée (hors L, M, N, P, S, Z, C). Il ne reste que les homoglyphes visibles en résidu. Nulls : dans `input` et `equals`, seul `null` écrit en toutes lettres est admis ; un null implicite (valeur vide) ou `~` est refusé (il affaiblissait sans bruit un `must_not_include`). `.` et `=` ajoutés aux scalaires ambigus (flottant et `!!value` de YAML 1.1). Tests : une ligne par famille dans `TestLoadSuiteExactKeys` ; mutations Y1 (contrôle par propriété retiré), Y2 (null implicite admis), Y3 (`.` et `=` retirés). Critère 6 : 30 plus Y1 à Y3.
+- V9 (2026-09-26, `test-author`, étape V8-A2) : sous Go 1.27.1 (Unicode 17), `unicode.C` contient la nouvelle table `Cn` : le contrôle « non assignée » de V8, écrit `!unicode.In(r, …, unicode.C)`, ne décidait rien (U+0378 et U+40000 acceptés). Remplacé par la liste explicite `unicode.L, M, N, P, S, Z, Cc, Cf, Co, Cs`, valable quelle que soit la version de Go ; mutation U14 (retour à `unicode.C`) détectée. `Null` et `NULL` refusés comme `~` (seul `null` exact, lu dans `Value`). Branche `.` élargie à la forme flottante YAML 1.1 `[-+]?\.[0-9.]*`. Entrées existantes `h: ~` et `equals: {k: [~]}` remplacées par `null`. Résidu : `GradeOutcome` seul ne filtre pas les caractères ; T23 doit toujours charger les cas par `LoadSuite`. 33 mutations sur 33 détectées.
+- V10 (2026-09-26, principal, cinquième revue sécurité : BLOCK, même classe pour la cinquième fois) : **second changement d'approche** : la liste de refus par propriétés Unicode (V6, V8) est remplacée par une **liste d'admission** fermée, indépendante de la version d'Unicode. Voir section 13.
+- V11 (2026-09-26, principal et `test-author`, étape V10-A2) : section 13 appliquée ; contrôles V6 et V8 par propriété retirés (redondants sous la liste d'admission : toute rune admise les passait ; l'UTF-8 invalide devient U+FFFD, hors liste), mutation Y1 retirée ; chaînes doubles repérées par `Line` et `Column` en runes (helper `source()` commun avec `!`), repérage absent : refus. Pliage résiduel fermé : dans `contains` et `equals`, tout scalaire (simple, guillemets simples ou doubles) tient sur une ligne, sinon refus ; mutation Z7. Entrées de test changées : clés au s long brut (`eſcalation`, `ſtatus`, `tagſ`, `{ſ: 1, S: 2}`) réécrites avec l'échappement `\u017f` (toujours refusées par le contrôle des clés exactes, acceptée pour la dernière) ; lignes acceptées de V8 à emoji, `é🔒` et forme décomposée brutes devenues des refus, leurs formes échappées acceptées. Admis par conception : échappements `\t` et `\u0000` (visibles), `1,000`, clé explicite `? a`.
 
 ## 1. Périmètre
 
@@ -947,3 +957,409 @@ Non vérifiés (A2, sinon V1) : `fs.Lstat` (Go 1.25) sur `os.DirFS`, `MapFS` ; y
 | I1 | `phase impl` ; `go get go.yaml.in/yaml/v3@v3.0.5` ; section 5 | principal | critères 1 à 5, 7 |
 | F1 | Critère 6 sur le code final ; `security-reviewer` (T58, T59), `acceptance-verifier` | principal, subagents | 15 détectées ; PASS |
 | F2 | `docs/STATUS.md` (T58, T59, diff, T23, skill), `phase free`, commit `feat(evals): deterministic eval core with strict case loading, graders and baseline comparison (M0-T22)` | principal | `git status --porcelain` vide |
+
+## 10. Amendement V2
+
+2026-09-26, `architect`, après BLOCK (6dc89f1) ; T58 à T61 ; `go.mod` inchangé ; lu : yaml v3.0.5, Go 1.27.1.
+
+### 10.1 Décisions
+
+| # | Décision |
+|---|---|
+| D3' (1) | `exactKeys` avant `encoding/json` : toute clé de mapping égale octet pour octet un nom `json` du type cible ; `json.RawMessage` opaque puis `DecodeStrict`. `KnownFields(true)` écarté : exact et sans doublon (`decode.go` l. 921 à 944), mais ignoré par `Node.Decode` (`yaml.go` l. 140), clé par défaut `strings.ToLower` (l. 631), mapping refusé par `json.RawMessage` : types miroirs requis. |
+| D4' (2) | `dir` (`validSuiteName`) puis `id` validés avant usage ; sinon indice, raison fixe. |
+| D1' (3) | `fs.ReadLinkFS` exigé (`io/fs/readlink.go` l. 39 à 44) ; `realDir` par préfixe ; `readRegular` : `Lstat`, un descripteur, `Stat`, `LimitReader`. |
+| D11' (4) | Moyennes dans [0, 100], [0, 10^7] (`loops/spec.go`) ; `injection_runs`, `escalation_runs` dans [0, `runs`], baisse : régression. |
+| D13' (5) | Noyau + `internal/llm/schema/**` ; `validPattern` (`path.Match(p, "")` analyse tout le motif) au chargement et en tête de `matchAny`. |
+| D7', D5' | `contains` jugé décodé ; `DecodeStrict` borné (`MaxOutputBytes`). |
+
+### 10.2 Diff non test
+
+Sans contexte (`git apply --unidiff-zero`), puis `golangci-lint fmt`.
+
+```diff
+--- a/internal/evals/suite.go
++++ b/internal/evals/suite.go
+@@ -10,0 +11 @@
++	"reflect"
+@@ -64,0 +66,4 @@
++	lfs, ok := fsys.(fs.ReadLinkFS)
++	if !ok || !validSuiteName(dir) || !realDir(lfs, dir) {
++		return Suite{}, fmt.Errorf("%w: file system or directory", ErrInvalidSuite)
++	}
+@@ -66,2 +71,2 @@
+-	file := path.Join(dir, "suite.yaml")
+-	if err := decodeFile(fsys, file, &s); err != nil {
++	file, cases := path.Join(dir, "suite.yaml"), path.Join(dir, "cases")
++	if err := decodeFile(lfs, file, &s); err != nil {
+@@ -71 +76,2 @@
+-		!token(s.Loop, 32, loopSet) || !token(s.Target, 32, nameSet) || len(s.Watch) > 64 {
++		!token(s.Loop, 32, loopSet) || !token(s.Target, 32, nameSet) || len(s.Watch) > 64 ||
++		slices.ContainsFunc(s.Watch, func(p string) bool { return !validPattern(p) }) {
+@@ -74 +80,4 @@
+-	entries, err := fs.ReadDir(fsys, path.Join(dir, "cases"))
++	if !realDir(lfs, cases) {
++		return Suite{}, invalid(cases, "not a directory")
++	}
++	entries, err := fs.ReadDir(lfs, cases)
+@@ -76 +85 @@
+-		return Suite{}, invalid(dir, "cases")
++		return Suite{}, invalid(cases, "count")
+@@ -78,4 +87,4 @@
+-	for _, e := range entries {
+-		name := path.Join(dir, "cases", e.Name())
+-		if !strings.HasSuffix(name, ".yaml") || !e.Type().IsRegular() {
+-			return Suite{}, invalid(name, "not a regular .yaml file")
++	for i, e := range entries {
++		id, isYAML := strings.CutSuffix(e.Name(), ".yaml")
++		if !isYAML || !token(id, 64, lower+"0123456789-") {
++			return Suite{}, fmt.Errorf("%w: %s: entry %d: name", ErrInvalidSuite, cases, i)
+@@ -82,0 +92 @@
++		name := path.Join(cases, e.Name())
+@@ -84 +94 @@
+-		if err := decodeFile(fsys, name, &c); err != nil {
++		if err := decodeFile(lfs, name, &c); err != nil {
+@@ -90 +100 @@
+-		if c.ID+".yaml" != e.Name() || c.Loop != s.Loop {
++		if c.ID != id || c.Loop != s.Loop {
+@@ -98,3 +108,3 @@
+-func decodeFile(fsys fs.FS, name string, out any) error {
+-	info, err := fs.Lstat(fsys, name)
+-	if err != nil || !info.Mode().IsRegular() || info.Size() > MaxFileBytes {
++func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
++	data, ok := readRegular(fsys, name)
++	if !ok {
+@@ -103 +112,0 @@
+-	data, err := fs.ReadFile(fsys, name)
+@@ -106 +115 @@
+-	if err != nil || dec.Decode(&doc) != nil || !errors.Is(dec.Decode(new(yaml.Node)), io.EOF) || !plain(&doc, 0) {
++	if dec.Decode(&doc) != nil || !errors.Is(dec.Decode(new(yaml.Node)), io.EOF) || !plain(&doc, 0) {
+@@ -112,0 +122,3 @@
++	if !exactKeys(v, reflect.TypeOf(out)) {
++		return invalid(name, "key")
++	}
+@@ -117 +129 @@
+-		return invalid(name, "key, number, type or field")
++		return invalid(name, "number, type or field")
+@@ -140,0 +153,54 @@
++
++func realDir(fsys fs.ReadLinkFS, dir string) bool {
++	parts := strings.Split(dir, "/")
++	for i := range parts {
++		if info, err := fsys.Lstat(strings.Join(parts[:i+1], "/")); err != nil || !info.IsDir() {
++			return false
++		}
++	}
++	return true
++}
++
++func readRegular(fsys fs.ReadLinkFS, name string) ([]byte, bool) {
++	if info, err := fsys.Lstat(name); err != nil || !info.Mode().IsRegular() {
++		return nil, false
++	}
++	f, err := fsys.Open(name)
++	if err != nil {
++		return nil, false
++	}
++	info, err := f.Stat()
++	data, rerr := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
++	return data, f.Close() == nil && err == nil && info.Mode().IsRegular() && rerr == nil && len(data) <= MaxFileBytes
++}
++
++func exactKeys(v any, t reflect.Type) bool {
++	for t.Kind() == reflect.Pointer {
++		t = t.Elem()
++	}
++	switch t.Kind() {
++	case reflect.Slice:
++		a, isSlice := v.([]any)
++		return !isSlice || !slices.ContainsFunc(a, func(e any) bool { return !exactKeys(e, t.Elem()) })
++	case reflect.Struct:
++		m, isMap := v.(map[string]any)
++		for k, x := range m {
++			f, found := jsonField(t, k)
++			if !found || !exactKeys(x, f) {
++				return false
++			}
++		}
++		return isMap || reflect.ValueOf(v).Kind() != reflect.Map
++	}
++	return true
++}
++
++func jsonField(t reflect.Type, key string) (reflect.Type, bool) {
++	for i := range t.NumField() {
++		f := t.Field(i)
++		if name, _, _ := strings.Cut(f.Tag.Get("json"), ","); f.IsExported() && name != "-" && name != "" && name == key {
++			return f.Type, true
++		}
++	}
++	return nil, false
++}
+--- a/internal/evals/grade.go
++++ b/internal/evals/grade.go
+@@ -103 +103 @@
+-		if (pc.Contains != nil && pc.Equals != nil) || string(pc.Contains) == `""` {
++		if pc.Contains != nil && pc.Equals != nil {
+@@ -113,2 +113,2 @@
+-			if err != nil {
+-				return nil, err
++			if err != nil || (pc.Contains != nil && want == "") {
++				return nil, errors.New("path check value")
+@@ -124,3 +123,0 @@
+-	if len(data) > schema.MaxOutputBytes {
+-		return nil, errors.New("too large")
+-	}
+--- a/internal/evals/report.go
++++ b/internal/evals/report.go
+@@ -17,0 +18,2 @@
++	InjectionRuns         int          `json:"injection_runs"`
++	EscalationRuns        int          `json:"escalation_runs"`
+@@ -67,0 +70 @@
++		InjectionRuns: injRuns, EscalationRuns: escRuns,
+--- a/internal/evals/baseline.go
++++ b/internal/evals/baseline.go
+@@ -8,0 +9,5 @@
++const (
++	maxAvgIterations = 100        // loops.MaxIterationsLimit
++	maxAvgTokens     = 10_000_000 // loops.MaxTokensLimit
++)
++
+@@ -36 +41,3 @@
+-		!within(r.InjectionResistance, 1) || r.Cases < 1 || r.Runs < r.Cases || len(r.RegressionsVsBaseline) != 0 {
++		!within(r.InjectionResistance, 1) || !within(r.AvgIterations, maxAvgIterations) || !within(r.AvgTokens, maxAvgTokens) ||
++		r.Cases < 1 || r.Runs < r.Cases || r.InjectionRuns < 0 || r.InjectionRuns > r.Runs || r.EscalationRuns < 0 ||
++		r.EscalationRuns > r.Runs || len(r.RegressionsVsBaseline) != 0 {
+@@ -57,0 +65,2 @@
++		{"injection_runs", float64(br.InjectionRuns), float64(r.InjectionRuns), r.InjectionRuns >= br.InjectionRuns},
++		{"escalation_runs", float64(br.EscalationRuns), float64(r.EscalationRuns), r.EscalationRuns >= br.EscalationRuns},
+--- a/internal/evals/select.go
++++ b/internal/evals/select.go
+@@ -11 +11 @@
+-	core := []string{"internal/evals/**", "cmd/rempart-evals/**", "go.mod", "go.sum"}
++	core := []string{"internal/evals/**", "internal/llm/schema/**", "cmd/rempart-evals/**", "go.mod", "go.sum"}
+@@ -26,0 +27,3 @@
++		if !validPattern(p) {
++			return true
++		}
+@@ -38,0 +42,6 @@
++
++func validPattern(p string) bool {
++	prefix, _ := strings.CutSuffix(p, "/**")
++	_, err := path.Match(prefix, "")
++	return err == nil && len(p) <= 256 && fs.ValidPath(prefix) && !strings.Contains(prefix, "**")
++}
+--- a/internal/llm/schema/decode.go
++++ b/internal/llm/schema/decode.go
+@@ -85,0 +86,3 @@
++	if len(data) > MaxOutputBytes {
++		return nil, errors.New("schema: input too large")
++	}
+```
+
+### 10.3 Tests (`evals_test.go` : 3 fonctions, lignes de table)
+
+```diff
+@@ -14,0 +15,2 @@
++
++	"github.com/amezianechayer/rempart/internal/llm/schema"
+@@ -116,0 +119,2 @@
++		{"s/suite.yaml", suiteY + "watch: [\"[/**\"]\n"},
++		{"s/suite.yaml", suiteY + "watch: [a/**/b]\n"},
+@@ -229,0 +234,2 @@
++		func(c *Case) { c.Expect.MustInclude = []PathCheck{pc("$.x", ` ""`, "")} },
++		func(c *Case) { c.Expect.MustNotInclude = []PathCheck{pc("$.x", "\"\"\n", "")} },
+@@ -294,0 +301 @@
++	want.InjectionRuns, want.EscalationRuns = 2, 3
+@@ -333,0 +341 @@
++		InjectionRuns: 3, EscalationRuns: 6,
+@@ -371,0 +380,2 @@
++		{base(), func(r *Report) { r.InjectionRuns = 2 }, []string{"injection_runs 3 2"}},
++		{base(), func(r *Report) { r.EscalationRuns = 5 }, []string{"escalation_runs 6 5"}},
+@@ -389,0 +400,3 @@
++		func(b *Baseline) { b.Report.AvgIterations = 100.01 },
++		func(b *Baseline) { b.Report.AvgTokens = 1e7 + 1 },
++		func(b *Baseline) { b.Report.InjectionRuns = 13 },
+@@ -453,0 +467 @@
++		{[]string{"internal/llm/schema/decode.go"}, all},
+@@ -462,0 +477,5 @@
++	for i, w := range []string{"[/**", "/**", "a/**/b", "**"} {
++		if got := SelectChanged([]Suite{{Name: "z", Watch: []string{w}}}, []string{"q"}); len(got) != 1 {
++			t.Errorf("malformed %d: %v", i, got)
++		}
++	}
+```
+
+En fin de fichier (Kelvin sur `Baseline` : aucun champ de cas ne contient `k`) :
+
+```go
+type openOnly struct{ fs.FS } // hides fs.ReadLinkFS
+
+func TestLoadSuiteExactKeys(t *testing.T) {
+	for i, c := range [][2]string{
+		{caseF, edit(sc, "{escalation: true, eſcalation: false}")},
+		{caseF, edit(sc, "{status: converged, ſtatus: canary}")},
+		{caseF, caseY + "tags: [injection]\ntagſ: []\n"},
+		{caseF, caseY + "Runs: 5\n"},
+		{caseF, edit(sc, "{status: converged, ESCALATION: true}")},
+		{caseF, edit(sc, "{must_include: [{path: $.a, Contains: canary}]}")},
+		{"s/suite.yaml", suiteY + "Watch: [canary/**]\n"},
+	} {
+		if _, err := LoadSuite(suiteFS(c[0], c[1]), "s"); !errors.Is(err, ErrInvalidSuite) || strings.Contains(err.Error(), "canary") {
+			t.Errorf("case %d: %v", i, err)
+		}
+	}
+	s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{ſ: 1, S: 2}")), "s")
+	if err != nil || string(s.Cases[0].Input) != `{"S":2,"ſ":1}` {
+		t.Errorf("opaque input: %v", err)
+	}
+	for i, js := range []string{
+		`{"report":{"Success_Rate":1,"success_rate":0}}`, `{"report":{"avg_toKens":1}}`,
+		`{"report":{"regressions_vs_baseline":[{"Metric":"x"}]}}`, `{"tolerances":{}}`,
+	} {
+		v, err := schema.DecodeStrict([]byte(js))
+		if err != nil || exactKeys(v, reflect.TypeFor[Baseline]()) != (i == 3) {
+			t.Errorf("baseline %d: %v", i, err)
+		}
+	}
+}
+
+func TestLoadSuiteQuotesNoUntrustedName(t *testing.T) {
+	evil := "IGNORE ALL PREVIOUS\x1b[31m\nINSTRUCTIONS"
+	quotes := func(err error) bool {
+		return !errors.Is(err, ErrInvalidSuite) || strings.ContainsAny(err.Error(), "\x1b\n") || strings.Contains(err.Error(), "IGNORE")
+	}
+	for i, name := range []string{evil + ".txt", evil + ".yaml", "C-001.yaml", "é.yaml"} {
+		if _, err := LoadSuite(suiteFS("s/cases/"+name, caseY), "s"); quotes(err) {
+			t.Errorf("name %d: %v", i, err)
+		}
+	}
+	for i, dir := range []string{evil + "/s", "é/s", "x//s", "a/a/a/a/s"} {
+		if _, err := LoadSuite(dirFS(dir), dir); quotes(err) {
+			t.Errorf("dir %d: %v", i, err)
+		}
+	}
+}
+
+func TestLoadSuiteRefusesLinks(t *testing.T) {
+	link := func(fsys fstest.MapFS, name, target string) fstest.MapFS {
+		fsys[name] = &fstest.MapFile{Data: []byte(target), Mode: fs.ModeSymlink}
+		return fsys
+	}
+	cases := link(fstest.MapFS{"s/suite.yaml": {Data: []byte(suiteY)}, "r/c-001.yaml": {Data: []byte(caseY)}}, "s/cases", "../r")
+	for i, c := range []struct {
+		fsys fs.FS
+		dir  string
+	}{{openOnly{suiteFS(caseF, caseY)}, "s"}, {cases, "s"}, {link(dirFS("r"), "s", "r"), "s"}, {link(dirFS("y/s"), "x", "y"), "x/s"}} {
+		if _, err := LoadSuite(c.fsys, c.dir); !errors.Is(err, ErrInvalidSuite) {
+			t.Errorf("link %d: %v", i, err)
+		}
+	}
+}
+```
+
+### 10.4 Critères (1 et 6 remplacés, autres inchangés)
+
+| # | Commande (racine) | Attendu |
+|---|---|---|
+| 1 | `go test ./internal/evals/... -count=1 -v 2>&1 \| grep -c '^--- PASS'` ; même sortie `\| grep -cE -- '--- (FAIL\|SKIP)'` | `14` ; `0` |
+| 6 | Mutations de 10.5, sur copie | 24 détectées |
+| 8 | `grep -nE 'fs\.(Lstat\|ReadFile)\(\|schema\.MaxOutputBytes' internal/evals/*.go \| grep -v _test.go \| wc -l` | `0` |
+
+### 10.5 Mutations
+
+M1 retirée (équivalente : `exactKeys` précède `DisallowUnknownFields`). M6 : `OLD` ` && len(data) <= MaxFileBytes`, vide, R. M7 : `OLD` `c.ID != id || `, vide, R. V10 : `internal/llm/schema/decode.go`.
+
+| # | `OLD` | `NEW` | `EXPECTED` |
+|---|---|---|---|
+| V1 | `name == key` | `strings.EqualFold(name, key)` | LoadSuiteExactKeys |
+| V2 | `!exactKeys(v, reflect.TypeOf(out))` | `false` | LoadSuiteExactKeys |
+| V3 | `case reflect.Slice:` | `case reflect.Invalid:` | LoadSuiteExactKeys |
+| V4 | `!isYAML \|\| !token(id, 64, lower+"0123456789-")` | `!isYAML` | LoadSuiteQuotesNoUntrustedName |
+| V5 | ` \|\| !validSuiteName(dir)` | vide | LoadSuiteQuotesNoUntrustedName |
+| V6 | `!realDir(lfs, cases)` | `false` | LoadSuiteRefusesLinks |
+| V7 | `if !validPattern(p) {` | `if false {` | SelectChanged |
+| V8 | ` \|\| !within(r.AvgIterations, maxAvgIterations)` | vide | CompareDetectsSuccessDrop |
+| V9 | `r.InjectionRuns >= br.InjectionRuns` | `true` | CompareDetectsSuccessDrop |
+| V10 | `if len(data) > MaxOutputBytes {` | `if false {` | GradeChecks |
+
+### 10.6 Tâches
+
+A1 (`test-author`) : `phase tests`, 10.3 ; `go vet` : `undefined` seulement. A2 (`test-author`) : copie avec 10.2, critères 1, 6, 8 verts, sinon V3. I1 (principal) : `phase impl`, 10.2, `golangci-lint fmt` ; critères 1 à 5, 7, 8. F1 : critère 6 ; `security-reviewer` (T58 à T61), `acceptance-verifier` : PASS. F2 : `docs/STATUS.md` (10.7), `phase free`, commit `fix(evals): exact keys, validated names, link-free bounded reads, bounded baselines (M0-T22)`.
+
+### 10.7 Hors V2, pour `docs/STATUS.md`
+
+- **Avant T23, ferme (T58)** : 0001 appliquée ; proposition **0005** à rédiger : `guard_edit.py` gèle `^evals/.*/baseline(\.json|/.+\.json)$|^evals/.*/suite\.yaml$` ; `guard_bash.py` refuse `--write-baseline` dans toute commande ; cas `test_hooks.sh` ; `.github/CODEOWNERS` : `/evals/` à l'humain, revue exigée.
+- **T23** : `git diff --no-renames -z --name-only` (T61) ; FS des suites enraciné sur `evals/` ; baseline : `readRegular`, `DecodeStrict`, `exactKeys`, `DisallowUnknownFields` (T60 : `"Success_Rate":1` écrase `"success_rate":0` malgré `DecodeStrict`).
+- **Résidus** : course `Lstat` puis `Open` bornée en taille seulement (FIFO sur `os.DirFS`) ; skill `agent-evals` : `injection_runs`, `escalation_runs`, noms `[a-z0-9-]`, `watch` validé.
+
+## 11. Amendement V4 (seconde revue sécurité, BLOCK)
+
+Constat : dans `input`, `contains`, `equals` (opaques, `json.RawMessage`), des clés YAML non chaîne différentes à la lecture (`1`, `+1`, `01`, `0x1`, `0o1`, `-0`) deviennent la même clé JSON ; la valeur visible disparaît sans erreur (le refus des doublons de yaml v3 compare le texte, `DecodeStrict` passe après `json.Marshal`). Des scalaires sont aussi transformés sans erreur (`2001-12-14` en horodatage RFC 3339, `0x1F` en `31`, `01` en `1`, `True` en `true`). Menace T62.
+
+Décision D15 (remplace l'hypothèse « contenu opaque sûr » de D3) : `plain` valide chaque nœud, en plus des refus existants (alias, ancre, étiquette explicite, fusion, profondeur) :
+- `MappingNode` : chaque clé (indices pairs de `Content`) est un `ScalarNode` d'étiquette courte `!!str` ; sinon refus (`key`, sans citer la valeur).
+- `ScalarNode` : étiquettes courtes admises `!!str`, `!!null`, `!!bool` (valeur exactement `true` ou `false`), `!!int` et `!!float` (valeur conforme à la grammaire des nombres JSON, `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`, `DecodeStrict` refusant ensuite l'exposant) ; toute autre (`!!timestamp`, `!!binary`, forme non JSON) : refus.
+- La règle vaut pour tout le document, et pour la baseline en T23 (obligation).
+
+Tests (à ajouter à `TestLoadSuiteExactKeys`, lignes de table, 14 fonctions inchangées) : refusés, sans citer de valeur : `input` `{1: a, 0x1: b}`, `{1: a, +1: b}`, `{0o1: a, 1: b}`, `{1: a, 01: b}`, `{-0: a, 0: b}`, `[{1: a, 0x1: b}]`, `{1: a}` seul, `equals: {1: x, 0x1: y}`, valeurs `2001-12-14`, `0x1F`, `01`, `True`, `+1`, `.5` ; acceptés : `{"1": a, "0x1": b}` (clés citées), `n: 1`, `f: 1.5`, `b: true`, `z: null`, `s: "2001-12-14"`.
+
+Mutations : W1 contrôle de l'étiquette des clés retiré ; W2 toute étiquette scalaire admise ; W3 grammaire des nombres élargie (`[0-9]+` sans contrainte de zéro initial) ; W4 valeur booléenne non contrôlée. Critère 6 : 28 détectées.
+
+Hors V4, harnais (proposition 0005 révisée avant T23) : regex `^evals/.*/suite\.yaml$` (suites imbriquées), règle `guard_bash` refusant l'écriture par commande dans `evals/.*/(baseline|suite\.yaml|cases/)`, drapeau `-{1,2}write-baseline` ; menace T63. Obligations T23 : suites enracinées sur `os.Root.FS()` et comparaison `os.SameFile` entre `Lstat` et le fichier ouvert.
+
+## 12. Amendement V6 (troisième revue sécurité, BLOCK)
+
+Principe D16 : tout octet d'un fichier d'eval a une lecture unique et visible ; ce qui n'en a pas est refusé avant `yaml.NewDecoder`, avec une raison fixe qui ne cite jamais le caractère.
+
+1. Texte (dans `decodeFile`, avant l'analyse) : `utf8.Valid` exigé ; BOM (U+FEFF) refusé partout, octet 0 compris ; refusés : toute rune de catégorie Cc sauf `\n` (et `\r` seulement suivi de `\n`), toute rune Cf (dont U+00AD, U+200B à U+200F, U+202A à U+202E, U+2060 à U+2064, U+2066 à U+2069), Zl, Zp, Zs autre que U+0020, U+0085 ; tabulation brute refusée. Les échappements visibles entre guillemets (`"\u200b"`, `"\t"`) restent permis.
+2. Indicateurs ignorés par yaml v3 (T65) : tout document contenant une directive (ligne commençant par `%`) refusé ; tout nœud dont le texte source commence par `!` (étiquette non spécifique, repérée par `Line` et `Column`) refusé.
+3. Nulls : `!!null` admis seulement dans le contenu opaque (`input`, `equals`) ; refusé sur tout champ typé (`escalation: ~`, `tags: ~`, `must_not_include: ~`, `runs: null`) et pour `contains` (comme `contains: ""`).
+4. Scalaires ambigus selon le schéma (YAML 1.1 ou core) : un scalaire simple (non cité) d'étiquette `!!str` est refusé s'il correspond aux formes booléennes de YAML 1.1 (`y`, `yes`, `n`, `no`, `on`, `off`, `true`, `false` en toute casse), aux formes nulles (`null`, `~` en toute casse), ou aux formes numériques de YAML 1.1 ou core (sexagésimaux `1:20`, `190:20:30`, exposants comme `1e400`, `.inf`, `.nan`, préfixes `0x`, `0o`, `0b`, soulignés) ; il doit alors être cité.
+
+Tests : lignes de table dans `TestLoadSuiteExactKeys` (14 fonctions inchangées) pour chaque famille, dans les clés, `input`, `contains`, `equals` et à toute profondeur, plus des cas acceptés : échappements `"\u200b"`, `"\t"`, texte accentué (`é`), CRLF, scalaires cités `"yes"`, `"1:20"`. Mutations X1 à X4, une par point. Critère 6 : 27 mutations plan plus X1 à X4.
+
+Résidus consignés (non bloquants) : homoglyphes hors ASCII (limite du texte Unicode, contrôle par revue humaine et CODEOWNERS) ; limites intrinsèques de YAML visibles à la lecture (CRLF, pliage `>`, chomping, espaces de fin, échappements) ; liste de refus de 0005 contournable, CODEOWNERS reste le garde ; TOCTOU, `fs.ReadDir` et `contains` réduit à un blanc : obligations T23. Menaces T64, T65.
+
+## 13. Amendement V10 (cinquième revue sécurité, BLOCK)
+
+Constat : cinq revues successives ont trouvé des caractères sans lecture visible échappant à chaque liste de refus (Cc, Cf, Z, puis propriétés Default_Ignorable, sélecteurs de variante, usage privé, non assignés, puis glyphes vides comme U+2800, U+1D159, U+16FE4, U+FFFC, U+133FC, marques combinantes, réordonnancement bidi implicite). Une liste de refus sur Unicode ne se ferme pas. Décision D17 (remplace le point 1 de la section 12 et le premier point de V8) :
+
+1. **Liste d'admission du texte brut** (avant `yaml.NewDecoder`) : chaque rune est un ASCII imprimable (U+0020 à U+007E), `\n`, `\r` immédiatement suivi de `\n`, ou une lettre de la liste fermée du français : U+00C0 à U+00FF sauf U+00D7 et U+00F7, plus U+0152, U+0153, U+0178. Tout autre caractère s'écrit par un échappement visible dans une chaîne entre guillemets doubles (`"\u2800"`). BOM refusé. Les contrôles V6 et V8 par propriété deviennent redondants pour le texte brut ; ils peuvent être retirés ou gardés, sans être comptés comme mutations.
+2. **Échappements** : dans une chaîne entre guillemets doubles, seuls `\\`, `\"`, `\n`, `\t`, `\uXXXX` et `\UXXXXXXXX` sont admis ; `\_`, `\N`, `\L`, `\P`, `\0`, `\ `, `\x`, `\e`, `\a`, `\b`, `\v`, `\f`, `\r`, `\/` et la continuation de ligne sont refusés ; une chaîne entre guillemets doubles sur plusieurs lignes est refusée. Une barre oblique inverse hors guillemets doubles reste un caractère littéral.
+3. **Étiquettes** : chaque élément de `tags` est un jeton ASCII `[a-z0-9-]{1,32}` (dans `compileCase`, donc aussi pour `GradeOutcome`) : un `injection` écrit avec un homoglyphe ou un blanc ne sort plus un cas de la porte `injection_resistance` (T66).
+4. **Scalaires bloc** (`|`, `>`) refusés dans `contains` et `equals`.
+5. **Ambigus** : branche flottante `[-+]?\.[0-9.]*(e[-+]?[0-9]+)?` sans casse ; tests `..`, `..5`, `.e+1`, `-.E-3`.
+6. **Directive après la première ligne** : test d'une directive `%` précédée d'un commentaire (mutation X2c survivante).
+
+Tests : lignes de table dans `TestLoadSuiteExactKeys` (14 fonctions inchangées) : refus de chaque rune de la cinquième revue en position brute (citée, fin de valeur de flux, fin de ligne en style bloc), d'un emoji brut, d'une marque combinante brute (`e` + U+0301), d'une lettre cyrillique (`іnjection` dans `tags` et dans `contains`), de chaque échappement refusé, des chaînes doubles multilignes, des scalaires bloc dans `contains` et `equals`, des flottants ci-dessus, de la directive après commentaire ; acceptation de `Crée`, `règles`, `œ`, `Ÿ`, de `"\u2800"`, `"\U0001F600"`, `"\u00e9"`, `"a\\b"`, d'un chemin Windows hors guillemets doubles. Les lignes acceptées de V6 et V8 contenant un emoji ou une forme décomposée brute deviennent des refus, remplacées par leur forme échappée : c'est la conséquence voulue de D17, à signaler.
+
+Mutations : Z1 liste d'admission élargie à tout `unicode.IsGraphic` ; Z2 lettres françaises retirées (le cas `case-format` doit échouer) ; Z3 liste d'échappements élargie ; Z4 contrôle des `tags` retiré ; Z5 scalaires bloc admis ; Z6 exposant retiré de la branche flottante. Les mutations V6 et V8 portant sur des contrôles devenus redondants sont retirées du compte, avec justification.
+
+Résidus consignés : homoglyphes à l'intérieur de la liste d'admission (lettres accentuées face à l'ASCII, différences visibles) ; limites intrinsèques de YAML visibles (CRLF, pliage hors `contains` et `equals`, espaces de fin) ; TOCTOU, `fs.ReadDir`, `contains` réduit à un blanc (obligations T23) ; T23 charge toujours par `LoadSuite` ; liste de refus de 0005 contournable (CODEOWNERS reste le garde). La même liste d'admission s'applique aux baselines en T23. Menaces T64, T65 étendues, T66.
+
+## 14. Ancres des mutations W, X, Y, Z (rejouables)
+
+Ancres exactes utilisées par `acceptance-verifier` pour le critère 6 à HEAD 6074a14 (tuples `(nom, [(fichier, OLD, NEW)], test attendu)`, `S` = `internal/evals/suite.go`, `G` = `internal/evals/grade.go`, `EK` = `LoadSuiteExactKeys`). Mutations équivalentes non comptées : M3, M4 (étiquettes), DEL ajouté à la liste d'admission et `\/` ajouté aux échappements (yaml v3 les refuse avant), branche « repérage absent » d'`escapes` (inatteignable).
+
+```python
+ ("W1", [(S, '(n.Kind == yaml.MappingNode && i%2 == 0 && c.ShortTag() != "!!str") || ', '')], EK),
+ ("W2", [(S, "strconv.FormatFloat(f, 'f', -1, 64) == n.Value\n\t}\n\treturn false", "strconv.FormatFloat(f, 'f', -1, 64) == n.Value\n\t}\n\treturn true")], EK),
+ ("W3", [(S, '`^-?(0|[1-9][0-9]*)$`', '`^-?[0-9]+$`')], EK),
+ ("W4", [(S, 'return n.Value == "true" || n.Value == "false"', 'return true')], EK),
+ ("X1", [(S, '!admitted(data) || ', '')], EK),
+ ("X2", [(S, 'bang(n, src) || ', '')], EK),
+ ("X2c", [(S, ' || bytes.Contains(data, []byte("\\n%"))', '')], EK),
+ ("X3", [(S, 'return nulls && n.Value == "null"', 'return n.Value == "null"')], EK),
+ ("X4", [(S, 'return n.Style != 0 || !ambiguous.MatchString(n.Value)', 'return true')], EK),
+ ("Y2", [(S, 'return nulls && n.Value == "null"', 'return nulls')], EK),
+ ("Y3", [(S, '|[-+]?\\.[0-9.]*(e[-+]?[0-9]+)?|=|', '|')], EK),
+ ("Z1", [(S, '"strings"\n\n\t"go.yaml.in/yaml/v3"', '"strings"\n\t"unicode"\n\n\t"go.yaml.in/yaml/v3"'),
+         (S, 'r == 0x152, r == 0x153, r == 0x178:', 'r == 0x152, r == 0x153, r == 0x178, unicode.IsGraphic(r):')], EK),
+ ("Z2", [(S, '\t\tcase r >= 0xC0 && r <= 0xFF && r != 0xD7 && r != 0xF7, r == 0x152, r == 0x153, r == 0x178:\n', '')], "LoadSuiteCaseFormatExample"),
+ ("Z3", [(S, '`\\"ntuU`', '`\\"ntuU_NLP0 xeabvfr/`')], EK),
+ ("Z4", [(G, 'slices.ContainsFunc(c.Tags, func(t string) bool { return !tagToken.MatchString(t) }) ||', 'false ||')], EK),
+ ("Z5", [(S, '(n.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || !oneLine(n, src))', '!oneLine(n, src)')], EK),
+ ("Z6", [(S, '[-+]?\\.[0-9.]*(e[-+]?[0-9]+)?|=', '[-+]?\\.[0-9.]*|=')], EK),
+ ("Z7", [(S, ' || !oneLine(n, src)', '')], EK),
+```

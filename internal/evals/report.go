@@ -15,6 +15,8 @@ type Report struct {
 	Model                 string       `json:"model"`
 	Cases                 int          `json:"cases"`
 	Runs                  int          `json:"runs"`
+	InjectionRuns         int          `json:"injection_runs"`
+	EscalationRuns        int          `json:"escalation_runs"`
 	SuccessRate           float64      `json:"success_rate"`
 	CorrectEscalationRate float64      `json:"correct_escalation_rate"`
 	InjectionResistance   float64      `json:"injection_resistance"`
@@ -65,6 +67,7 @@ func Aggregate(s Suite, grades []Grade, outcomes []Outcome) (Report, error) {
 	}
 	return Report{
 		Loop: s.Loop, Cases: len(s.Cases), Runs: total,
+		InjectionRuns: injRuns, EscalationRuns: escRuns,
 		SuccessRate: ratio(pass, total), CorrectEscalationRate: ratio(escOK, escRuns),
 		InjectionResistance: ratio(injOK, injRuns),
 		AvgIterations:       iterations / float64(total), AvgTokens: tokens / float64(total),

@@ -117,8 +117,16 @@ aucun
   - **Critère 2 de `prompts/M0.md` couvert** (avec M0-T14) : 7 tests groupés PASS. 16 tests `TestAwaitApprovals`, 19 `TestRunLoop`, 2 `TestFake`, `-race` vert ; 25 mutations sur 25 (plus 27 sur 27 de M0-T14) ; 43 mutations exploratoires, 39 détectées, 4 équivalentes ou inatteignables ; `make verify-quick` rc=0.
   - Revues : `security-reviewer` **PASS** (conditions ci-dessous) ; `acceptance-verifier` **PASS** ; `make verify` bloqué au seul `govulncheck` (`vuln.go.dev` 403 ; le relecteur signale aussi un binaire govulncheck construit en go1.26 à reconstruire en go1.27).
   - Menaces : T56 (rejeu d'approbation), T57 (différentiel d'analyse JSON) ajoutées ; T18, T41 étendues.
+- 2026-09-26 : **M0-T22 `evals-core` terminée** (plan `docs/plans/M0-evals-core.md`, amendements V1 à V11, ancres des mutations en section 14) :
+  - `internal/evals/{suite,path,grade,report,baseline,select,doc}.go` : chargement des suites et cas YAML (`go.yaml.in/yaml/v3` v3.0.5, MIT et Apache 2.0) avec liste d'admission des caractères (ASCII imprimable, fins de ligne, lettres du français ; tout le reste par échappement visible), liste blanche des échappements, arbre YAML validé avant conversion (clés `!!str` exactes à toute profondeur, scalaires en forme JSON à aller-retour exact, nulls explicites seulement dans le contenu opaque, scalaires ambigus YAML 1.1 ou core exigés entre guillemets, directives et `!` refusés), noms de fichiers validés avant d'être cités, liens et fichiers non réguliers refusés, lectures bornées ; graders sur un sous-ensemble JSONPath ; agrégation par exécution ; comparaison à la baseline (injection sous 1 toujours régressive, bornes, exécutions d'injection et d'escalade comptées) ; `BaselinePath` sûr ; `SelectChanged` qui échoue fermé. `schema.DecodeStrict` borné ajouté à `internal/llm/schema`.
+  - Revues : **six revues sécurité**, cinq BLOCK successifs sur la même classe (texte relu différent de la donnée évaluée : repli de casse Unicode, clés YAML non chaîne, invisibles par catégorie puis par propriété, glyphes vides), deux changements d'approche consignés (V4 : validation de l'arbre avant conversion ; V10 : liste d'admission au lieu de listes de refus) ; sixième revue **PASS** ; `acceptance-verifier` **PASS** (8 critères, 40 mutations sur 40, 14 tests, `-race`) ; `make verify` bloqué au seul `govulncheck` (`vuln.go.dev` 403).
+  - Menaces : T58 à T67 ajoutées ou étendues.
+- 2026-09-27 : **M0-T19a `llm-harden` terminée** (plan `docs/plans/M0-demo-prep.md`, amendements V1 à V3 ; première des quatre tâches issues de l'amendement A3) :
+  - `internal/llm/schema` : formes fermées (une seule forme par sous-schéma, mots-clés admis par forme, noms en liste d'admission), `AdmittedText` (ASCII imprimable, saut de ligne, lettres du français) appliqué aux octets bruts des schémas (seuls `\"`, `\\`, `\n` admis ; `\\` suivi de `u`, `U`, `x` refusé) et au prompt système, `Texts` (clés, chaînes et paires `clé: valeur` décodées). `internal/llm/prompts` : `LoadFS` refuse liens et fichiers non réguliers, lecture bornée, descripteur ouvert revérifié. `internal/llm` : `ContainsSecret` sur les octets bruts et la forme décodée de chaque `InputSchema` et du schéma du prompt, description d'outil admise, copie profonde des outils vérifiés, taille recontrôlée après rédaction.
+  - Revues : `security-reviewer` BLOCK (secret caché derrière `\"` ou `\n`, le modèle lisant la forme décodée), corrigé par V2 et V3, seconde revue **PASS** ; `acceptance-verifier` **PASS** (8 critères, 69 mutations sur 74, 5 équivalentes, tests gelés inchangés) ; `make verify` bloqué au seul `govulncheck`.
+  - Menaces : T68, T69, T70 ajoutées ; T43, T44, T64 mises à jour.
 ## En cours
-M0-T22 `evals-core` : plan `docs/plans/M0-evals-core.md` rédigé (complet, 36 Ko, dernière passe de réduction interrompue), en phase free, aucun test ni code. **En pause** : limite hebdomadaire d'usage atteinte le 2026-09-25 (réinitialisation le 2026-09-29 à 14 h UTC) ; `test-author`, `security-reviewer` et `acceptance-verifier` sont indisponibles d'ici là, et le protocole exige leur indépendance. Reprise : relire le plan, `phase tests`, `test-author` (A1, A2 sur copie).
+M0-T19b `loops-harden` en cours (plan `docs/plans/M0-loops-harden.md`). Décisions de la section 10 du plan retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes dans le sens le plus strict, réversibles : (1) signal d'approbation admis seulement sous forme canonique, octets du hash et de la signature `[A-Za-z0-9+/=._:-@]` (plus strict que D2 de M0-T15, à confirmer avant M4 : une signature JSON ou PEM serait refusée) ; (2) charge trop grosse : `InvalidLoopSpec` avant toute activité ; (3) échec du proposeur sans `ProposeFailure` non repris (l'adaptateur LLM de T20 doit toujours le renvoyer après un appel facturé) ; (4) obligation (m) couverte par un critère statique en M0, test de rejeu d'historique en M1 ; (5) exemption du décodeur JSON retirée de `workflowcheck.config.yaml` en T19c ; (6) noms de spécification bornés (64 octets, jeu fermé). Amendement A3 retenu sur délégation de l'humain : M0-T19 découpée en T19a à T19d, M0 passe à 22 tâches (`docs/plans/M0-overview.md`, section 0 bis). A1 prime sur la fiche : pas de `ContinueAsNew` en M0. Décisions humaines ouvertes (section 13 du plan) : (1) relire A3 ; (3) liste d'admission ASCII et français pour les prompts ; (4) avant T20, câblage du vérificateur factice (étiquette de build avec ADR, binaire de développement distinct, ou vérificateur qui refuse tout) ; (5) avant T20, `-llm=anthropic` refusé en M0 sauf décision contraire ; (6) forme canonique du signal d'approbation en T19b, à confirmer avant M4.
 
 `/milestone M0` lancé et découpage validé par l'humain le 2026-09-23 (« validé, chiffrement en M1 ») : 19 tâches (M0-T01 à T15, T19, T20, T22, T23) et étapes humaines H0, D0, H1, H3, H4 dans `docs/plans/M0-overview.md`. Réponses par défaut retenues pour Q1 à Q5. M0-T16, T17, T18 et T21 (ADR 0001) deviennent les premières tâches de M1 (`prompts/M1.md`). Risque résiduel accepté : historique Temporal en clair en M0, sans données client.
 
@@ -135,10 +143,12 @@ Préalables humains (étape H0 du plan) :
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
 - ADR « intégration Git » (T25) à rédiger avant M4 : `security-reviewer` rendra BLOCK en M4 sans lui. Il doit trancher la contradiction entre l'écran E1 de `docs/04-INTERFACE.md` (application Git centrale) et l'invariant « le plan de contrôle ne détient pas d'identifiant d'écriture ».
-- Prochaine tâche : `/task` M0-T22 (noyau d'évaluation), puis T23 et T19 ; M0-T03 et T20 exigent un démon Docker, absent de la session cloud.
+- Prochaine tâche : `/task` M0-T23 (après application par l'humain des propositions 0001 et 0005), sinon T19 ; M0-T03 et T20 exigent un démon Docker, absent de la session cloud.
 - **Avant M0-T20 et avant tout adaptateur Bedrock ou Vertex, obligatoire** (conditions de la revue M0-T12) : liste fermée des modèles publiés sans snapshot daté et date exigée sinon, jetons `preview`, `beta`, `experimental` refusés (T51) ; délai global par appel ou `MaxRetries` 0 (T50) ; borne du corps de réponse (T49) ; validation de `request-id`, `id`, `model` (T52) ; `Transport` injecté refusé s'il a un proxy (T47) ; `tool_use` accepté seulement avec outils.
 - **Obligations issues de M0-T14** (plan `docs/plans/M0-runloop.md` 11.5 et seconde revue) : (a) tailles des findings et candidats bornées, avant T19 ; (b) annulation distinguée d'une panne, avant T15 et T20 ; (c) `WorkflowExecutionTimeout` au moins égal à `MaxWallTime + 3 x ActivityTimeout + 3 s` plus marge, testé, en T20 ; (d) T54 : `RunLoop` jamais enregistré comme workflow démarrable, spécifications constantes dans le code (`TestRunLoopNotRegistered`, `TestLoopSpecsAreConstants`), avant T19 et T20 ; (e) T16 : `workflow.GetVersion` pour les constantes et commandes de `spec.go`, en M1 ; (f) second signal de stagnation sur les seuls codes, en M1 ; (g) reporter dans le skill `loop-engineering` (`temporal-loop-skeleton.md`, `normalized-findings.md`) les écarts D10 à D12, V2 et l'encodage netstring de T13, en T19, modification de skill à signaler ici ; **(h) avant T19, obligatoire** : toute erreur du proposeur après un appel facturé est une `ApplicationError` de premier niveau portant `ProposeFailure`, jamais enveloppée, avec un test, ou bien `retryable` exige `ae.HasDetails()` (« pas de déclaration, pas de reprise ») ; (i) bas, avant T19 : tester délai, annulation et panique du proposeur (1 appel, `Failed`, `activity_failed`), exiger que la cause directe de l'`ActivityError` soit une `ApplicationError`, compacter le candidat avant `emptyCandidate` (test avec `converter.RawValue`), tester l'échec sans finding à l'itération 1, tracer un appel aux tokens invalides avant d'escalader.
 - **Obligations issues de M0-T15**, avant T19 et T20 : (j) décodage strict du signal d'approbation : clés en double ou de casse inexacte refusées en `malformed` (T57, constat moyen) ; (k) contrainte mécanique empêchant `internal/loops/fake` hors des racines de développement (build tag ou règle `archtest`, T41 étendue, constat moyen) ; (l) test d'architecture limitant `json.NewDecoder` à `approvals.go` ou refusant toute méthode `UnmarshalJSON` dans `internal/loops` (portée de la déclaration workflowcheck) ; (m) résidu D11 : annulation dans la même tâche que le dernier signal ou à l'échéance donne `signal_flood` ou `timed_out` au lieu d'une annulation, à documenter et traiter en T19 ; même contrôle `ctx.Err()` après un vérificateur réussi dans `RunLoop` ; (n) `IgnoredSignal.Approver` est déclaré, non authentifié : renommer ou afficher comme non vérifié (T18) ; (o) une attente d'approbation par workflow, ou purge documentée du canal de signaux, en T19 (T56) ; (p) T54 étendue : `AwaitApprovals` jamais enregistré, requête construite par le code (`TestAwaitApprovalsNotRegistered` en T19) ; (q) M4 : message signé liant tenant, identifiant de demande, échéance et nonce (T56), contrat `SignatureValid`.
+- **Obligations issues de M0-T22, avant T23** : (r) propositions 0001 et 0005 appliquées, « Require review from Code Owners » activé (T58, T63) ; (s) dans `contains` et `equals`, toute `\` refusée hors guillemets doubles (T65) ; (t) longueur de ligne bornée (160 runes) pour les evals et baselines, deux espaces consécutifs refusés dans `contains`/`equals` (T64) ; (u) vocabulaire fermé des étiquettes de cas dans `compileCase` (T66) ; (v) motifs `watch` à jeu de caractères fermé (T67) ; (w) baseline chargée avec les mêmes règles (liste d'admission, clés exactes, arbre validé) ; (x) `EVAL=changed` par `git diff --no-renames -z` (T61) ; (y) suites enracinées sur `os.Root.FS()` et comparaison `os.SameFile` entre `Lstat` et le fichier ouvert (TOCTOU) ; (z) cas toujours chargés par `LoadSuite`, jamais passés directement à `GradeOutcome` ; résidus consignés : `fs.ReadDir` lit tout avant la borne de 1000, `contains` réduit à un blanc, homoglyphes visibles dans la liste d'admission, typage visible des aiguilles (`contains: 443`).
+- **Obligations issues de M0-T19a, avant T20** : (aa) `Texts` rend aussi `nom: v` pour chaque chaîne de `const`, `enum` et le littéral de `pattern` sous une propriété (secret sans forme sous `api_key`), et `k: ` suivi de la valeur sans blancs initiaux (valeur commençant par un saut de ligne), avec tests et propriété étendue ; (ab) `escapeLike` refuse aussi `\\` suivi d'un chiffre octal, et un test couvre un premier chiffre hexadécimal majuscule (mutation Y4 survivante) ; (ac) `LoadFS` documenté comme n'acceptant qu'un FS sans liens (`embed.FS`, `os.Root`) ; (ad) T70 : l'adaptateur envoie les octets vérifiés ou revérifie la forme réencodée ; pour la refonte du rédacteur (T37, garde de `prompts/M1.md`) : paire `name: Authorization` / `value: ...`, secret coupé entre éléments d'`enum`, `password:` puis saut de ligne, `AKIA` coupé par un saut de ligne, `:AWS_SECRET_ACCESS_KEY=...`, JSON doublement encodé (T69).
 - Humain : appliquer la proposition 0004 (`docs/proposals/0004-post-edit-hors-depot.md`, après 0001 à 0003) : `post_edit_check.py` ignore les fichiers hors du dépôt au lieu de bloquer leur édition ; `git apply --check` vérifié, `test_hooks.sh` à lancer par l'humain.
 - Avant M0-T19 (premier prompt réel) : contrôle des secrets dans `InputSchema` et dans le schéma du prompt (T44), copie profonde des outils vérifiés .
 - Obligations restantes de T41 et T40 : M0-T11 refuse `PlatformFake` sauf option explicite de configuration, compare `Route.Model` et `Response.Model`, transmet exactement la route vérifiée (`TestServicePassesCheckedRoute`) et porte `TestOutOfSchemaRejected`, `TestNoRouteNoCall`, `TestRetentionZeroRejectsRetentionModel`, `TestUntrustedBlockRejectedWithTools`, `TestModelMismatchRejected` (critères 6 et 7 de M0) ; M0-T20 ne câble le faux que par `-dev`, avec un test de configuration de production sans faux.
@@ -295,3 +305,51 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-25 23:34 [harnais] phase : free -> tests
 
 - 2026-09-26 00:06 [harnais] phase : tests -> impl
+
+- 2026-09-26 00:47 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T22 amendement V2 (BLOCK de la revue sécurité : clés exactes, noms non fiables, liens, bornes de baseline)
+
+- 2026-09-26 00:47 [harnais] phase : impl -> tests
+
+- 2026-09-26 01:07 [harnais] phase : tests -> impl
+
+- 2026-09-26 01:25 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T22 amendement V4 (seconde revue BLOCK : clés YAML non chaîne, changement d'approche)
+
+- 2026-09-26 01:25 [harnais] phase : impl -> tests
+
+- 2026-09-26 01:57 [harnais] phase : tests -> impl
+
+- 2026-09-26 02:03 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T22 amendement V6 (troisième revue BLOCK : Unicode invisible, étiquette !, directives, nulls, scalaires ambigus)
+
+- 2026-09-26 02:03 [harnais] phase : impl -> tests
+
+- 2026-09-26 02:24 [harnais] phase : tests -> impl
+
+- 2026-09-26 11:58 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T22 amendement V8 (quatrième revue BLOCK : invisibles par propriété Unicode, null implicite)
+
+- 2026-09-26 11:58 [harnais] phase : impl -> tests
+
+- 2026-09-26 12:18 [harnais] phase : tests -> impl
+
+- 2026-09-26 12:39 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T22 amendement V10 (cinquième revue BLOCK : liste d'admission des caractères)
+
+- 2026-09-26 12:39 [harnais] phase : impl -> tests
+
+- 2026-09-26 13:18 [harnais] phase : tests -> impl
+
+- 2026-09-26 13:40 [harnais] PHASE FREE (discipline TDD suspendue) : tâche evals-core (M0-T22) terminée
+
+- 2026-09-26 13:40 [harnais] phase : impl -> free
+
+- 2026-09-26 18:46 [harnais] phase : free -> tests
+
+- 2026-09-26 19:25 [harnais] phase : tests -> impl
+
+- 2026-09-26 19:44 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T19a amendement V2 (revue BLOCK : secrets sur la forme décodée des schémas)
+
+- 2026-09-26 19:44 [harnais] phase : impl -> tests
+
+- 2026-09-26 23:41 [harnais] phase : tests -> impl
+
+- 2026-09-27 00:08 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-harden (M0-T19a) terminée
+
+- 2026-09-27 00:08 [harnais] phase : impl -> free

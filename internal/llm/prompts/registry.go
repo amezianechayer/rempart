@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"regexp"
 	"strconv"
@@ -49,18 +50,17 @@ func LoadFS(fsys fs.FS, id string) (Prompt, error) {
 	if fsys == nil {
 		return Prompt{}, ErrUnknownPrompt
 	}
-	var files [2][]byte
-	for i, name := range [2]string{"/system.txt", "/schema.json"} {
-		b, err := fs.ReadFile(fsys, id+name)
-		if errors.Is(err, fs.ErrNotExist) {
-			return Prompt{}, ErrUnknownPrompt
-		}
-		if err != nil {
-			return Prompt{}, fmt.Errorf("%w: unreadable file", ErrInvalidPrompt)
-		}
-		files[i] = b
+	if _, err := entry(fsys, id, true); err != nil {
+		return Prompt{}, err
 	}
-	system, raw := files[0], files[1]
+	system, err := readBounded(fsys, id+"/system.txt", MaxSystemBytes)
+	if err != nil {
+		return Prompt{}, err
+	}
+	raw, err := readBounded(fsys, id+"/schema.json", schema.MaxSchemaBytes)
+	if err != nil {
+		return Prompt{}, err
+	}
 	if reason := checkSystem(system); reason != "" {
 		return Prompt{}, fmt.Errorf("%w: %s", ErrInvalidPrompt, reason)
 	}
@@ -81,8 +81,55 @@ func checkSystem(b []byte) string {
 		return "system prompt is not valid UTF-8"
 	case bytes.ContainsRune(b, '\r'):
 		return "system prompt contains a carriage return"
+	case !schema.AdmittedText(string(b)):
+		return "system prompt contains a character outside the admission list"
 	}
 	return ""
+}
+
+// entry returns the fs.Lstat information of name, a directory if dir, a
+// regular file otherwise; a missing entry is ErrUnknownPrompt. A link is
+// never followed (T43).
+func entry(fsys fs.FS, name string, dir bool) (fs.FileInfo, error) {
+	fi, err := fs.Lstat(fsys, name)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, ErrUnknownPrompt
+	case err != nil:
+		return nil, fmt.Errorf("%w: unreadable entry", ErrInvalidPrompt)
+	case dir && !fi.IsDir(), !dir && !fi.Mode().IsRegular():
+		return nil, fmt.Errorf("%w: link or unexpected file type", ErrInvalidPrompt)
+	}
+	return fi, nil
+}
+
+// readBounded reads the regular file name: its declared size is checked
+// before opening, the type and size of the open file again, the bytes read
+// after, never more than limit + 1.
+func readBounded(fsys fs.FS, name string, limit int) ([]byte, error) {
+	fi, err := entry(fsys, name, false)
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() > int64(limit) {
+		return nil, fmt.Errorf("%w: file too large", ErrInvalidPrompt)
+	}
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: unreadable file", ErrInvalidPrompt)
+	}
+	if st, serr := f.Stat(); serr != nil || !st.Mode().IsRegular() || st.Size() > int64(limit) {
+		_ = f.Close() // the entry changed between Lstat and Open (V2)
+		return nil, fmt.Errorf("%w: file changed or too large", ErrInvalidPrompt)
+	}
+	b, rerr := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	if cerr := f.Close(); rerr != nil || cerr != nil {
+		return nil, fmt.Errorf("%w: unreadable file", ErrInvalidPrompt)
+	}
+	if len(b) > limit {
+		return nil, fmt.Errorf("%w: file too large", ErrInvalidPrompt)
+	}
+	return b, nil
 }
 
 func promptHash(id string, system, schemaRaw []byte) string {

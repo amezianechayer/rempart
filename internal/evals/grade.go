@@ -80,6 +80,7 @@ func compileCase(c Case) (inc, exc []check, err error) {
 	checks := len(e.MustInclude) + len(e.MustNotInclude)
 	_, jerr := decodeJSON(c.Input)
 	if !token(c.ID, 64, lower+"0123456789-") || !token(c.Loop, 32, loopSet) || jerr != nil || c.Runs < 1 || c.Runs > 10 ||
+		slices.ContainsFunc(c.Tags, func(t string) bool { return !tagToken.MatchString(t) }) ||
 		checks > 32 || (e.MaxIterations != nil && *e.MaxIterations < 1) || (e.MaxOpenQuestions != nil && *e.MaxOpenQuestions < 0) ||
 		(checks == 0 && e.SchemaValid == nil && e.Escalation == nil && e.Status == "" && e.MaxIterations == nil && e.MaxOpenQuestions == nil) {
 		return nil, nil, fmt.Errorf("%w: fields", ErrInvalidCase)
@@ -100,7 +101,7 @@ func compileChecks(list []PathCheck) ([]check, error) {
 		if err != nil {
 			return nil, err
 		}
-		if (pc.Contains != nil && pc.Equals != nil) || string(pc.Contains) == `""` {
+		if pc.Contains != nil && pc.Equals != nil {
 			return nil, errors.New("path check value")
 		}
 		raw, match := pc.Equals, equalJSON
@@ -110,8 +111,8 @@ func compileChecks(list []PathCheck) ([]check, error) {
 		ch := check{steps: steps, match: func(any) bool { return true }}
 		if raw != nil {
 			want, err := decodeJSON(raw)
-			if err != nil {
-				return nil, err
+			if err != nil || (pc.Contains != nil && want == "") {
+				return nil, errors.New("path check value")
 			}
 			ch.match = func(v any) bool { return match(v, want) }
 		}
@@ -121,9 +122,6 @@ func compileChecks(list []PathCheck) ([]check, error) {
 }
 
 func decodeJSON(data []byte) (any, error) {
-	if len(data) > schema.MaxOutputBytes {
-		return nil, errors.New("too large")
-	}
 	return schema.DecodeStrict(data)
 }
 

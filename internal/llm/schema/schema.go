@@ -49,6 +49,9 @@ func CompileSchema(raw json.RawMessage) (*Schema, error) {
 	if reason != "" {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidSchema, reason)
 	}
+	if !admittedRaw(raw) {
+		return nil, fmt.Errorf("%w: character outside the admission list", ErrSchemaNotStrict)
+	}
 	names, err := checkStrict(doc)
 	if err != nil {
 		return nil, err

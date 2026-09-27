@@ -27,6 +27,14 @@ Effets sur ce plan (ils priment sur le reste du document) :
 
 ---
 
+## 0 bis. Amendement A3 (2026-09-26, découpage de M0-T19)
+
+Proposé par `architect` (`docs/plans/M0-demo-prep.md`, section 2) et retenu par l'agent sur délégation explicite de l'humain (« continue sans t'arrêter, fais ce qu'il faut », 2026-09-26) ; réversible, à relire par l'humain. M0-T19 devient quatre tâches ordonnées, M0 passe à 22 tâches :
+- **M0-T19a `llm-harden`** : T43, T44, réserves basses de M0-T11 (plan `docs/plans/M0-demo-prep.md`).
+- **M0-T19b `loops-harden`** : obligations (a), (h), (i), (m) côté `RunLoop`, (j), (n).
+- **M0-T19c `loops-archtest`** : obligations (d), (p), (l), (k) par tests `go/ast`.
+- **M0-T19d `demo-workflow`** : fiche M0-T19 selon A1 (7 tests, `ContinueAsNew` reporté en M1, `Input` sans `Phase` ni `Loop`), plus (m) côté démo, (o), (g) ; faux fournisseur seulement.
+
 ## 1. Objectif
 
 Un squelette Go qui compile, se teste et s'exécute en CI, et qui fait tourner de bout en bout une boucle Temporal générique conforme au skill `loop-engineering` (proposer, vérifier, diagnostiquer, budget, stagnation, escalade, approbation), contre un faux LLM déterministe, **sans aucune logique métier**. Les cinq critères de `prompts/M0.md` sont prouvés par des commandes (section 8).
