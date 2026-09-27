@@ -422,3 +422,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-27 20:53 [harnais] PHASE FREE (discipline TDD suspendue) : tâche M0-T19d demo-workflow terminée
 
 - 2026-09-27 20:53 [harnais] phase : impl -> free
+
+- 2026-09-27 21:25 [harnais] phase : free -> tests
