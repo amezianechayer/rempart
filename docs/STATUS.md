@@ -353,3 +353,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-27 00:08 [harnais] PHASE FREE (discipline TDD suspendue) : tâche llm-harden (M0-T19a) terminée
 
 - 2026-09-27 00:08 [harnais] phase : impl -> free
+
+- 2026-09-27 00:58 [harnais] phase : free -> tests
+
+- 2026-09-27 09:46 [harnais] phase : tests -> impl

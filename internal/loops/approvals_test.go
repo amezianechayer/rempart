@@ -52,7 +52,7 @@ func onHash(h string, approved bool) loops.Approval {
 }
 
 func ign(approver string, r loops.IgnoredReason) loops.IgnoredSignal {
-	return loops.IgnoredSignal{Approver: approver, Reason: r}
+	return loops.IgnoredSignal{DeclaredApprover: approver, Reason: r}
 }
 
 // rawJSON is a json/plain payload holding exactly data.
@@ -462,5 +462,55 @@ func TestAwaitApprovalsLimitsFrozen(t *testing.T) {
 	}
 	if !slices.Equal(codes, want) {
 		t.Errorf("codes %v, want %v", codes, want)
+	}
+}
+
+func TestAwaitApprovalsCanonicalSignalOnly(t *testing.T) {
+	valid := signed("bob", true)
+	body, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indented, err := json.MarshalIndent(valid, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, sig, h := string(body), valid.Signature, plan()
+	var signals []any
+	for _, d := range []string{
+		strings.Replace(j, `"approver"`, `"Approver"`, 1),
+		strings.Replace(j, `"approver":"bob",`, `"approver":"bob","approver":"bob",`, 1),
+		strings.Replace(j, `{"approved":true,`, `{"approved":false,"approved":true,`, 1),
+		strings.TrimSuffix(j, "}") + `,"signature":"` + sig + `"}`,
+		`{"approved":true,"approver":"bob","plan_hash":"` + h + `","signature":"` + sig + `"}`,
+		`{"plan_hash":"` + h + `","approved":true,"approver":"bob","signature":"` + sig + `"}`,
+		strings.Replace(j, `"bob"`, `"\u0062ob"`, 1),
+		strings.Replace(j, `"plan_hash":"a`, `"plan_hash":"\u0061`, 1),
+		strings.Replace(j, `":`, `": `, 1),
+		string(indented), " " + j, "\ufeff" + j,
+		strings.TrimPrefix(j, `{"approved":true,"plan_hash":"`), strings.TrimSuffix(j, `"}`),
+		j + "\v", j + "\f", j + "\x00", j + "\u00a0", j + "\u0085",
+	} {
+		signals = append(signals, rawJSON(t, d))
+	}
+	n, v := len(signals), newVerifier()
+	out := await(t, request(1, false), time.Hour, v, nil, append(signals, rawJSON(t, j+" \t\r\n"))...)
+	wantOutcome(t, out, loops.OutcomeApproved, []string{"bob"}, slices.Repeat([]loops.IgnoredSignal{ign("", loops.IgnoredMalformed)}, n)...)
+	wantVerified(t, v, "bob")
+	t.Run("admitted value bytes, escaped ones malformed", func(t *testing.T) {
+		b64 := signed("bob", true)
+		b64.Signature = "Zm9v+/8=:x._-@AZ09"
+		spaced, accented := signed("bob", true), signed("bob", true)
+		spaced.Signature, accented.Signature = "Zm9v Zm9v", "Zm9v\u00e9"
+		m := ign("", loops.IgnoredMalformed)
+		out := await(t, request(1, false), time.Hour, newVerifier(), nil, b64, onHash("ab<", true), spaced, accented, signed("bob", true))
+		wantOutcome(t, out, loops.OutcomeApproved, []string{"bob"}, ign("bob", loops.IgnoredInvalidSignature), m, m, m)
+	})
+}
+
+func TestAwaitApprovalsIgnoredSignalDeclared(t *testing.T) {
+	b, err := json.Marshal(ign("bob", loops.IgnoredWrongHash))
+	if err != nil || string(b) != `{"declared_approver":"bob","reason":"wrong_hash"}` {
+		t.Errorf("%s, %v", b, err)
 	}
 }

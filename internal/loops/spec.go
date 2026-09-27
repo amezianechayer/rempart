@@ -2,6 +2,7 @@ package loops
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -32,6 +33,19 @@ const (
 	MaxActivityAttempts  = 3
 	MaxEscalateAfter     = 10
 )
+
+// Size bounds (obligation a), upper bounds of the JSON encoding (wireLen): a
+// LoopResult then encodes to less than 256 KiB, the M1 codec limit.
+const (
+	MaxPayloadBytes   = 64 << 10
+	MaxCandidateBytes = 64 << 10
+	MaxFindings       = 100
+	MaxFindingBytes   = 1 << 10
+	MaxNameBytes      = 64
+)
+
+// nameBytes admits the names of a LoopSpec; JSON never escapes them.
+const nameBytes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
 
 // Budget bounds one run; every field is required.
 type Budget struct {
@@ -64,11 +78,11 @@ func (s LoopSpec) Validate() error {
 	s = s.withDefaults()
 	b := s.Budget
 	switch {
-	case s.ID == "" || s.ProposeActivity == "" || s.VerifyActivity == "":
-		return invalidSpec("missing name")
+	case !validName(s.ID) || !validName(s.ProposeActivity) || !validName(s.VerifyActivity):
+		return invalidSpec("names")
 	case s.ProposeActivity == s.VerifyActivity:
 		return invalidSpec("the verifier must not be the proposer")
-	case len(s.Strategies) == 0 || len(s.Strategies) > MaxStrategies || slices.Contains(s.Strategies, ""):
+	case len(s.Strategies) == 0 || len(s.Strategies) > MaxStrategies || slices.ContainsFunc(s.Strategies, invalidName):
 		return invalidSpec("strategies")
 	case b.MaxIterations < 1 || b.MaxIterations > MaxIterationsLimit:
 		return invalidSpec("iteration budget")
@@ -83,6 +97,13 @@ func (s LoopSpec) Validate() error {
 	}
 	return nil
 }
+
+// validName: 1 to MaxNameBytes bytes of nameBytes.
+func validName(s string) bool {
+	return s != "" && len(s) <= MaxNameBytes && strings.Trim(s, nameBytes) == ""
+}
+
+func invalidName(s string) bool { return !validName(s) }
 
 func (s LoopSpec) withDefaults() LoopSpec {
 	if s.SwitchAfter == 0 {

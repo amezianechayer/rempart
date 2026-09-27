@@ -3,9 +3,14 @@ package loops
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -27,8 +32,9 @@ type ProposeResponse struct {
 	Tokens    int             `json:"tokens"`
 }
 
-// ProposeFailure is the detail of a proposer ApplicationError that spent
-// tokens; untrusted, bounded like ProposeResponse.Tokens (T10, T45).
+// ProposeFailure is the only detail of a proposer ApplicationError that spent
+// tokens. RunLoop admits it only as the exact bytes {"tokens":N} and retries
+// only such a declared failure (threats T10, T45, obligation h).
 type ProposeFailure struct {
 	Tokens int `json:"tokens"`
 }
@@ -93,11 +99,15 @@ type LoopResult struct {
 }
 
 // RunLoop proposes and verifies until the verifier accepts a candidate, or a
-// budget, a stagnation or a failed activity escalates. An escalation is a
-// result, not an error: only an invalid spec or a cancellation ends in error.
+// budget, a stagnation, a failed activity or an invalid response escalates. An
+// escalation is a result, not an error: only an invalid spec or payload or a
+// cancellation ends in error.
 func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (LoopResult, error) {
 	if err := spec.Validate(); err != nil {
 		return LoopResult{}, err
+	}
+	if !admittedJSON(payload, MaxPayloadBytes) { // obligation a: bounded payload
+		return LoopResult{}, invalidSpec("payload")
 	}
 	spec = spec.withDefaults()
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
@@ -143,25 +153,31 @@ func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (Loop
 		if ctx.Err() != nil { // cancellation is no proposer failure (obligation b)
 			return LoopResult{}, ctx.Err()
 		}
+		retry := false
 		if perr != nil {
-			prop.Tokens = failedTokens(perr)
+			prop.Tokens, retry = failedCall(perr)
 		}
+		res.Iterations = it
+		res.Trace = append(res.Trace, IterationTrace{Iteration: it, Strategy: req.Strategy, Failed: perr != nil})
+		tr := &res.Trace[len(res.Trace)-1]
 		if prop.Tokens < 0 || prop.Tokens > MaxTokensLimit {
-			return escalate(ReasonInvalidResponse)
+			return escalate(ReasonInvalidResponse) // traced, tokens not counted (obligation i)
 		}
-		res.Iterations, res.Tokens = it, res.Tokens+prop.Tokens
-		res.Trace = append(res.Trace, IterationTrace{Iteration: it, Strategy: req.Strategy, Failed: perr != nil, Tokens: prop.Tokens})
+		tr.Tokens, res.Tokens = prop.Tokens, res.Tokens+prop.Tokens
 		if res.Tokens > spec.Budget.MaxTokens {
 			return escalate(ReasonBudgetTokens)
 		}
 		if perr != nil {
 			failures++
-			if !retryable(perr) || failures >= MaxActivityAttempts {
+			if !retry || failures >= MaxActivityAttempts {
 				return escalate(ReasonActivityFailed)
 			}
 			continue // same request; time checked first
 		}
 		failures = 0
+		if !admittedJSON(prop.Candidate, MaxCandidateBytes) { // obligation a: bounded candidate
+			return escalate(ReasonInvalidResponse)
+		}
 		if emptyCandidate(prop.Candidate) { // T53: empty desired state
 			return escalate(ReasonInvalidResponse)
 		}
@@ -170,14 +186,17 @@ func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (Loop
 		}
 		var vr VerifyResult
 		vreq := VerifyRequest{Payload: payload, Candidate: prop.Candidate, Iteration: it}
-		if err := workflow.ExecuteActivity(ctx, spec.VerifyActivity, vreq).Get(ctx, &vr); err != nil {
-			if ctx.Err() != nil { // cancellation is no verifier failure (obligation b)
-				return LoopResult{}, ctx.Err()
-			}
+		verr := workflow.ExecuteActivity(ctx, spec.VerifyActivity, vreq).Get(ctx, &vr)
+		if ctx.Err() != nil { // cancellation wins over any verifier result (obligations b, m)
+			return LoopResult{}, ctx.Err()
+		}
+		if verr != nil {
 			return escalate(ReasonActivityFailed) // Temporal retries only
 		}
+		if !findingsInBounds(vr.Findings) { // obligation a: bounded findings
+			return escalate(ReasonInvalidResponse)
+		}
 		fp, score := domain.Fingerprint(vr.Findings), domain.Score(vr.Findings)
-		tr := &res.Trace[len(res.Trace)-1]
 		tr.Verified, tr.Fingerprint, tr.Score, tr.Findings = true, fp, score, len(vr.Findings)
 		if vr.OK {
 			if blocking(vr.Findings) {
@@ -219,23 +238,95 @@ func blocking(f []domain.Finding) bool {
 	})
 }
 
-// failedTokens reads the ProposeFailure detail: 0 if absent, -1 if undecodable.
-func failedTokens(err error) int {
-	var ae *temporal.ApplicationError
-	var f ProposeFailure
-	if errors.As(err, &ae) && ae.HasDetails() && ae.Details(&f) != nil {
-		return -1
+const jsonBlanks = " \t\n\r"
+
+// failedCall reads a failed proposer call from the direct cause of the
+// ActivityError only (obligation h): no ProposeFailure, 0 tokens and no retry.
+func failedCall(err error) (tokens int, retry bool) {
+	ae := directApplicationError(err)
+	if ae == nil || !ae.HasDetails() {
+		return 0, false
 	}
-	return f.Tokens
+	tokens, ok := failureTokens(ae)
+	if !ok {
+		return -1, false
+	}
+	return tokens, !ae.NonRetryable() && !slices.Contains(NonRetryableErrorTypes(), ae.Type())
 }
 
-// retryable reports a retryable application error (no timeout, cancellation or panic).
-func retryable(err error) bool {
+// directApplicationError returns the cause of err if err is exactly an
+// ActivityError and the cause exactly an ApplicationError (errors.As stops there).
+func directApplicationError(err error) *temporal.ApplicationError {
+	if reflect.TypeOf(err) != reflect.TypeFor[*temporal.ActivityError]() {
+		return nil
+	}
+	cause := errors.Unwrap(err)
 	var ae *temporal.ApplicationError
-	return errors.As(err, &ae) && !ae.NonRetryable() && !slices.Contains(NonRetryableErrorTypes(), ae.Type())
+	if reflect.TypeOf(cause) != reflect.TypeFor[*temporal.ApplicationError]() || !errors.As(cause, &ae) {
+		return nil
+	}
+	return ae
 }
 
-// emptyCandidate reports a candidate without content (encoding/json compacted it).
+// failureTokens admits exactly one json/plain detail whose bytes are
+// {"tokens":N}, N in canonical decimal form; RunLoop bounds N.
+func failureTokens(ae *temporal.ApplicationError) (int, bool) {
+	var first, second converter.RawValue
+	if ae.Details(&first, &second) != nil || second.Payload() != nil {
+		return 0, false
+	}
+	p := first.Payload()
+	if string(p.GetMetadata()[converter.MetadataEncoding]) != converter.MetadataEncodingJSON {
+		return 0, false
+	}
+	digits, ok1 := strings.CutPrefix(string(p.GetData()), `{"tokens":`)
+	digits, ok2 := strings.CutSuffix(digits, "}")
+	n, err := strconv.Atoi(digits)
+	if !ok1 || !ok2 || err != nil || strconv.Itoa(n) != digits {
+		return 0, false
+	}
+	return n, true
+}
+
+// admittedJSON reports raw JSON of valid UTF-8 whose encoding stays within limit.
+func admittedJSON(raw json.RawMessage, limit int) bool {
+	return utf8.Valid(raw) && wireLen(raw) <= limit
+}
+
+// findingsInBounds admits at most MaxFindings findings whose string fields
+// encode to at most MaxFindingBytes each (obligation a).
+func findingsInBounds(f []domain.Finding) bool {
+	return len(f) <= MaxFindings && !slices.ContainsFunc(f, func(x domain.Finding) bool {
+		n := wireLen(x.Code) + wireLen(x.Source) + wireLen(x.Severity) + wireLen(x.Resource) + wireLen(x.File) + wireLen(x.Message)
+		return n > MaxFindingBytes
+	})
+}
+
+// wireLen bounds the encoding/json length of s, valid UTF-8, HTML escaped: 6
+// for a control byte, <, > and &; 2 for ", \ and multi-byte rune bytes; else 1.
+func wireLen[T ~string | ~[]byte](s T) int {
+	n := 0
+	for i := range len(s) {
+		switch b := s[i]; {
+		case b < 0x20 || b == '<' || b == '>' || b == '&':
+			n += 6
+		case b == '"' || b == '\\' || b >= utf8.RuneSelf:
+			n += 2
+		default:
+			n++
+		}
+	}
+	return n
+}
+
+// emptyCandidate reports a candidate without content once every JSON blank
+// is removed; a string of blanks is empty too (fail safe, obligation i).
 func emptyCandidate(c json.RawMessage) bool {
-	return slices.Contains([]string{"", "null", `""`, "{}", "[]"}, string(c))
+	compact := strings.Map(func(r rune) rune {
+		if strings.ContainsRune(jsonBlanks, r) {
+			return -1
+		}
+		return r
+	}, string(c))
+	return slices.Contains([]string{"", "null", `""`, "{}", "[]"}, compact)
 }
