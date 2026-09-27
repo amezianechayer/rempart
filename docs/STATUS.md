@@ -403,3 +403,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-27 20:16 [harnais] phase : free -> tests
 
 - 2026-09-27 20:21 [harnais] phase : tests -> impl
+
+- 2026-09-27 20:32 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T19d etape B: tests demo
+
+- 2026-09-27 20:32 [harnais] phase : impl -> tests
