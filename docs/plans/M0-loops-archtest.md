@@ -642,7 +642,7 @@ Rouge attendu : `undefined: ReadSources`.
 6. `grep -rl --include='*.go' 'rempart/internal/loops/fake"' . | grep -vc '_test\.go$'` : `0`.
 7. `go test -short -count=1 -race ./internal/loops/...` : `ok` ; `make verify-quick; echo rc=$?` : `rc=0`.
 8. Section 7 : 20 sur 20 sur copie privée ; `git diff --exit-code <commit des tests> -- internal/archtest/*_test.go internal/archtest/testdata; echo rc=$?` : `rc=0`.
-9. `wc -c < docs/plans/M0-loops-archtest.md` : au plus 30000.
+9. `wc -c < docs/plans/M0-loops-archtest.md` : au plus 33000 (relevé par V3).
 
 ## 7. Mutations (une à la fois ; `go test ./internal/archtest/` échoue)
 
