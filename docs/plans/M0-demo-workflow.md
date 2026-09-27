@@ -4,7 +4,8 @@
 
 ## 0. Amendements
 
-BASE : `5015353` (HEAD au lancement de `/task`, 2026-09-27). Décisions ouvertes 1 à 8 de la section 11 retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes réversibles. Aucun amendement.
+BASE : `5015353` (HEAD au lancement de `/task`, 2026-09-27). Décisions ouvertes 1 à 8 de la section 11 retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes réversibles.
+- V1 (2026-09-27, `test-author`, copie à `6a13a9d`) : (1) `admittedHandler` : `admitted := pkg == workflowPkg && name == "Context" || pkg == converterPkg && name == "RawValue"` puis `return !ok || !admitted` (staticcheck QF1001) ; (2) le bloc de `walk` s'insère au premier `case *ast.SelectorExpr:` suivi de `switch {` puis `case !ok:` (l'ancre existe aussi dans `mentions`) ; (3) test ajouté `TestMakefileGoworkOff` (D11), hors décompte du critère 1 : 4 tests rouges en phase tests ; (4) copie par `git -c tar.umask=022 archive` (sinon faux rouge du mode 755, obligation (as)) ; (5) point 5 de la section 10 levé : aucun faux positif sur le dépôt ; (6) critère 13 relevé à 31000.
 
 ## 1. Périmètre
 
@@ -405,7 +406,7 @@ Rouge : paquet `internal/loops/demo` absent.
 10. `git diff --exit-code BASE -- go.mod go.sum; echo rc=$?` : `rc=0` ; `git diff --exit-code T19D -- 'internal/**/*_test.go'; echo rc=$?` : `rc=0`.
 11. Section 8 sur copie privée (`mktemp -d`, SHA consigné, T72) : toutes détectées sauf l'équivalente déclarée.
 12. `make verify-quick; echo rc=$?` et `make verify; echo rc=$?` : `rc=0`.
-13. `wc -c < docs/plans/M0-demo-workflow.md` : au plus `30000`.
+13. `wc -c < docs/plans/M0-demo-workflow.md` : au plus `31000` (V1).
 
 ## 8. Mutations (une à la fois ; le test cité échoue)
 

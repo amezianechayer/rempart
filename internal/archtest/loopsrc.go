@@ -42,6 +42,8 @@ func ReadSources(fsys fs.FS) (map[string]string, error) {
 			return fs.SkipDir
 		case d.Type()&fs.ModeSymlink != 0:
 			return fmt.Errorf("archtest: symbolic link %s: go build follows it, the rules do not (T74)", p)
+		case !d.IsDir() && moduleFile(p): // (ai)
+			return fmt.Errorf("archtest: %s: nested module, workspace or vendor directory (T74)", p)
 		case d.IsDir() || path.Ext(p) != ".go" || strings.HasSuffix(p, "_test.go") || ignoredDir(p):
 			return nil
 		}
@@ -50,6 +52,25 @@ func ReadSources(fsys fs.FS) (map[string]string, error) {
 		return err
 	})
 	return srcs, err
+}
+
+func moduleFile(p string) bool {
+	switch path.Base(p) {
+	case "go.mod":
+		return p != "go.mod"
+	case "go.work", "go.work.sum":
+		return true
+	case "modules.txt":
+		return path.Base(path.Dir(p)) == "vendor"
+	}
+	return false
+}
+
+// decodingNames are admitted in workflow code only as the Fun of a call (aj).
+var decodingNames = []string{
+	"Receive", "ReceiveWithTimeout", "ReceiveAsync", "ReceiveAsyncWithMoreFlag", "Get", "Details",
+	"LastHeartbeatDetails", "GetLastCompletionResult", "SetUpdateHandler", "SetUpdateHandlerWithOptions",
+	"SetQueryHandler", "SetQueryHandlerWithOptions",
 }
 
 func ignoredDir(p string) bool {
@@ -98,6 +119,8 @@ type srcChecker struct {
 	module, loops string
 	kind          map[string]string // "pkg.name" -> const, var, type, func, or dup (build variants)
 	funcs         map[string]funcRef
+	methods       []funcRef
+	specMethods   map[string]bool
 	imps          map[*ast.File]map[string]string
 	wfPkg         map[string]bool // packages with a file importing sdk/workflow
 	types         []typeRef       // type declarations of the module
@@ -120,6 +143,12 @@ func CheckLoopSources(module string, files []SourceFile) []SourceViolation {
 			if k := t.file.Pkg + "." + t.spec.Name.Name; !c.specTypes[k] && c.mentions(t.file, t.spec.Type) {
 				c.specTypes[k], grown = true, true
 			}
+		}
+	}
+	c.specMethods = map[string]bool{} // (ak)
+	for _, m := range c.methods {
+		if c.takesSpec(m.file, m.decl.Type) {
+			c.specMethods[m.file.Pkg+"."+m.decl.Name.Name] = true
 		}
 	}
 	for i := range files {
@@ -162,6 +191,8 @@ func (c *srcChecker) index(sf *SourceFile) {
 			if d.Recv == nil {
 				declare(d.Name.Name, "func")
 				c.funcs[sf.Pkg+"."+d.Name.Name] = funcRef{d, sf}
+			} else {
+				c.methods = append(c.methods, funcRef{d, sf})
 			}
 		case *ast.GenDecl:
 			for _, s := range d.Specs {
@@ -212,6 +243,16 @@ func (c *srcChecker) file(sf *SourceFile) {
 				}
 			}
 		case *ast.SelectorExpr:
+			call, isCall := parent.(*ast.CallExpr)
+			called := isCall && call.Fun == n
+			switch {
+			case wf && !called && slices.Contains(decodingNames, n.Sel.Name):
+				c.add(sf, n, "loops-raw-decoding-target", n.Sel.Name+" used as a value, not called")
+			case wf && n.Sel.Name == "Validator":
+				c.add(sf, n, "loops-raw-decoding-target", "Validator set outside a composite literal")
+			case !called && under(sf.Pkg, c.loops) && c.specMethods[sf.Pkg+"."+n.Sel.Name]:
+				c.add(sf, n, "loops-no-spec-entrypoint", n.Sel.Name+" takes a LoopSpec or an ApprovalRequest and is used as a value")
+			}
 			pkg, name, ok := c.resolve(sf, nil, n)
 			switch {
 			case !ok:
@@ -244,6 +285,14 @@ func (c *srcChecker) file(sf *SourceFile) {
 		case *ast.CallExpr:
 			if wf {
 				c.decodeTargets(sf, n, stack)
+			}
+		case *ast.KeyValueExpr:
+			if k, isID := n.Key.(*ast.Ident); wf && isID && k.Name == "Validator" && !c.admittedHandler(sf, declNames(stack[1]), n.Value) {
+				c.add(sf, n, "loops-raw-decoding-target", "Validator handler takes a parameter other than workflow.Context or converter.RawValue")
+			}
+		case *ast.FuncLit:
+			if c.takesSpec(sf, n.Type) {
+				c.add(sf, n, "loops-no-spec-entrypoint", "function literal takes a LoopSpec or an ApprovalRequest")
 			}
 		}
 	})
@@ -289,12 +338,7 @@ func (c *srcChecker) handlers(sf *SourceFile, call *ast.CallExpr, locals map[str
 		})
 	}
 	for _, f := range fns {
-		fl, ok := f.(*ast.FuncLit)
-		if !ok || slices.ContainsFunc(fl.Type.Params.List, func(p *ast.Field) bool {
-			pkg, name, ok := c.resolve(sf, locals, p.Type)
-			admitted := pkg == workflowPkg && name == "Context" || pkg == converterPkg && name == "RawValue"
-			return !ok || !admitted
-		}) {
+		if !c.admittedHandler(sf, locals, f) {
 			c.add(sf, call, "loops-raw-decoding-target", m+" handler takes a parameter other than workflow.Context or converter.RawValue")
 		}
 	}
@@ -652,5 +696,14 @@ func walk(root ast.Node, f func(n ast.Node, stack []ast.Node)) {
 		f(n, stack)
 		stack = append(stack, n)
 		return true
+	})
+}
+
+func (c *srcChecker) admittedHandler(sf *SourceFile, locals map[string]bool, f ast.Expr) bool {
+	fl, ok := f.(*ast.FuncLit)
+	return ok && !slices.ContainsFunc(fl.Type.Params.List, func(p *ast.Field) bool {
+		pkg, name, ok := c.resolve(sf, locals, p.Type)
+		admitted := pkg == workflowPkg && name == "Context" || pkg == converterPkg && name == "RawValue"
+		return !ok || !admitted
 	})
 }
