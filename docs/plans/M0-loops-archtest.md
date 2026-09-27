@@ -6,6 +6,8 @@
 
 BASE `7873925`. Aucun.
 
+- V1 (2026-09-27, `test-author`, étape A2) : deux contournements réels du code de référence corrigés : (1) `ReadSources` ignorait tout dossier `bin` à toute profondeur, alors que Go compile ces paquets (un fichier `//go:build dev` sous `cmd/zzdev/bin/` importait le faux sans être vu) : seul le `bin` racine est ignoré ; (2) décision « code de workflow » prise par fichier : un fichier voisin d'un paquet de workflow pouvait appeler `converter...FromPayload` sans être vu par la règle ni par workflowcheck : décision par paquet (`wfPkg`). Tests ajoutés sans changer les décomptes du critère 1 : `TestSourceRulesHardening` (imports yaml, toml, gob, xml ; `converter` dans un fichier voisin ; `GobDecode` ; nom de paquet et `true` masqués) et `TestReadSourcesNestedBin`. Mutation 15 reformulée (retrait de `under(sf.Pkg, c.loops) && c.wfPkg[sf.Pkg]`). Fixtures de R5 modifiées (le faux de boucle interdit à tout importeur non test). T73 complétée : Go importe explicitement `.x/` et `testdata/`, pas seulement `_x/`.
+
 ## 1. Objet
 
 Rendre mécaniques (d), (p) (T54), (l), (k) (T41) par `go/ast` et `go/parser` seuls, `go.mod` inchangé ; retirer `workflowcheck.config.yaml`. Hors : `internal/loops`, T19d, T20.

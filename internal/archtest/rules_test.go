@@ -449,7 +449,7 @@ func TestCheck(t *testing.T) {
 func defaultRuleNames() []string {
 	return []string{
 		"domain-pure", "adapters-edge", "sdk-confine-anthropic", "sdk-confine-temporal",
-		"sdk-confine-sql", "loops-agnostic", "fakes-wired-in-cmd",
+		"sdk-confine-sql", "loops-agnostic", "fakes-wired-in-cmd", "loops-fake-tests-only",
 	}
 }
 
@@ -468,7 +468,7 @@ func TestDefaultRules(t *testing.T) {
 	}
 
 	t.Run("names_and_kinds", func(t *testing.T) {
-		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine}
+		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine}
 		names := defaultRuleNames()
 		if len(rules) != len(names) {
 			t.Fatalf("DefaultRules returned %d rules, want %d (%q)", len(rules), len(names), names)
@@ -533,6 +533,14 @@ func TestDefaultRules(t *testing.T) {
 					t.Errorf("loops-agnostic: allowed target %q lets internal/loops import %s", p, forbidden)
 				}
 			}
+		}
+		// Obligation (k) of M0-T19c: the keyless approval verifier has no
+		// non-test importer at all, cmd included (threat T41).
+		fake := byName(t, "loops-fake-tests-only")
+		if fake.Kind != Confine || len(fake.AllowedFrom) != 0 ||
+			!slices.Equal(fake.Targets, []string{m + "/internal/loops/fake/..."}) {
+			t.Errorf("loops-fake-tests-only: kind %d, Targets %q, AllowedFrom %q; want Confine on %s with no allowed importer",
+				fake.Kind, fake.Targets, fake.AllowedFrom, m+"/internal/loops/fake/...")
 		}
 	})
 
@@ -643,8 +651,14 @@ func TestRuleDetectsViolation(t *testing.T) {
 			v("loops-agnostic", m+"/internal/loops/domain", m+"/internal/llm/domain"),
 		}},
 		{"fakes-wired-in-cmd", []Violation{
+			// M0-T19c: no non-test importer of internal/loops/fake (rule
+			// loops-fake-tests-only, obligation (k), threat T41).
+			v("fakes-wired-in-cmd", m+"/internal/graph", m+"/internal/graph/fake"),
 			v("fakes-wired-in-cmd", m+"/internal/llm", m+"/internal/llm/fake"),
-			v("fakes-wired-in-cmd", m+"/internal/loops/demo", m+"/internal/loops/fake"),
+		}},
+		{"loops-fake-tests-only", []Violation{
+			v("loops-fake-tests-only", m+"/cmd/rempart-evals", m+"/internal/loops/fake"),
+			v("loops-fake-tests-only", m+"/cmd/rempart-worker", m+"/internal/loops/fake"),
 		}},
 	}
 	if len(cases) != len(defaultRuleNames()) {
