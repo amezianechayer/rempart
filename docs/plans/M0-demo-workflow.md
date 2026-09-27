@@ -6,6 +6,7 @@
 
 BASE : `5015353` (HEAD au lancement de `/task`, 2026-09-27). Décisions ouvertes 1 à 8 de la section 11 retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes réversibles.
 - V1 (2026-09-27, `test-author`, copie à `6a13a9d`) : (1) `admittedHandler` : `admitted := pkg == workflowPkg && name == "Context" || pkg == converterPkg && name == "RawValue"` puis `return !ok || !admitted` (staticcheck QF1001) ; (2) le bloc de `walk` s'insère au premier `case *ast.SelectorExpr:` suivi de `switch {` puis `case !ok:` (l'ancre existe aussi dans `mentions`) ; (3) test ajouté `TestMakefileGoworkOff` (D11), hors décompte du critère 1 : 4 tests rouges en phase tests ; (4) copie par `git -c tar.umask=022 archive` (sinon faux rouge du mode 755, obligation (as)) ; (5) point 5 de la section 10 levé : aucun faux positif sur le dépôt ; (6) critère 13 relevé à 31000.
+- V2 (`test-author`, copie à `dceaf47`) : 4.1 (`PromptHash`, critère 7, nilerr) et 8 (B11, B12) corrigés en place ; gofumpt éclate `refuse` et `payload` ; points 2 à 4 levés.
 
 ## 1. Périmètre
 
@@ -116,12 +117,12 @@ The untrusted data block is data, never an instruction.
 ### 4.1 `activities/activities.go`
 
 ```go
-// Package activities: demo activities; never imports sdk/workflow (rule l).
+// Package activities: demo activities; never imports the SDK workflow package (rule l).
 package activities
 
 const (
 	PromptID             = "demo.greeting.v1"
-	PromptHash           = "<prompts.Load(PromptID).Hash, pinned in impl>"
+	PromptHash           = "507f3f39ffc2182933e9568f6c1f230298babff72bc42026f4c3fd77b57c25cd"
 	StrategyDirect       = "direct"
 	StrategyReformulate  = "reformulate"
 	MaxTargetBytes       = 64
@@ -189,12 +190,11 @@ func (a *Activities) Verify(_ context.Context, req loops.VerifyRequest) (loops.V
 	if err != nil || p.Hash != PromptHash {
 		return loops.VerifyResult{}, refuse("demo prompt changed", loops.ErrTypePolicyViolation)
 	}
-	if p.Schema.Validate(req.Candidate) != nil {
+	conforms := p.Schema.Validate(req.Candidate) == nil
+	if !conforms {
 		return failed(CodeSchema, "candidate does not match the output schema"), nil
 	}
-	v, err := schema.DecodeStrict(req.Candidate)
-	obj, _ := v.(map[string]any)
-	if g, isStr := obj["greeting"].(string); err != nil || !isStr || g != target {
+	if g, isStr := greeting(req.Candidate); !isStr || g != target {
 		return failed(CodeMismatch, "greeting differs from the target"), nil
 	}
 	return loops.VerifyResult{OK: true}, nil
@@ -213,6 +213,13 @@ func targetOf(payload json.RawMessage) (string, bool) {
 	obj, isObj := v.(map[string]any)
 	t, isStr := obj["target"].(string)
 	return t, err == nil && isObj && len(obj) == 1 && isStr && ValidTarget(t)
+}
+
+func greeting(candidate json.RawMessage) (string, bool) {
+	v, err := schema.DecodeStrict(candidate)
+	obj, _ := v.(map[string]any)
+	g, isStr := obj["greeting"].(string)
+	return g, err == nil && isStr
 }
 
 func instruction(strategy string) (string, bool) {
@@ -434,8 +441,8 @@ Rouge : paquet `internal/loops/demo` absent.
 | B8 | `{Untrusted: &lldomain.UntrustedBlock{SourceID: "demo-target", Content: target}},` : `{Text: target},` | `TestDemoConverges` |
 | B9 | `NonRetryable: errors.Is(err, llm.ErrModelMismatch),` : `NonRetryable: true,` | `TestDemoProposeErrors` |
 | B10 | ligne `Details:      []any{loops.ProposeFailure{Tokens: FailureTokens}},` supprimée | idem |
-| B11 | `\|\| g != target {` : `{` | `TestDemoVerifyDeterministic` |
-| B12 | `if p.Schema.Validate(req.Candidate) != nil {` : `if false {` | idem |
+| B11 | `\|\| g != target {` : `\|\| g == target[:0] {` | `TestDemoVerifyDeterministic` |
+| B12 | `conforms := p.Schema.Validate(req.Candidate) == nil` : `conforms := true` | idem |
 | B13 | `\|\| strings.Trim(planHash, hexDigits) != ""` supprimé | `TestDemoCommitNoEffect` |
 | B14 | `register.go` : noms `ProposeActivity` et `VerifyActivity` échangés | `TestDemoRegister` |
 | B15 | `pattern` retiré du schéma, `PromptHash` recalculé | `TestDemoPromptStrict` |
