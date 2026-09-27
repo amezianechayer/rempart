@@ -384,3 +384,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-27 15:25 [harnais] PHASE FREE (discipline TDD suspendue) : tâche M0-T19c loops-archtest terminée
 
 - 2026-09-27 15:25 [harnais] phase : impl -> free
+
+- 2026-09-27 16:04 [harnais] phase : free -> tests
