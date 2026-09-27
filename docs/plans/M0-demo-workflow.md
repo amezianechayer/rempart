@@ -452,7 +452,7 @@ Rouge : paquet `internal/loops/demo` absent.
 ## 9. Modèle de menace (mise à jour par le principal)
 
 - **T54** vérifiée sur un vrai workflow ; **T56** : une attente par workflow, résidu jusqu'à M4 ; **T71** : cible et sortie de 64 octets au plus.
-- **T73** : (aj), (ak) traités ; résidus : décodage par fonction tierce dans un paquet de workflow (évité par D1), réflexion, `linkname`, import d'un dossier `.x`, `_x` ou `testdata`. **T74** : (ai) traité ; résidu : `replace` local du `go.mod` racine (CODEOWNERS).
+- **T73** : (aj), (ak) traités ; résidus : décodage par fonction tierce (D1 crée ce vecteur : obligation (au)), réflexion, `linkname`, import d'un dossier `.x`, `_x` ou `testdata`. **T74** : (ai) traité ; résidu : `replace` local du `go.mod` racine (CODEOWNERS).
 - **T75 (proposée)** : tenant des activités fixé par le worker en M0 ; un worker partagé appellerait le modèle sous un seul tenant. Parade M1 : propagateur de tenant, test d'isolation.
 
 ## 10. Risques et points non vérifiés (levés sur copie avant gel, écarts en V1)
