@@ -444,7 +444,7 @@ func TestRunLoopSizeLimits(t *testing.T) {
 	for _, c := range []struct { // D1: every bound reached with the bytes JSON expands most
 		fill   string
 		weight int
-	}{{"<", 6}, {"&", 6}, {" ", 6}, {"é", 4}} {
+	}{{"<", 6}, {"&", 6}, {"\u2028", 6}, {"é", 4}} {
 		f := domain.Finding{Message: strings.Repeat(c.fill, MaxFindingBytes/c.weight), Line: math.MinInt}
 		tr := IterationTrace{
 			Iteration: MaxIterationsLimit, Strategy: strings.Repeat("s", MaxNameBytes), Fingerprint: domain.Fingerprint(nil),
@@ -583,7 +583,7 @@ func TestAwaitApprovalsCanonicalSignalOnly(t *testing.T) {
 		strings.Replace(j, `"bob"`, `"bob"`, 1),
 		strings.Replace(j, `"plan_hash":"a`, `"plan_hash":"a`, 1),
 		strings.Replace(j, `":`, `": `, 1),
-		string(indented), " " + j, "﻿" + j,
+		string(indented), " " + j, "\ufeff" + j,
 	} {
 		signals = append(signals, rawJSON(t, d))
 	}
