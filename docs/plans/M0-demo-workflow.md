@@ -4,7 +4,7 @@
 
 ## 0. Amendements
 
-BASE : HEAD au lancement de `/task`, consigné ici par le principal. Aucun.
+BASE : `5015353` (HEAD au lancement de `/task`, 2026-09-27). Décisions ouvertes 1 à 8 de la section 11 retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes réversibles. Aucun amendement.
 
 ## 1. Périmètre
 
