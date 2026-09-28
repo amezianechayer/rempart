@@ -426,3 +426,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-27 21:25 [harnais] phase : free -> tests
 
 - 2026-09-28 07:09 [harnais] phase : tests -> impl
+
+- 2026-09-28 07:11 [harnais] PHASE FREE (discipline TDD suspendue) : M0-T20 etape A faite, M0-T20b avant etape B
+
+- 2026-09-28 07:11 [harnais] phase : impl -> free
