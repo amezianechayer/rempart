@@ -301,7 +301,7 @@ Copie privée avec la section 3 : tout vert, dont `TestLoopSourcesConform` et `T
 13. `git diff --exit-code T20A -- 'internal/**/*_test.go'` (fin de A), `git diff --exit-code T20B -- '*_test.go' internal/loops/demo/testdata` (fin de B) : `rc=0`.
 14. Section 7 sur copie privée (`mktemp -d`, SHA consigné, T72) : toutes détectées.
 15. `make verify-quick; echo rc=$?` et `make verify; echo rc=$?` : `rc=0`.
-16. `wc -c < docs/plans/M0-worker-demo.md` : au plus `30000` ; `perl -CSD -ne 'print if /[^\n\x20-\x7E\x{C0}-\x{FF}\x{152}\x{153}]/' docs/plans/M0-worker-demo.md | wc -l` : `0`.
+16. `wc -c < docs/plans/M0-worker-demo.md` : au plus `31000` (V1) ; `perl -CSD -ne 'print if /[^\n\x20-\x7E\x{C0}-\x{FF}\x{152}\x{153}]/' docs/plans/M0-worker-demo.md | wc -l` : `0`.
 
 ## 7. Mutations (une à la fois ; le test cité échoue)
 
@@ -367,3 +367,11 @@ Copie privée avec la section 3 : tout vert, dont `TestLoopSourcesConform` et `T
 6. Cycles B.1 (`workflowid.go`, `MaxRunDuration`, `ExecutionTimeout`), B.2 (`config.go`, `main.go`), B.3 (`run.go`, `demo`) : critères 7 à 12.
 7. `security-reviewer`, puis `acceptance-verifier` (critères 1 à 16, copie privée).
 8. Principal : STATUS (soldées : (at) à (ax), (af), (c), T41 et T40 côté worker, décision 7 de M0-T19d ; T79 ; prochaine : M0-T03b), menaces, commit `feat(worker): demo worker and make demo on dev stack (M0-T20)`, `phase free`.
+
+## V1 (test-author, copie 3bb97b5)
+- 3.1 `rules.go` : `anthropic-unwired-m0` gagne `AllowedFrom: []string{m("internal/llm/adapters/anthropic/...")}` (l'adaptateur importe ses sous-paquets).
+- 3.1 : `internal/loops/domain/findings.go` : `couple{code: x.Code, resource: x.Resource}` (faux positif D12).
+- 3.3 `client.go`, S13 : `if cerr := ctx.Err(); cerr != nil { if attempt > 0 { return spent(cerr) }; return Result{}, nil, cerr }` (D10 : annulation après un appel).
+- 5.1 : `TestUsageErrorBound` : `canceled_after_call` ; `TestDemoProposeErrors` : `invalid_tenant` devient `direct_invalid_tenant` ; `rules_test.go` : 9 règles, fixtures `anthropic-unwired-m0`, autres fixtures jugées sans elle ; `loops_test.go` : `shadowed_package` à clés.
+- 7 : A9 : `any(errors.Unwrap(err))` : `any(errors.Join(err))`, test `-run TestRunLoop` (préfixe) ; A14 : `id == tenancy.System { // T34, T75` : `id == "" { // T34, T75` ; A16 à A19 ajoutées (test-author).
+- 6.16 : plafond porté à 31000 octets.

@@ -18,6 +18,8 @@ override POLICIES_DIR := $(value POLICIES_DIR)
 override OPA := $(value OPA)
 export SCENARIO EVAL POLICIES_DIR OPA
 export GOWORK := off
+override GOFLAGS := -mod=readonly
+export GOFLAGS
 
 .PHONY: verify-quick verify opa-test arch-test evals update-baseline
 .PHONY: dev dev-preflight dev-down sandbox-guard sandbox-plan sandbox-apply sandbox-destroy

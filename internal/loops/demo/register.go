@@ -9,6 +9,7 @@ import (
 
 	"github.com/amezianechayer/rempart/internal/loops"
 	"github.com/amezianechayer/rempart/internal/loops/demo/activities"
+	"github.com/amezianechayer/rempart/internal/tenancy"
 )
 
 var ErrInvalidRegistration = errors.New("demo: nil registry, activities or approval verifier")
@@ -25,7 +26,10 @@ type ApprovalVerifier interface {
 }
 
 func Register(r Registry, a *activities.Activities, v ApprovalVerifier) error {
-	if r == nil || a == nil || v == nil {
+	if r == nil || a == nil || a.LLM == nil || v == nil { // a typed nil v fails closed (D9)
+		return ErrInvalidRegistration
+	}
+	if id, err := tenancy.ParseID(string(a.Tenant)); err != nil || id == tenancy.System { // T34, T75
 		return ErrInvalidRegistration
 	}
 	r.RegisterWorkflowWithOptions(Workflow, workflow.RegisterOptions{Name: WorkflowName})

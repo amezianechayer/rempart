@@ -3,7 +3,6 @@ package loops
 import (
 	"encoding/json"
 	"errors"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -257,14 +256,10 @@ func failedCall(err error) (tokens int, retry bool) {
 // directApplicationError returns the cause of err if err is exactly an
 // ActivityError and the cause exactly an ApplicationError (errors.As stops there).
 func directApplicationError(err error) *temporal.ApplicationError {
-	if reflect.TypeOf(err) != reflect.TypeFor[*temporal.ActivityError]() {
+	if _, exact := any(err).(*temporal.ActivityError); !exact {
 		return nil
 	}
-	cause := errors.Unwrap(err)
-	var ae *temporal.ApplicationError
-	if reflect.TypeOf(cause) != reflect.TypeFor[*temporal.ApplicationError]() || !errors.As(cause, &ae) {
-		return nil
-	}
+	ae, _ := any(errors.Unwrap(err)).(*temporal.ApplicationError)
 	return ae
 }
 

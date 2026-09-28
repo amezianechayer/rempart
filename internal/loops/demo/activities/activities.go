@@ -26,7 +26,6 @@ const (
 	MaxTargetBytes       = 64
 	TargetBytes          = "abcdefghijklmnopqrstuvwxyz0123456789 -"
 	MaxTokensPerCall     = 256
-	FailureTokens        = (llm.MaxCorrectionsLimit + 1) * MaxTokensPerCall
 	ErrTypeProposeFailed = "ProposeFailed"
 	CodeMismatch         = "DEMO-MISMATCH"
 	CodeSchema           = "DEMO-SCHEMA"
@@ -63,16 +62,17 @@ func (a *Activities) Propose(ctx context.Context, req loops.ProposeRequest) (loo
 			{Untrusted: &lldomain.UntrustedBlock{SourceID: "demo-target", Content: target}},
 		}}},
 	})
+	var used *llm.UsageError
 	switch {
 	case err == nil: // Usage is untrusted: RunLoop bounds it (T45)
 		return loops.ProposeResponse{Candidate: res.Output, Tokens: res.Trace.Usage.InputTokens + res.Trace.Usage.OutputTokens}, nil
 	case ctx.Err() != nil:
 		return loops.ProposeResponse{}, ctx.Err()
-	case billed(err): // obligation (ae): outermost error, never wrapped
+	case errors.As(err, &used): // (ae), (av)
 		return loops.ProposeResponse{}, temporal.NewApplicationErrorWithOptions("demo proposer call failed", ErrTypeProposeFailed,
 			temporal.ApplicationErrorOptions{
-				NonRetryable: errors.Is(err, llm.ErrModelMismatch),
-				Details:      []any{loops.ProposeFailure{Tokens: FailureTokens}},
+				NonRetryable: !errors.Is(err, schema.ErrOutOfSchema), // (af)
+				Details:      []any{loops.ProposeFailure{Tokens: used.Bound}},
 			})
 	}
 	return loops.ProposeResponse{}, refuse("demo proposer refused", loops.ErrTypePolicyViolation)
@@ -128,11 +128,6 @@ func instruction(strategy string) (string, bool) {
 		return "Strategy reformulate: the previous greeting differed; reply with the target, in lower case.", true
 	}
 	return "", false
-}
-
-func billed(err error) bool {
-	return errors.Is(err, llm.ErrProviderFailed) || errors.Is(err, schema.ErrOutOfSchema) ||
-		errors.Is(err, llm.ErrModelMismatch) || errors.Is(err, llm.ErrUnknownTool)
 }
 
 func failed(code, msg string) loops.VerifyResult {

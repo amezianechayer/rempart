@@ -182,6 +182,11 @@ func DefaultRules(module string) []Rule {
 			Name: "loops-fake-tests-only", Kind: Confine,
 			Targets: []string{m("internal/loops/fake/...")},
 		},
+		{ // M0-T20, lifted after M0-T20b: the real adapter has no importer outside itself (T41)
+			Name: "anthropic-unwired-m0", Kind: Confine,
+			Targets:     []string{m("internal/llm/adapters/anthropic/...")},
+			AllowedFrom: []string{m("internal/llm/adapters/anthropic/...")},
+		},
 	}
 }
 

@@ -44,6 +44,8 @@ func ReadSources(fsys fs.FS) (map[string]string, error) {
 			return fmt.Errorf("archtest: symbolic link %s: go build follows it, the rules do not (T74)", p)
 		case !d.IsDir() && moduleFile(p): // (ai)
 			return fmt.Errorf("archtest: %s: nested module, workspace or vendor directory (T74)", p)
+		case !d.IsDir() && strings.HasPrefix(p, "internal/loops/") && slices.Contains(foreignSources, path.Ext(p)): // (aw)
+			return fmt.Errorf("archtest: %s: non-Go source under internal/loops (T73)", p)
 		case d.IsDir() || path.Ext(p) != ".go" || strings.HasSuffix(p, "_test.go") || ignoredDir(p):
 			return nil
 		}
@@ -66,11 +68,21 @@ func moduleFile(p string) bool {
 	return false
 }
 
+var foreignSources = []string{".s", ".S", ".sx", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".m", ".f", ".F", ".for", ".f90", ".syso", ".swig", ".swigcxx"}
+
+var searchNames = []string{"GetTypedSearchAttributes", "UpsertTypedSearchAttributes", "UpsertSearchAttributes", "SearchAttributes", "TypedSearchAttributes", "UpsertMemo", "Memo"}
+
+func ignoredElem(e string) bool { return e != "" && (e[0] == '_' || e[0] == '.' || e == "testdata") }
+
+func unkeyed(lit *ast.CompositeLit) bool {
+	return slices.ContainsFunc(lit.Elts, func(e ast.Expr) bool { _, kv := e.(*ast.KeyValueExpr); return !kv })
+}
+
 // decodingNames are admitted in workflow code only as the Fun of a call (aj).
 var decodingNames = []string{
 	"Receive", "ReceiveWithTimeout", "ReceiveAsync", "ReceiveAsyncWithMoreFlag", "Get", "Details",
 	"LastHeartbeatDetails", "GetLastCompletionResult", "SetUpdateHandler", "SetUpdateHandlerWithOptions",
-	"SetQueryHandler", "SetQueryHandlerWithOptions",
+	"SetQueryHandler", "SetQueryHandlerWithOptions", "GetHeartbeatDetails",
 }
 
 func ignoredDir(p string) bool {
@@ -212,6 +224,8 @@ func (c *srcChecker) index(sf *SourceFile) {
 
 func (c *srcChecker) file(sf *SourceFile) {
 	fake := c.loops + "/fake"
+	inLoops := under(sf.Pkg, c.loops)
+	dec := inLoops && !under(sf.Pkg, fake) // (au)
 	wf := sf.Pkg == c.loops || under(sf.Pkg, c.loops+"/domain") || under(sf.Pkg, c.loops+"/codec") ||
 		under(sf.Pkg, c.loops) && c.wfPkg[sf.Pkg]
 	for _, is := range sf.File.Imports {
@@ -222,9 +236,22 @@ func (c *srcChecker) file(sf *SourceFile) {
 		if under(p, fake) && !under(sf.Pkg, fake) {
 			c.add(sf, is, "loops-fake-tests-only", sf.Pkg+" imports "+p)
 		}
+		if under(p, c.module) && slices.ContainsFunc(strings.Split(p, "/"), ignoredElem) { // T73
+			c.add(sf, is, "no-ignored-dir-import", "import "+p)
+		}
+		if inLoops && slices.Contains([]string{"reflect", "unsafe", "C"}, p) { // (aw)
+			c.add(sf, is, "loops-no-reflection", "import "+p)
+		}
 		if wf && ((p != "encoding/json" && strings.Contains(p, "json")) || strings.Contains(p, "yaml") ||
 			strings.Contains(p, "toml") || slices.Contains([]string{"encoding/gob", "encoding/xml", "encoding/asn1", "encoding/csv"}, p)) {
 			c.add(sf, is, "loops-no-json-decoding", "import "+p)
+		}
+	}
+	for _, cg := range sf.File.Comments { // (aw)
+		for _, cm := range cg.List {
+			if inLoops && strings.HasPrefix(cm.Text, "//go:linkname") {
+				c.add(sf, cm, "loops-no-reflection", "go:linkname directive")
+			}
 		}
 	}
 	walk(sf.File, func(n ast.Node, stack []ast.Node) {
@@ -246,10 +273,12 @@ func (c *srcChecker) file(sf *SourceFile) {
 			call, isCall := parent.(*ast.CallExpr)
 			called := isCall && call.Fun == n
 			switch {
-			case wf && !called && slices.Contains(decodingNames, n.Sel.Name):
+			case dec && !called && slices.Contains(decodingNames, n.Sel.Name):
 				c.add(sf, n, "loops-raw-decoding-target", n.Sel.Name+" used as a value, not called")
 			case wf && n.Sel.Name == "Validator":
 				c.add(sf, n, "loops-raw-decoding-target", "Validator set outside a composite literal")
+			case wf && slices.Contains(searchNames, n.Sel.Name):
+				c.add(sf, n, "loops-no-search-attributes", n.Sel.Name)
 			case !called && under(sf.Pkg, c.loops) && c.specMethods[sf.Pkg+"."+n.Sel.Name]:
 				c.add(sf, n, "loops-no-spec-entrypoint", n.Sel.Name+" takes a LoopSpec or an ApprovalRequest and is used as a value")
 			}
@@ -283,8 +312,16 @@ func (c *srcChecker) file(sf *SourceFile) {
 				c.add(sf, n, "loops-no-unmarshal-method", "method "+m)
 			}
 		case *ast.CallExpr:
-			if wf {
+			if dec {
 				c.decodeTargets(sf, n, stack)
+			}
+		case *ast.CompositeLit:
+			switch n.Type.(type) {
+			case *ast.ArrayType, *ast.MapType: // an elided type counts as a struct (D12)
+			default:
+				if wf && unkeyed(n) { // (at)
+					c.add(sf, n, "loops-keyed-literals", "composite literal element without field name")
+				}
 			}
 		case *ast.KeyValueExpr:
 			if k, isID := n.Key.(*ast.Ident); wf && isID && k.Name == "Validator" && !c.admittedHandler(sf, declNames(stack[1]), n.Value) {
@@ -362,7 +399,7 @@ func (c *srcChecker) decodeTargets(sf *SourceFile, call *ast.CallExpr, stack []a
 	switch sel.Sel.Name {
 	case "Receive", "ReceiveWithTimeout", "ReceiveAsync", "ReceiveAsyncWithMoreFlag":
 		targets = call.Args[len(call.Args)-1:]
-	case "GetLastCompletionResult":
+	case "GetLastCompletionResult", "GetHeartbeatDetails":
 		targets = call.Args[1:]
 	case "Details", "LastHeartbeatDetails":
 	case "Get":
