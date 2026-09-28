@@ -227,7 +227,7 @@ func TestSourceRulesHardening(t *testing.T) {
 			// A local variable named after an imported package: time.Minute is
 			// then a field computed from the input.
 			sc("shadowed_package", "", "", fx("\t_, err = loops.AwaitApprovals(",
-				"\ttime := struct{ Minute int }{len(author)}\n\t_, err = loops.AwaitApprovals("),
+				"\ttime := struct{ Minute int }{Minute: len(author)}\n\t_, err = loops.AwaitApprovals("),
 				fx("NeedsSecurityRole: false, ", "NeedsSecurityRole: false, MaxIgnored: time.Minute, ")),
 			sc("shadowed_true_local", "", "", fx("\t_, err = loops.AwaitApprovals(",
 				"\ttrue := author == \"\"\n\t_, err = loops.AwaitApprovals("),

@@ -2,7 +2,7 @@
 
 Fiche de la boucle de démonstration de M0 (gabarit `.claude/skills/loop-engineering/references/loop-spec-template.md`), recopiée de `docs/plans/M0-overview.md` section 5.4 et ajustée par l'amendement A1 et le plan `docs/plans/M0-demo-workflow.md` (M0-T19d). Écrite avant tout code de la démo.
 
-Écarts à la fiche 5.4 : pas d'entrée `canary` ni de `ContinueAsNew` (A1, tâches de l'ADR 0001 en M1) ; entrée fermée et sans défaut (D3) ; tenant fixé par le worker, jamais par l'entrée (D2) ; échec facturable du proposeur compté 1024 tokens (D5) ; historique Temporal en clair en M0, sans aucune donnée client (A1, risque accepté).
+Écarts à la fiche 5.4 : pas d'entrée `canary` ni de `ContinueAsNew` (A1, tâches de l'ADR 0001 en M1) ; entrée fermée et sans défaut (D3) ; tenant fixé par le worker, jamais par l'entrée (D2) ; échec du proposeur après un appel compté à la borne `llm.UsageError.Bound` (D5 remplacée par D10 de `M0-worker-demo.md`), seul l'hors schéma rejoué (D11) ; historique Temporal en clair en M0, sans aucune donnée client (A1, risque accepté).
 
 ```yaml
 id: L0-demo
@@ -19,8 +19,10 @@ steps:
   propose: activité demo.Propose (llm.Client.Structured, prompt demo.greeting.v1 à hash épinglé, aucun outil, cible transmise seulement en bloc non fiable)
   verify: activité demo.Verify (déterministe : schéma, puis égalité greeting == target ; recharge le prompt et exige son hash)
   diagnose: findings normalisés DEMO-MISMATCH et DEMO-SCHEMA (ressource "candidate", gravité high), top 20
-proposer_failures:        # D5
-  billed: ErrProviderFailed, ErrOutOfSchema, ErrModelMismatch, ErrUnknownTool -> ApplicationError ProposeFailed, détail ProposeFailure{tokens: 1024}, rejouable sauf ErrModelMismatch
+proposer_failures:        # D10, D11 de M0-worker-demo.md (obligations (av), (af)), remplacent D5
+  after_call: toute erreur llm.UsageError (échec après au moins un appel au fournisseur) -> ApplicationError ProposeFailed, détail ProposeFailure{tokens: Bound}
+  bound: usage déclaré, plus MaxTokens (256) et RequestBytes de la requête pour chaque appel échoué sans usage
+  retry: seul schema.ErrOutOfSchema est rejouable ; ErrProviderFailed (429 compris), ErrModelMismatch, ErrUnknownTool : non rejouables, escalade activity_failed (attente bornée : adaptateur, T50)
   refused_without_io: non rejouable, sans détail
 verifier:
   success_when:

@@ -450,6 +450,7 @@ func defaultRuleNames() []string {
 	return []string{
 		"domain-pure", "adapters-edge", "sdk-confine-anthropic", "sdk-confine-temporal",
 		"sdk-confine-sql", "loops-agnostic", "fakes-wired-in-cmd", "loops-fake-tests-only",
+		"anthropic-unwired-m0",
 	}
 }
 
@@ -468,7 +469,7 @@ func TestDefaultRules(t *testing.T) {
 	}
 
 	t.Run("names_and_kinds", func(t *testing.T) {
-		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine}
+		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine, Confine}
 		names := defaultRuleNames()
 		if len(rules) != len(names) {
 			t.Fatalf("DefaultRules returned %d rules, want %d (%q)", len(rules), len(names), names)
@@ -660,12 +661,22 @@ func TestRuleDetectsViolation(t *testing.T) {
 			v("loops-fake-tests-only", m+"/cmd/rempart-evals", m+"/internal/loops/fake"),
 			v("loops-fake-tests-only", m+"/cmd/rempart-worker", m+"/internal/loops/fake"),
 		}},
+		{"anthropic-unwired-m0", []Violation{
+			// M0-T20: the real adapter has no importer until M0-T20b (T41).
+			v("anthropic-unwired-m0", m+"/cmd/rempart", m+"/internal/llm/adapters/anthropic/stream"),
+			v("anthropic-unwired-m0", m+"/cmd/rempart-worker", m+"/internal/llm/adapters/anthropic"),
+		}},
 	}
 	if len(cases) != len(defaultRuleNames()) {
 		t.Fatalf("%d rule cases, want %d", len(cases), len(defaultRuleNames()))
 	}
-	rules := DefaultRules(m)
 	for _, c := range cases {
+		// anthropic-unwired-m0 is temporary (lifted after M0-T20b): the other
+		// fixtures keep describing the target architecture, where cmd wires
+		// the Anthropic adapter, and are checked without it.
+		rules := slices.DeleteFunc(DefaultRules(m), func(r Rule) bool {
+			return r.Name == "anthropic-unwired-m0" && c.rule != r.Name
+		})
 		t.Run(c.rule, func(t *testing.T) {
 			t.Run("violation", func(t *testing.T) {
 				got := Check(m, loadFixture(t, c.rule+violationSuffix), rules)

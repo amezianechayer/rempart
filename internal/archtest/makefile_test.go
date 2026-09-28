@@ -1033,3 +1033,26 @@ func TestMakefileTargets(t *testing.T) {
 		reportProblems(t, checkMakefile(mf))
 	})
 }
+
+// TestMakefileGoflagsNeutralized (ax, D15, threat T74): a GOFLAGS taken from
+// the environment (-mod=mod, -overlay, -modfile, -tags) would let go build and
+// go test compile other sources than the ones the rules read. The Makefile
+// overrides it with -mod=readonly and exports it, each by exactly one line,
+// override first; no other line, recipe included, names GOFLAGS.
+func TestMakefileGoflagsNeutralized(t *testing.T) {
+	_, fsys := repoRoot(t)
+	src, err := readRepoFile(fsys, "Makefile", "created by M0-T01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, l := range strings.Split(src, "\n") {
+		if strings.Contains(l, "GOFLAGS") {
+			lines = append(lines, l)
+		}
+	}
+	want := []string{"override GOFLAGS := -mod=readonly", "export GOFLAGS"}
+	if !slices.Equal(lines, want) {
+		t.Errorf("Makefile lines naming GOFLAGS: %q, want exactly %q in this order", lines, want)
+	}
+}

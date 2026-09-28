@@ -122,10 +122,16 @@ type harness struct {
 
 func newHarness(t *testing.T, tenant tenancy.ID, steps []llmfake.Step) *harness {
 	t.Helper()
+	return newHarnessWith(t, tenant, steps, &loopsfake.ApprovalVerifier{})
+}
+
+// newHarnessWith registers the demo with the verifier v.
+func newHarnessWith(t *testing.T, tenant tenancy.ID, steps []llmfake.Step, v demo.ApprovalVerifier) *harness {
+	t.Helper()
 	c, prov := newClient(t, steps)
 	var suite testsuite.WorkflowTestSuite
 	h := &harness{env: suite.NewTestWorkflowEnvironment(), prov: prov, started: map[string]int{}}
-	if err := demo.Register(h.env, &activities.Activities{LLM: c, Tenant: tenant}, &loopsfake.ApprovalVerifier{}); err != nil {
+	if err := demo.Register(h.env, &activities.Activities{LLM: c, Tenant: tenant}, v); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, args converter.EncodedValues) {
@@ -147,8 +153,9 @@ func (h *harness) signalAt(d time.Duration, a loops.Approval) {
 	h.env.RegisterDelayedCallback(func() { h.env.SignalWorkflow(loops.ApprovalSignal, a) }, d)
 }
 
-// run executes the workflow by its registered name and returns its output or error.
-func (h *harness) run(t *testing.T, in demo.Input) (demo.Output, error) {
+// run executes the workflow by its registered name and returns its output or
+// error; in is a demo.Input or, to test the decoding, a json.RawMessage.
+func (h *harness) run(t *testing.T, in any) (demo.Output, error) {
 	t.Helper()
 	h.start = h.env.Now()
 	h.env.ExecuteWorkflow(demo.WorkflowName, in)
@@ -183,7 +190,7 @@ func (h *harness) total() int {
 
 func (h *harness) elapsed() time.Duration { return h.env.Now().Sub(h.start) }
 
-func mustRun(t *testing.T, h *harness, in demo.Input) demo.Output {
+func mustRun(t *testing.T, h *harness, in any) demo.Output {
 	t.Helper()
 	out, err := h.run(t, in)
 	if err != nil {
@@ -473,27 +480,44 @@ func TestDemoInputRejected(t *testing.T) {
 	}
 }
 
-// TestDemoProposeErrors: billed failures are counted at 1024 tokens each (D5);
-// a refusal without I/O costs nothing and is not retried.
+// TestDemoProposeErrors (D10, D11, obligations (av), (af)): a failure after a
+// provider call counts the UsageError bound, declared usage plus MaxTokens and
+// the request bytes of a call failed without usage; only an output out of
+// schema is retried. A refusal without I/O costs nothing and is not retried.
 func TestDemoProposeErrors(t *testing.T) {
 	failure := llmfake.Step{Err: "provider_unavailable"}
-	mismatch := llmfake.Step{Response: lldomain.Response{Output: greetBonjour, Model: "other-model", Usage: lldomain.Usage{InputTokens: 1}}}
+	mismatch := llmfake.Step{Response: lldomain.Response{
+		Output: greetBonjour, Model: "other-model", Usage: lldomain.Usage{InputTokens: 10, OutputTokens: 5},
+	}}
+	upper := answer(json.RawMessage(`{"greeting":"Bonjour"}`))
+	// failedCall is MaxTokensPerCall plus the bytes of the first request the fake saw.
+	failedCall := func(t *testing.T, prov *llmfake.Provider) int {
+		t.Helper()
+		calls := prov.Calls()
+		if len(calls) == 0 {
+			t.Fatal("no provider call recorded")
+		}
+		n := llm.RequestBytes(calls[0].Request)
+		if n <= 0 {
+			t.Fatalf("RequestBytes = %d, want a positive size", n)
+		}
+		return 256 + n
+	}
+	fixed := func(n int) func(*testing.T, *llmfake.Provider) int {
+		return func(*testing.T, *llmfake.Provider) int { return n }
+	}
 	cases := []struct {
 		name       string
 		tenant     tenancy.ID
 		steps      []llmfake.Step
 		iterations int
-		tokens     int
+		tokens     func(*testing.T, *llmfake.Provider) int
 		calls      int
 	}{
-		{"provider_failure", tenantA, times(failure, 3), 3, 3 * activities.FailureTokens, 3},
-		{"model_mismatch", tenantA, times(mismatch, 3), 1, activities.FailureTokens, 1},
-		{"out_of_schema", tenantA, times(answer(json.RawMessage(`{"greeting":"Bonjour"}`)), 3), 3, 3 * activities.FailureTokens, 3},
-		{"no_route", tenantB, times(answer(greetBonjour), 3), 1, 0, 0},
-		{"invalid_tenant", tenancy.ID("not-a-tenant"), times(answer(greetBonjour), 3), 1, 0, 0},
-	}
-	if activities.FailureTokens != 1024 {
-		t.Fatalf("FailureTokens = %d, want 1024", activities.FailureTokens)
+		{"provider_failure", tenantA, times(failure, 3), 1, failedCall, 1},
+		{"model_mismatch", tenantA, times(mismatch, 3), 1, fixed(15), 1},
+		{"out_of_schema", tenantA, times(upper, 3), 3, fixed(45), 3},
+		{"no_route", tenantB, times(answer(greetBonjour), 3), 1, fixed(0), 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -503,35 +527,63 @@ func TestDemoProposeErrors(t *testing.T) {
 			if l.Status != loops.StatusEscalated || l.Reason != loops.ReasonActivityFailed {
 				t.Fatalf("loop = %s %s, want escalated activity_failed", l.Status, l.Reason)
 			}
-			if l.Iterations != tc.iterations || l.Tokens != tc.tokens {
-				t.Errorf("%d iterations, %d tokens; want %d, %d", l.Iterations, l.Tokens, tc.iterations, tc.tokens)
-			}
 			if n := h.prov.Invocations(); n != tc.calls {
 				t.Errorf("%d provider calls, want %d", n, tc.calls)
+			}
+			if want := tc.tokens(t, h.prov); l.Iterations != tc.iterations || l.Tokens != want {
+				t.Errorf("%d iterations, %d tokens; want %d, %d", l.Iterations, l.Tokens, tc.iterations, want)
 			}
 			if out.PlanHash != "" || h.count(verifyApproval) != 0 || h.count(commitName) != 0 {
 				t.Error("an escalation computed a plan hash, verified an approval or committed")
 			}
 		})
 	}
-	t.Run("direct_billed", func(t *testing.T) {
-		c, _ := newClient(t, []llmfake.Step{failure})
-		a := &activities.Activities{LLM: c, Tenant: tenantA}
+	propose := func(t *testing.T, a *activities.Activities) (*temporal.ApplicationError, error) {
+		t.Helper()
 		_, err := a.Propose(t.Context(), loops.ProposeRequest{Payload: targetLoad, Strategy: activities.StrategyDirect, Iteration: 1})
 		if reflect.TypeOf(err) != reflect.TypeFor[*temporal.ApplicationError]() {
 			t.Fatalf("error %v of type %T, want *temporal.ApplicationError, never wrapped", err, err)
 		}
-		ae := appError(t, err)
-		if ae.Type() != activities.ErrTypeProposeFailed || ae.NonRetryable() {
-			t.Errorf("type %q non-retryable %v, want %q retryable", ae.Type(), ae.NonRetryable(), activities.ErrTypeProposeFailed)
+		return appError(t, err), err
+	}
+	wantDetail := func(t *testing.T, ae *temporal.ApplicationError, tokens int) {
+		t.Helper()
+		if ae.Type() != activities.ErrTypeProposeFailed {
+			t.Errorf("type %q, want %q", ae.Type(), activities.ErrTypeProposeFailed)
 		}
 		var pf loops.ProposeFailure
-		if !ae.HasDetails() || ae.Details(&pf) != nil || pf != (loops.ProposeFailure{Tokens: 1024}) {
-			t.Errorf("details %+v, want ProposeFailure{1024}", pf)
+		if !ae.HasDetails() || ae.Details(&pf) != nil || pf != (loops.ProposeFailure{Tokens: tokens}) {
+			t.Errorf("details %+v, want ProposeFailure{%d}", pf, tokens)
 		}
 		p, perr := converter.GetDefaultDataConverter().ToPayload(pf)
-		if perr != nil || string(p.GetData()) != `{"tokens":1024}` {
-			t.Errorf("detail encodes to %q, want {\"tokens\":1024}", p.GetData())
+		if want := `{"tokens":` + strconv.Itoa(tokens) + `}`; perr != nil || string(p.GetData()) != want {
+			t.Errorf("detail encodes to %q, want %q", p.GetData(), want)
+		}
+	}
+	t.Run("direct_billed", func(t *testing.T) {
+		c, prov := newClient(t, []llmfake.Step{failure})
+		ae, _ := propose(t, &activities.Activities{LLM: c, Tenant: tenantA})
+		if !ae.NonRetryable() {
+			t.Error("a provider failure is retryable, want non-retryable (D11)")
+		}
+		wantDetail(t, ae, failedCall(t, prov))
+	})
+	t.Run("direct_out_of_schema", func(t *testing.T) {
+		c, _ := newClient(t, []llmfake.Step{upper})
+		ae, _ := propose(t, &activities.Activities{LLM: c, Tenant: tenantA})
+		if ae.NonRetryable() {
+			t.Error("an output out of schema is non-retryable, want retryable (D11)")
+		}
+		wantDetail(t, ae, 15)
+	})
+	t.Run("direct_invalid_tenant", func(t *testing.T) {
+		c, prov := newClient(t, []llmfake.Step{answer(greetBonjour)})
+		ae, _ := propose(t, &activities.Activities{LLM: c, Tenant: tenancy.ID("not-a-tenant")})
+		if !ae.NonRetryable() || ae.HasDetails() {
+			t.Errorf("non-retryable %v, details %v; want a non-retryable refusal without detail", ae.NonRetryable(), ae.HasDetails())
+		}
+		if prov.Invocations() != 0 {
+			t.Errorf("%d provider calls, want 0", prov.Invocations())
 		}
 	})
 	t.Run("direct_canceled", func(t *testing.T) {
@@ -711,11 +763,15 @@ func (r *registry) RegisterActivityWithOptions(a any, o activity.RegisterOptions
 	r.activities[o.Name] = funcName(a)
 }
 
-// TestDemoRegister: exactly one workflow and four activities, each under its name.
+// TestDemoRegister: exactly one workflow and four activities, each under its
+// name; D9: a nil registry, activities, client or verifier, an invalid tenant
+// or the System tenant (T34, T75) refuse the registration, registering nothing.
 func TestDemoRegister(t *testing.T) {
 	newReg := func() *registry { return &registry{workflows: map[string]string{}, activities: map[string]string{}} }
+	c, _ := newClient(t, nil)
+	valid := func() *activities.Activities { return &activities.Activities{LLM: c, Tenant: tenantA} }
 	r := newReg()
-	if err := demo.Register(r, &activities.Activities{}, &loopsfake.ApprovalVerifier{}); err != nil {
+	if err := demo.Register(r, valid(), &loopsfake.ApprovalVerifier{}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	if len(r.workflows) != 1 || !strings.HasSuffix(r.workflows[demo.WorkflowName], "/internal/loops/demo.Workflow") {
@@ -739,17 +795,24 @@ func TestDemoRegister(t *testing.T) {
 	if demo.ProposeActivity != "demo.Propose" || demo.VerifyActivity != "demo.Verify" || demo.CommitActivity != commitName || demo.VerifyApprovalActivity != verifyApproval {
 		t.Error("activity names differ from the loop card")
 	}
-	nils := []struct {
+	refused := []struct {
 		name string
 		reg  func(*registry) error
 	}{
-		{"nil_registry", func(*registry) error {
-			return demo.Register(nil, &activities.Activities{}, &loopsfake.ApprovalVerifier{})
-		}},
+		{"nil_registry", func(*registry) error { return demo.Register(nil, valid(), &loopsfake.ApprovalVerifier{}) }},
 		{"nil_activities", func(r *registry) error { return demo.Register(r, nil, &loopsfake.ApprovalVerifier{}) }},
-		{"nil_verifier", func(r *registry) error { return demo.Register(r, &activities.Activities{}, nil) }},
+		{"nil_verifier", func(r *registry) error { return demo.Register(r, valid(), nil) }},
+		{"nil_llm", func(r *registry) error {
+			return demo.Register(r, &activities.Activities{Tenant: tenantA}, &loopsfake.ApprovalVerifier{})
+		}},
+		{"invalid_tenant", func(r *registry) error {
+			return demo.Register(r, &activities.Activities{LLM: c, Tenant: tenancy.ID("not-a-tenant")}, &loopsfake.ApprovalVerifier{})
+		}},
+		{"system_tenant", func(r *registry) error {
+			return demo.Register(r, &activities.Activities{LLM: c, Tenant: tenancy.System}, &loopsfake.ApprovalVerifier{})
+		}},
 	}
-	for _, tc := range nils {
+	for _, tc := range refused {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newReg()
 			if err := tc.reg(r); !errors.Is(err, demo.ErrInvalidRegistration) {
@@ -757,6 +820,74 @@ func TestDemoRegister(t *testing.T) {
 			}
 			if len(r.workflows)+len(r.activities) != 0 {
 				t.Errorf("registered %v %v despite the error", r.workflows, r.activities)
+			}
+		})
+	}
+}
+
+// TestDemoRegisterTypedNilVerifierFailsClosed (D9): a typed nil verifier is not
+// detectable without reflect. Either Register refuses it, or the verification
+// fails and a valid signed approval is ignored (verify_error): the approval
+// times out and nothing is committed.
+func TestDemoRegisterTypedNilVerifierFailsClosed(t *testing.T) {
+	var v *loopsfake.ApprovalVerifier
+	c, _ := newClient(t, nil)
+	var suite testsuite.WorkflowTestSuite
+	if err := demo.Register(suite.NewTestWorkflowEnvironment(), &activities.Activities{LLM: c, Tenant: tenantA}, v); err != nil {
+		if !errors.Is(err, demo.ErrInvalidRegistration) {
+			t.Fatalf("Register = %v, want nil or ErrInvalidRegistration", err)
+		}
+		return
+	}
+	h := newHarnessWith(t, tenantA, []llmfake.Step{answer(greetBonjour)}, v)
+	h.signalAt(time.Second, signedBy("bob", expectedHash(greetBonjour)))
+	out := mustRun(t, h, input())
+	wantIgnored(t, out.Approval.Ignored, loops.IgnoredSignal{DeclaredApprover: "bob", Reason: loops.IgnoredVerifyError})
+	if out.Approval.Outcome != loops.OutcomeTimedOut || len(out.Approval.Approvals) != 0 {
+		t.Errorf("approval = %+v, want timed_out without approval", out.Approval)
+	}
+	if out.Committed || h.count(commitName) != 0 {
+		t.Errorf("committed %v, %d commits; want false, 0", out.Committed, h.count(commitName))
+	}
+}
+
+// TestDemoInputDecodingFrozen (T78): the workflow input is decoded by the
+// default data converter, as encoding/json does: an unknown field is ignored,
+// a key matches its field case-insensitively and the last duplicate wins. This
+// test freezes that behaviour for M0; M1 inverts it (closed input decoding).
+// The tenant stays the worker's (tenant B has no route: honouring the input
+// field would escalate).
+func TestDemoInputDecodingFrozen(t *testing.T) {
+	const rest = `"author":"alice","approval_timeout":5000000000`
+	cases := []struct{ name, raw string }{
+		{"extra_tenant", `{"target":"bonjour",` + rest + `,"tenant":"` + string(tenantB) + `"}`},
+		{"upper_case_key", `{"TARGET":"bonjour",` + rest + `}`},
+		{"duplicate_key", `{"target":"salut","target":"bonjour",` + rest + `}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, tenantA, []llmfake.Step{answer(greetBonjour)})
+			out := mustRun(t, h, json.RawMessage(tc.raw))
+			if out.Loop.Status != loops.StatusConverged || out.Loop.Iterations != 1 {
+				t.Fatalf("loop = %s, %d iterations; want converged, 1", out.Loop.Status, out.Loop.Iterations)
+			}
+			if out.Approval.Outcome != loops.OutcomeTimedOut || out.Committed {
+				t.Errorf("approval %q, committed %v; want timed_out, false", out.Approval.Outcome, out.Committed)
+			}
+			calls := h.prov.Calls()
+			if len(calls) != 1 {
+				t.Fatalf("%d provider calls, want 1", len(calls))
+			}
+			var blocks []string
+			for _, m := range calls[0].Request.Messages {
+				for _, p := range m.Parts {
+					if p.Untrusted != nil {
+						blocks = append(blocks, p.Untrusted.Content)
+					}
+				}
+			}
+			if !slices.Equal(blocks, []string{target}) {
+				t.Errorf("untrusted blocks %q, want exactly [%q]", blocks, target)
 			}
 		})
 	}
