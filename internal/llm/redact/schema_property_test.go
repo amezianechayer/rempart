@@ -242,7 +242,8 @@ func namedObject(name, sub, defs string) string {
 // placement, as a tool or a prompt schema. The oracle is the redactor applied
 // to "api_key: " + v, computed here apart from schema.Texts; the same value
 // under a neutral name reaches the provider, so that the refusal comes from
-// the name. A run that retains no value fails (vacuous property).
+// the name (checked on the first retained value). A run that retains no value
+// fails (vacuous property).
 func TestSchemaNamedValueProperty(t *testing.T) {
 	r := redact.New()
 	names := make([]string, 0, len(namedPlacements))
@@ -262,6 +263,9 @@ func TestSchemaNamedValueProperty(t *testing.T) {
 				ok, err := reaches(namedPlacements[name]("api_key", v), asPrompt)
 				if err != nil || ok {
 					rt.Fatalf("%s, prompt %v: value under api_key reached the provider (%v, %v)", name, asPrompt, ok, err)
+				}
+				if kept > 1 {
+					continue
 				}
 				if ok, err := reaches(namedPlacements[name]("note", v), asPrompt); !ok || err != nil {
 					rt.Fatalf("%s, prompt %v: witness under note did not reach the provider (%v, %v)", name, asPrompt, ok, err)

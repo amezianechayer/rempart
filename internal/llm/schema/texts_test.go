@@ -103,28 +103,34 @@ func TestTextsNamedValues(t *testing.T) {
 
 // TestTextsBounded: the number of texts is bounded (at most 65 536), so that a
 // schema under MaxSchemaBytes does not fan out without end through $ref (D8).
-// Each of fan properties refers to one definition holding an enum of 10 000
-// one-character strings: 10 000 named pairs per property.
+// Each of fan properties refers to one definition holding an enum of size
+// one-character strings: size named pairs per property. The walk stops at the
+// bound: a schema of 60 KB that fans out to 8 million pairs is refused without
+// building them (allocations bounded).
 func TestTextsBounded(t *testing.T) {
-	build := func(fan int) string {
-		enum := strings.TrimSuffix(strings.Repeat(`"a",`, 10000), ",")
-		var props, req []string
+	build := func(fan, size int) string {
+		enum := strings.TrimSuffix(strings.Repeat(`"a",`, size), ",")
+		var props []string
 		for i := range fan {
-			n := "p" + strconv.Itoa(i)
-			props = append(props, `"`+n+`":{"$ref":"#/$defs/l"}`)
-			req = append(req, `"`+n+`"`)
+			props = append(props, `"p`+strconv.Itoa(i)+`":{"$ref":"#/$defs/l"}`)
 		}
-		return `{"type":"object","additionalProperties":false,"required":[` + strings.Join(req, ",") +
-			`],"properties":{` + strings.Join(props, ",") + `},"$defs":{"l":{"enum":[` + enum + `]}}}`
+		return `{"type":"object","additionalProperties":false,"properties":{` + strings.Join(props, ",") +
+			`},"$defs":{"l":{"enum":[` + enum + `]}}}`
 	}
-	raw := build(8)
-	if len(raw) > MaxSchemaBytes {
-		t.Fatalf("test schema is %d bytes, above MaxSchemaBytes: the refusal would not come from the count", len(raw))
+	for _, c := range []struct{ fan, size int }{{8, 10000}, {1100, 7500}} {
+		raw := build(c.fan, c.size)
+		if len(raw) > MaxSchemaBytes {
+			t.Fatalf("test schema is %d bytes, above MaxSchemaBytes: the refusal would not come from the count", len(raw))
+		}
+		if texts, err := Texts([]byte(raw)); !errors.Is(err, ErrInvalidSchema) || texts != nil {
+			t.Errorf("Texts with %d x %d named pairs = %d texts, %v; want ErrInvalidSchema", c.fan, c.size, len(texts), err)
+		}
 	}
-	if texts, err := Texts([]byte(raw)); !errors.Is(err, ErrInvalidSchema) || texts != nil {
-		t.Errorf("Texts with 8 x 10 000 named pairs = %d texts, %v; want ErrInvalidSchema", len(texts), err)
+	fanout := []byte(build(1100, 7500))
+	if n := testing.AllocsPerRun(1, func() { _, _ = Texts(fanout) }); n > 1<<20 {
+		t.Errorf("Texts with 1100 x 7500 named pairs made %.0f allocations, want at most %d: the walk does not stop at the bound", n, 1<<20)
 	}
-	if texts, err := Texts([]byte(build(1))); err != nil || len(texts) < 30000 {
+	if texts, err := Texts([]byte(build(1, 10000))); err != nil || len(texts) < 30000 {
 		t.Errorf("witness with 1 x 10 000 named pairs = %d texts, %v; want nil and at least 30 000 texts", len(texts), err)
 	}
 }

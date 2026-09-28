@@ -449,3 +449,15 @@ Mutation survivante : équivalence démontrée ou test ajouté par amendement, j
 | F1 | `make verify-quick`, `make verify` | principal | critère 11 |
 | F2 | `security-reviewer`, puis `acceptance-verifier` | sous-agents | PASS |
 | F3 | Menaces (section 9) ; `docs/STATUS.md` : "M0-T20b `llm-adapter-harden` terminée" ; commit `feat(llm): harden anthropic adapter and schema texts (M0-T20b)` | principal | critères 12, 13 |
+
+## Amendement V1 (A4, `test-author`, base `db109df`)
+
+Copie privée avec la section 4 corrigée : `gofumpt -l` vide, `golangci-lint` 0, `go test -race ./internal/llm/...` vert, `make verify-quick` vert, N1 à N28 détectées. `param.Override` sur `JSONOutputFormatParam` vérifié (octets compactés émis ; `<`, `>`, `&` refusés avant I/O). Délais sous `-race` : 0,30 s et 0,10 s.
+
+- 4.3 : `root, _ := doc.(map[string]any)` puis `defs, _ := root["$defs"].(map[string]any)` (racine non objet sans panique).
+- 4.3 : arrêt au plafond : `full := func() bool { return len(texts) > maxTexts }` ; `if !ok || full() {` dans `named` ; `if full() { return }` en tête de `walk`. Sans lui, 60 Ko en `$ref` coûtent 8,3 millions d'allocations (695 Mo, 2 s) avant refus.
+- 6, `TestTextsBounded` : l'`enum` de 40 000 chaînes (160 Ko) dépasse `MaxSchemaBytes`, refus pour la taille (N26 survivante). Remplacé : 8 propriétés en `$ref` vers un `enum` de 10 000, puis 1100 vers 7 500 (moins de 64 Kio) : `ErrInvalidSchema`, au plus 2^20 allocations ; témoin 1 vers 10 000 admis.
+- 6 : `messageID(id, model, stop, content...)`, usage 12 et 5 ; `//nolint:staticcheck` (SA1019) sur `ModelClaudeMythosPreview`.
+- 8, ancres qui ne compilent pas : N6 `if n > 0 {` : `if n < 0 {` ; N14 : `if len(got.Tools[i].InputSchema)+len(t) < 0 {` ; N17 `undatedModels[:], r.Model)` : `undatedModels[:0], r.Model)` ; N18 : `return err == nil || len(m) > 0` ; N22 `add(name, s)` sous `const` : `_ = s` ; N24 : `_, _ = d, defs` ; N25 `; t != s {` : `; false && t != s {`. Ajout N28 `return len(texts) > maxTexts }` : `return false }` (`TestTextsBounded`).
+- 10 : `-race` sur `redact` : environ 340 s (249 s pour `TestLargeInputAdversarial`, préexistant). Un échec rapid écrit `internal/llm/redact/testdata/rapid/`, jamais commité.
+- Critère de taille de ce plan : 27 000 octets.
