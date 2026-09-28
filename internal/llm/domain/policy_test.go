@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"errors"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -105,11 +107,20 @@ func TestCheckPolicyModelPinned(t *testing.T) {
 		ok       bool
 	}
 	models := []modelCase{
-		// anthropic (13)
+		// anthropic (22): closed list of undated models, otherwise a real date (D1)
 		{"anthropic_sonnet", PlatformAnthropic, modelA, true},
 		{"anthropic_haiku", PlatformAnthropic, "claude-haiku-4-5-20251001", true},
+		{"anthropic_listed_undated", PlatformAnthropic, "claude-opus-5", true},
+		{"anthropic_listed_undated_minor", PlatformAnthropic, "claude-sonnet-4-6", true},
+		{"anthropic_major_only_dated", PlatformAnthropic, "claude-sonnet-4-20250514", true},
 		{"anthropic_empty", PlatformAnthropic, "", false},
-		{"anthropic_undated", PlatformAnthropic, "claude-sonnet-4-5", true},
+		{"anthropic_undated", PlatformAnthropic, "claude-sonnet-4-5", false},
+		{"anthropic_unlisted_undated", PlatformAnthropic, "claude-haiku-4-5", false},
+		{"anthropic_family_preview", PlatformAnthropic, "claude-preview-5", false},
+		{"anthropic_family_beta", PlatformAnthropic, "claude-beta-5", false},
+		{"anthropic_unknown_family_dated", PlatformAnthropic, "claude-fable-5-20260101", false},
+		{"anthropic_impossible_day", PlatformAnthropic, "claude-sonnet-4-5-20250231", false},
+		{"anthropic_preview_mixed_case", PlatformAnthropic, "claude-opus-5-Preview", false},
 		{"anthropic_preview", PlatformAnthropic, "claude-mythos-preview", false},
 		{"anthropic_three_digits", PlatformAnthropic, "claude-opus-5-100", false},
 		{"anthropic_latest_alias", PlatformAnthropic, "claude-3-5-sonnet-latest", false},
@@ -119,23 +130,27 @@ func TestCheckPolicyModelPinned(t *testing.T) {
 		{"anthropic_trailing_newline", PlatformAnthropic, modelA + "\n", false},
 		{"anthropic_short_date", PlatformAnthropic, "claude-sonnet-4-5-2025092", false},
 		{"anthropic_bedrock_id", PlatformAnthropic, modelB, false},
-		// bedrock (9)
+		// bedrock (11): dated only (D1)
 		{"bedrock_regional", PlatformBedrock, modelB, true},
 		{"bedrock_eu_profile", PlatformBedrock, "eu." + modelB, true},
-		{"bedrock_undated", PlatformBedrock, "anthropic.claude-sonnet-4-5", true},
-		{"bedrock_eu_undated", PlatformBedrock, "eu.anthropic.claude-opus-5", true},
-		{"bedrock_undated_revision", PlatformBedrock, "anthropic.claude-opus-4-6-v1", true},
+		{"bedrock_undated", PlatformBedrock, "anthropic.claude-sonnet-4-5", false},
+		{"bedrock_eu_undated", PlatformBedrock, "eu.anthropic.claude-opus-5", false},
+		{"bedrock_undated_revision", PlatformBedrock, "anthropic.claude-opus-4-6-v1", false},
+		{"bedrock_impossible_day", PlatformBedrock, "anthropic.claude-sonnet-4-5-20250231-v1:0", false},
+		{"bedrock_unknown_family", PlatformBedrock, "anthropic.claude-fable-5-20260101-v1:0", false},
 		{"bedrock_no_revision", PlatformBedrock, "anthropic.claude-sonnet-4-5-20250929-v1", false},
 		{"bedrock_anthropic_id", PlatformBedrock, modelA, false},
 		{"bedrock_unknown_geo", PlatformBedrock, "fr." + modelB, false},
 		{"bedrock_arn", PlatformBedrock, "arn:aws:bedrock:eu-west-3::foundation-model/" + modelB, false},
-		// vertex (5)
+		// vertex (7): dated only (D1)
 		{"vertex_pinned", PlatformVertex, modelV, true},
-		{"vertex_undated", PlatformVertex, "claude-sonnet-4-5", true},
+		{"vertex_undated", PlatformVertex, "claude-sonnet-4-5", false},
+		{"vertex_impossible_day", PlatformVertex, "claude-sonnet-4-5@20250231", false},
+		{"vertex_unknown_family", PlatformVertex, "claude-fable-5@20260101", false},
 		{"vertex_latest", PlatformVertex, "claude-sonnet-4-5@latest", false},
 		{"vertex_short_date", PlatformVertex, "claude-sonnet-4-5@2025092", false},
 		{"vertex_anthropic_id", PlatformVertex, modelA, false},
-		// selfhosted (11)
+		// selfhosted (13): preview, beta, experimental refused, case ignored (D1)
 		{"selfhosted_mistral", PlatformSelfHosted, "mistral-large-2411", true},
 		{"selfhosted_path_version", PlatformSelfHosted, "org/model:v1.2", true},
 		{"selfhosted_empty", PlatformSelfHosted, "", false},
@@ -144,13 +159,16 @@ func TestCheckPolicyModelPinned(t *testing.T) {
 		{"selfhosted_stable", PlatformSelfHosted, "stable", false},
 		{"selfhosted_default", PlatformSelfHosted, "my-default-model", false},
 		{"selfhosted_current", PlatformSelfHosted, "current", false},
+		{"selfhosted_preview", PlatformSelfHosted, "mistral-preview", false},
+		{"selfhosted_experimental_upper", PlatformSelfHosted, "Experimental-x", false},
 		{"selfhosted_space", PlatformSelfHosted, "bad model", false},
 		{"selfhosted_too_long", PlatformSelfHosted, strings.Repeat("a", 129), false},
 		{"selfhosted_leading_dash", PlatformSelfHosted, "-model", false},
-		// fake (3)
+		// fake (4)
 		{"fake_pinned", PlatformFake, "fake-model-v1", true},
 		{"fake_empty", PlatformFake, "", false},
 		{"fake_latest", PlatformFake, "fake-latest", false},
+		{"fake_beta", PlatformFake, "fake-beta-v1", false},
 	}
 	cases := make([]policyCase, 0, len(models))
 	for _, m := range models {
@@ -165,6 +183,36 @@ func TestCheckPolicyModelPinned(t *testing.T) {
 		})
 	}
 	runPolicyCases(t, cases)
+}
+
+// TestUndatedModelsClosed: the closed list of D1 holds the 11 undated models
+// of the SDK, sorted, unique, each an Anthropic family and version without
+// date and without a refused token, and each pinned on Anthropic direct only.
+func TestUndatedModelsClosed(t *testing.T) {
+	list := undatedModels[:]
+	if len(list) != 11 {
+		t.Fatalf("undatedModels has %d entries, want 11", len(list))
+	}
+	shape := regexp.MustCompile(`^claude-[a-z]+-[0-9]{1,2}(-[0-9]{1,2})?$`)
+	for i, m := range list {
+		if i > 0 && list[i-1] >= m {
+			t.Errorf("undatedModels not sorted or not unique at %d: %q then %q", i, list[i-1], m)
+		}
+		if !shape.MatchString(m) {
+			t.Errorf("undatedModels[%d] = %q, not an undated model name", i, m)
+		}
+		for _, tok := range []string{"latest", "stable", "default", "current", "preview", "beta", "experimental"} {
+			if strings.Contains(strings.ToLower(m), tok) {
+				t.Errorf("undatedModels[%d] = %q holds %q", i, m, tok)
+			}
+		}
+		if err := CheckPolicy(pol(PlatformAnthropic, "", m, ResidencyNone), Capabilities{}); err != nil {
+			t.Errorf("anthropic %q: %v, want nil", m, err)
+		}
+		if err := CheckPolicy(pol(PlatformVertex, "eu", m, ResidencyNone), Capabilities{}); !errors.Is(err, ErrModelNotPinned) {
+			t.Errorf("vertex %q: %v, want ErrModelNotPinned", m, err)
+		}
+	}
 }
 
 func TestCheckPolicyRejectsEmptyResidency(t *testing.T) {
