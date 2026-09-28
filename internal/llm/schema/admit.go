@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 )
+
+const maxTexts = 1 << 16
 
 // AdmittedText reports whether every rune of s is in the closed list of T43:
 // printable ASCII, a line feed, or a French letter (U+00C0 to U+00FF but
@@ -51,14 +54,17 @@ func admittedRaw(raw []byte) bool {
 // could read the character, a reviewer or a secret scanner does not (V2).
 func escapeLike(c, d byte) bool {
 	isHex := d >= '0' && d <= '9' || d >= 'a' && d <= 'f' || d >= 'A' && d <= 'F'
-	return (c == 'u' || c == 'U' || c == 'x') && (isHex || d == '{')
+	return (c == 'u' || c == 'U' || c == 'x') && (isHex || d == '{') || c >= '0' && c <= '9'
 }
 
 // Texts returns the texts that the model reads in the decoded schema raw:
 // every key, every string, and "key: value" for every member whose value is
 // a string, so that a secret split by an escape (\", \n) or between a key and
-// its value is visible to a secret scanner (T44, V2). raw is decoded as
-// CompileSchema decodes it; an error wraps ErrInvalidSchema.
+// its value is visible to a secret scanner (T44, V2). A const, enum or
+// pattern under a property or definition name, through items, anyOf, oneOf
+// and $ref, is also read as "name: value", and a value starting with blanks
+// also without them (D8). raw is decoded as CompileSchema decodes it; more
+// than maxTexts texts, or any other error, wraps ErrInvalidSchema.
 func Texts(raw json.RawMessage) ([]string, error) {
 	if len(raw) > MaxSchemaBytes {
 		return nil, fmt.Errorf("%w: too large", ErrInvalidSchema)
@@ -68,16 +74,71 @@ func Texts(raw json.RawMessage) ([]string, error) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidSchema, reason)
 	}
 	var texts []string
+	full := func() bool { return len(texts) > maxTexts } // stop early: the fan out through $ref is multiplicative
+	add := func(k, s string) {
+		texts = append(texts, k+": "+s)
+		if t := strings.TrimLeft(s, " \n"); t != s {
+			texts = append(texts, k+": "+t)
+		}
+	}
+	root, _ := doc.(map[string]any)
+	defs, _ := root["$defs"].(map[string]any)
+	seen := map[[2]string]bool{}
+	var named func(name string, v any)
+	named = func(name string, v any) {
+		n, ok := v.(map[string]any)
+		if !ok || full() {
+			return
+		}
+		if s, ok := n["const"].(string); ok {
+			add(name, s)
+		}
+		if list, ok := n["enum"].([]any); ok {
+			for _, e := range list {
+				if s, ok := e.(string); ok {
+					add(name, s)
+				}
+			}
+		}
+		if p, ok := n["pattern"].(string); ok {
+			add(name, p)
+			add(name, strings.TrimSuffix(strings.TrimPrefix(p, "^"), "$"))
+		}
+		if ref, ok := n["$ref"].(string); ok {
+			if d, ok := strings.CutPrefix(ref, "#/$defs/"); ok && !seen[[2]string{name, d}] {
+				seen[[2]string{name, d}] = true
+				named(name, defs[d])
+			}
+		}
+		named(name, n["items"])
+		for _, k := range []string{"anyOf", "oneOf"} {
+			if list, ok := n[k].([]any); ok {
+				for _, e := range list {
+					named(name, e)
+				}
+			}
+		}
+	}
 	var walk func(v any)
 	walk = func(v any) {
+		if full() {
+			return
+		}
 		switch x := v.(type) {
 		case string:
 			texts = append(texts, x)
 		case map[string]any:
+			for _, k := range []string{"properties", "$defs"} {
+				if m, ok := x[k].(map[string]any); ok {
+					for _, name := range slices.Sorted(maps.Keys(m)) {
+						named(name, m[name])
+					}
+				}
+			}
 			for _, k := range slices.Sorted(maps.Keys(x)) {
 				texts = append(texts, k)
 				if s, ok := x[k].(string); ok {
-					texts = append(texts, k+": "+s)
+					add(k, s)
 				}
 				walk(x[k])
 			}
@@ -88,5 +149,8 @@ func Texts(raw json.RawMessage) ([]string, error) {
 		}
 	}
 	walk(doc)
+	if len(texts) > maxTexts {
+		return nil, fmt.Errorf("%w: too many texts", ErrInvalidSchema)
+	}
 	return texts, nil
 }
