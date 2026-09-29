@@ -17,7 +17,7 @@
 |---|---|
 | `.claude/hooks/stop_verify.py` | Le hook Stop lance `make -f Makefile verify-quick`. |
 | `.claude/hooks/guard_bash.py` | Règle T31/T32 : `-f` admis seulement sous la forme exacte `-f Makefile` ; `-i`, `--file`, `--makefile`, `--eval`, `MAKEFLAGS`, `MAKEFILES` restent refusés, comme `-f` vers tout autre fichier. Nouvelle règle (aq) : `docker exec`, `docker compose exec` ou `docker cp` suivis d'un lecteur de fichier (`cat`, `head`, `grep`...), de `/proc/` ou de `/etc/temporal/config`, et toute mention de `/proc/<pid>/environ`, sont refusés. |
-| `.claude/hooks/test_hooks.sh` | 13 cas de commande (lectures de secrets refusées, commandes utiles de la pile admises, formes de `-f`) et 1 cas du hook Stop (`GNUmakefile` en échec ignoré). |
+| `.claude/hooks/test_hooks.sh` | 12 cas de commande (lectures de secrets refusées, commandes utiles de la pile admises, formes de `-f`) et 1 cas du hook Stop (`GNUmakefile` en échec ignoré). |
 | `.github/CODEOWNERS` | `/Makefile @amezianechayer`. |
 
 ## Vérification faite par l'agent
