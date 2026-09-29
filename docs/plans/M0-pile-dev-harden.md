@@ -337,4 +337,8 @@ Correctifs, un cycle tests puis impl :
 - C4 [moyenne] `loopsrc.go` : portée de `loops-no-search-attributes` étendue à tout paquet sous `internal/loops` (`sa := wf || cmd || inLoops`) et `UpsertedMemo` ajouté aux clés et sélecteurs. Tests : `api_start_request_memo` (`workflowservice.StartWorkflowExecutionRequest{Memo: nil}` dans un paquet de `internal/loops` sans SDK), `api_upserted_memo`, `alias_options_in_loops` (alias déclaré dans un paquet qui importe le SDK, rempli dans un autre paquet de `internal/loops`).
 - Résidus consignés (obligations) : décodage ou `reflect` vers des options SDK sous `cmd/` ; usage sous-déclaré à 0 sur un appel réussi (T10) ; erreurs après connexion non opaques et double préfixe `rempart-worker:` ; `BASH_ENV`, `ENV` et fonctions bash exportées (T77) ; proposition 0007 (garde `guard_bash` contre `exec` dans la pile).
 
-- Taille du plan portée à 32000 octets (V3).
+- Taille du plan portée à 33000 octets (V3, V4).
+
+## V4 (acceptation, ancres déplacées par V3)
+A6 : `  builtin export -- "${pairs[@]}"` -> `  :` ; B2 : `sa := wf || cmd || inLoops || c.sdkPkg[sf.Pkg]` -> `sa := wf || inLoops || c.sdkPkg[sf.Pkg]` ; B3 : `inLoops || c.sdkPkg[sf.Pkg] //` -> `inLoops //` ; B19 : `"TypedSearchAttributes", "UntypedSearchAttributes", "UpsertedMemo"} // (bd)` -> `"TypedSearchAttributes", "UpsertedMemo"} // (bd)` ; B20 : `"Memo", "UntypedSearchAttributes", "UpsertedMemo"}` -> `"Memo", "UpsertedMemo"}`. Mutations V3 : C1a, C1b, C2, C3, C4a, C4b, C4c (rapport de `test-author`). 43 sur 43 détectées sur `52c0202`.
+
