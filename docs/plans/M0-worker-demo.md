@@ -380,3 +380,9 @@ Copie privée avec la section 3 : tout vert, dont `TestLoopSourcesConform` et `T
 - 7 : B9 : `set.SetOutput(io.Discard) // flag errors quote values` : `_ = io.Discard` (sinon `io` inutilisé : échec de compilation, non du test), avec `"%w: %w", ErrConfig, err)`.
 - 6.8, 11 (tâche 5) : sur copie, `make demo` lancerait `make dev` sans `.env.dev` (pile partagée) : critère 8 vérifié par la ligne `go run` de 4.4 ; `make demo` au dépôt en tâche 7.
 - 6.16 : plafond porté à 33000 octets.
+
+## V3 (principal, acceptation) : définition de A16 à A19
+- A16 `client.go` : `if attempt > 0 { // after a call (av)` : `if false { // after a call (av)` ; `TestUsageErrorBound/canceled_after_call`.
+- A17 `rules.go`, règle `anthropic-unwired-m0` : retirer la ligne `AllowedFrom: []string{m("internal/llm/adapters/anthropic/...")},` qui suit ses `Targets` ; `TestAnthropicAdapterUnwired`.
+- A18 `register.go` : `a == nil || a.LLM == nil || v == nil` : `a == nil || v == nil` ; `TestDemoRegister/nil_llm`.
+- A19 `loopsrc.go` : `case "GetLastCompletionResult", "GetHeartbeatDetails":` : `case "GetLastCompletionResult":` ; `TestActivityPackagesDecodingTargets/get_heartbeat_details`.
