@@ -969,25 +969,38 @@ func TestComposeHardening(t *testing.T) {
 	})
 }
 
-// Checks of the dev, dev-down and verify targets (section 4.1, last row).
-const composeFlags = " --env-file .env.dev -f docker-compose.yml "
-
-var (
-	composeCallRe       = regexp.MustCompile(`\bdocker(?: |-)compose(?:\s|;|$)`)
-	composeSubcommands  = []string{"up", "down"}
-	composeVolumesFlag  = regexp.MustCompile(`^(-v|--volumes(=.*)?)$`)
-	dockerVolumeRmRe    = regexp.MustCompile(`\bdocker\s+volume\s+(rm|prune)\b`)
-	makeIncludeRe       = regexp.MustCompile(`^\s*-?s?include\s`)
-	shellSourceRe       = regexp.MustCompile(`\bsource\s`)
-	shellDotSourceRe    = regexp.MustCompile(`(^|[;&|{(]\s*|\bthen\s+|\belse\s+|\bdo\s+)\.\s+\S`)
-	catEnvRe            = regexp.MustCompile(`\bcat\b[^;&|]*\.env`)
-	devVolumeGuardRe    = regexp.MustCompile(`test -f \.env\.dev .*docker volume inspect rempart-dev_pgdata`)
-	verifyDevCallRe     = regexp.MustCompile(`^\$\(MAKE\)(\s+--no-print-directory)?\s+dev$`)
-	integrationTagsRe   = regexp.MustCompile(`-tags[= ]integration\b`)
-	integrationViaEnvRe = regexp.MustCompile(`(^|[;&|]\s*)bash scripts/dev-env\.sh run go test\b[^;&|]*-tags[= ]integration\b`)
+// Checks of the dev, dev-preflight, dev-down and verify targets (section 4.1,
+// last row, revised by docs/plans/M0-pile-dev-harden.md D1 to D4).
+const (
+	composeFlags  = " -p rempart-dev --env-file .env.dev -f docker-compose.yml "
+	devEnvRunner  = "bash scripts/dev-env.sh run "
+	composeViaEnv = devEnvRunner + "docker compose" + composeFlags // D1 form, trailing space included
 )
 
-const verifyIntegrationLine = "bash scripts/dev-env.sh run go test -tags=integration ./..."
+var (
+	composeCallRe      = regexp.MustCompile(`\bdocker(?: |-)compose(?:\s|;|$)`)
+	composeSubcommands = []string{"up", "down"}
+	composeVolumesFlag = regexp.MustCompile(`^(-v|--volumes(=.*)?)$`)
+	dockerVolumeRmRe   = regexp.MustCompile(`\bdocker\s+volume\s+(rm|prune)\b`)
+	makeIncludeRe      = regexp.MustCompile(`^\s*-?s?include\s`)
+	shellSourceRe      = regexp.MustCompile(`\bsource\s`)
+	shellDotSourceRe   = regexp.MustCompile(`(^|[;&|{(]\s*|\bthen\s+|\belse\s+|\bdo\s+)\.\s+\S`)
+	catEnvRe           = regexp.MustCompile(`\bcat\b[^;&|]*\.env`)
+	devVolumeGuardRe   = regexp.MustCompile(`test -f \.env\.dev .*docker volume inspect rempart-dev_pgdata`)
+	verifyDevCallRe    = regexp.MustCompile(`^\$\(MAKE\)(\s+--no-print-directory)?\s+dev$`)
+	integrationTagsRe  = regexp.MustCompile(`-tags[= ]integration\b`)
+)
+
+// D4: the integration tests run in two passes. The first one, without the
+// secrets of .env.dev, covers every package but internal/archtest; the second
+// one gives the secrets to internal/archtest only (the only integration
+// package reading them). No test is excluded by a flag.
+const (
+	verifyPlainLine   = "go test -tags=integration $$(go list ./... | grep -v '/internal/archtest$$')"
+	verifySecretLine  = "bash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest" //nolint:gosec // G101: a Makefile recipe line, not a credential.
+	devPreflightLine  = "bash scripts/dev-preflight.sh"
+	devEnvRunFragment = "scripts/dev-env.sh run"
+)
 
 // composeCall is one docker compose invocation found on a Makefile line.
 type composeCall struct {
@@ -997,7 +1010,7 @@ type composeCall struct {
 }
 
 // findComposeCalls returns the compose invocations of the non-comment lines
-// and reports the ones missing the mandatory flags (D9).
+// and reports the ones missing the mandatory flags (D9, D1, D2).
 func findComposeCalls(mf parsedMakefile, problems *problemList) []composeCall {
 	var calls []composeCall
 	for _, l := range mf.Lines {
@@ -1057,7 +1070,7 @@ func checkDevTargets(mf parsedMakefile) []string {
 	}{
 		{"volume guard (test -f .env.dev || ! docker volume inspect rempart-dev_pgdata)", devVolumeGuardRe.MatchString},
 		{"bash scripts/dev-env.sh ensure", func(l string) bool { return l == "bash scripts/dev-env.sh ensure" }},
-		{"docker compose" + composeFlags + "up -d --wait", isComposeUpWait},
+		{composeViaEnv + "up -d --wait", isComposeUpWait},
 		{"bash scripts/dev-bootstrap.sh", func(l string) bool { return l == "bash scripts/dev-bootstrap.sh" }},
 	}
 	next := 0
@@ -1068,28 +1081,28 @@ func checkDevTargets(mf parsedMakefile) []string {
 	}
 	if next < len(steps) {
 		problems.addf("Makefile: target dev: step %q missing or out of order "+
-			"(want volume guard, dev-env.sh ensure, up -d --wait, dev-bootstrap.sh)", steps[next].desc)
+			"(want volume guard, dev-env.sh ensure, up -d --wait through dev-env.sh run, dev-bootstrap.sh)", steps[next].desc)
 	}
 
-	verify := mf.Rules["verify"].Recipe
-	devCall := slices.IndexFunc(verify, verifyDevCallRe.MatchString)
-	integration := slices.Index(verify, verifyIntegrationLine)
-	switch {
-	case devCall < 0:
-		problems.addf("Makefile: target verify must start the stack with \"$(MAKE) --no-print-directory dev\"")
-	case integration < 0:
-		problems.addf("Makefile: target verify must run %q", verifyIntegrationLine)
-	case devCall > integration:
-		problems.addf("Makefile: target verify runs the integration tests before starting the stack (dev)")
+	if got := mf.Rules["dev-preflight"].Recipe; !slices.Equal(got, []string{devPreflightLine}) {
+		problems.addf("Makefile: target dev-preflight must run exactly %q (D3), got %q", devPreflightLine, got)
 	}
+
+	checkVerifyIntegration(mf, &problems)
 
 	for _, l := range mf.Lines {
 		text := l.Text
 		if strings.HasPrefix(strings.TrimSpace(text), "#") {
 			continue
 		}
-		if integrationTagsRe.MatchString(text) && !integrationViaEnvRe.MatchString(strings.TrimLeft(text, "\t@-+ ")) {
-			problems.addf("Makefile line %d: integration tests without \"bash scripts/dev-env.sh run\" (the secrets of .env.dev are missing): %q", l.Num, text)
+		cmd := strings.TrimLeft(text, "\t@-+ ")
+		if integrationTagsRe.MatchString(text) && cmd != verifyPlainLine && cmd != verifySecretLine {
+			problems.addf("Makefile line %d: integration line not allowed (want exactly %q or %q, D4): %q",
+				l.Num, verifyPlainLine, verifySecretLine, text)
+		}
+		if n := strings.Count(text, devEnvRunFragment); n > 0 && cmd != verifySecretLine && n != strings.Count(text, composeViaEnv) {
+			problems.addf("Makefile line %d: dev-env.sh run gives the secrets to another command than %q or %q (D1, D4): %q",
+				l.Num, strings.TrimSpace(composeViaEnv)+" <subcommand>", verifySecretLine, text)
 		}
 		for _, f := range []struct {
 			re   *regexp.Regexp
@@ -1101,7 +1114,7 @@ func checkDevTargets(mf parsedMakefile) []string {
 			{catEnvRe, "cat .env"},
 			{dockerVolumeRmRe, "docker volume rm or prune"},
 		} {
-			if f.re.MatchString(strings.TrimLeft(text, "\t@-+ ")) {
+			if f.re.MatchString(cmd) {
 				problems.addf("Makefile line %d: %s not allowed (.env.dev is only read by scripts/dev-env.sh, D3): %q", l.Num, f.what, text)
 			}
 		}
@@ -1109,18 +1122,31 @@ func checkDevTargets(mf parsedMakefile) []string {
 	return problems
 }
 
+// checkVerifyIntegration: verify starts the stack (dev), then runs the two
+// integration passes of D4.
+func checkVerifyIntegration(mf parsedMakefile, problems *problemList) {
+	verify := mf.Rules["verify"].Recipe
+	devCall := slices.IndexFunc(verify, verifyDevCallRe.MatchString)
+	if devCall < 0 {
+		problems.addf("Makefile: target verify must start the stack with \"$(MAKE) --no-print-directory dev\"")
+	}
+	for _, want := range []string{verifyPlainLine, verifySecretLine} {
+		switch i := slices.Index(verify, want); {
+		case i < 0:
+			problems.addf("Makefile: target verify must run %q (D4)", want)
+		case devCall > i:
+			problems.addf("Makefile: target verify runs the integration tests before starting the stack (dev): %q", want)
+		}
+	}
+}
+
 // isComposeUpWait reports whether a recipe line runs compose up detached and
-// waiting for the health checks.
+// waiting for the health checks, through dev-env.sh run (D1).
 func isComposeUpWait(line string) bool {
-	loc := composeCallRe.FindStringIndex(line)
-	if loc == nil {
+	if !strings.HasPrefix(line, composeViaEnv) {
 		return false
 	}
-	rest := line[loc[0]+len("docker compose"):]
-	if !strings.HasPrefix(rest, composeFlags) {
-		return false
-	}
-	rest = rest[len(composeFlags):]
+	rest := line[len(composeViaEnv):]
 	if i := strings.IndexAny(rest, ";&|"); i >= 0 {
 		rest = rest[:i]
 	}
@@ -1128,31 +1154,37 @@ func isComposeUpWait(line string) bool {
 	return len(fields) > 0 && fields[0] == "up" && slices.Contains(fields, "-d") && slices.Contains(fields, "--wait")
 }
 
-// Rules dev, dev-down and verify of docs/plans/M0-pile-dev.md section 3.5,
-// verbatim (recipe lines start with a tab).
+// Rules dev, dev-preflight, dev-down and verify of
+// docs/plans/M0-pile-dev-harden.md section 3, verbatim (recipe lines start
+// with a tab); the lines the plan does not cite are those of M0-pile-dev.md
+// section 3.5.
 const (
 	referenceDevRule = "dev: dev-preflight\n" +
 		"\t@test -f .env.dev || ! docker volume inspect rempart-dev_pgdata >/dev/null 2>&1 || { echo \"dev : .env.dev absent mais le volume rempart-dev_pgdata existe (voir docs/SETUP.md).\" >&2; exit 2; }\n" +
 		"\tbash scripts/dev-env.sh ensure\n" +
-		"\tdocker compose --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull\n" +
+		"\tbash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull\n" +
 		"\tbash scripts/dev-bootstrap.sh"
+	referenceDevPreflightRule = "dev-preflight:\n" +
+		"\t@bash scripts/dev-preflight.sh"
 	referenceDevDownRule = "dev-down: dev-preflight\n" +
-		"\t@if [ -f .env.dev ]; then docker compose --env-file .env.dev -f docker-compose.yml down --remove-orphans; \\\n" +
+		"\t@if [ -f .env.dev ]; then bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml down --remove-orphans; \\\n" +
 		"\telif [ -z \"$$(docker ps -aq --filter label=com.docker.compose.project=rempart-dev)\" ]; then echo \"dev-down : aucune pile à arrêter.\"; \\\n" +
 		"\telse echo \"dev-down : conteneurs rempart-dev sans .env.dev (voir docs/SETUP.md).\" >&2; exit 2; fi"
 	referenceVerifyRule = "verify: verify-quick\n" +
 		"\t$(MAKE) --no-print-directory dev\n" +
-		"\tbash scripts/dev-env.sh run go test -tags=integration ./...\n" +
+		"\tgo test -tags=integration $$(go list ./... | grep -v '/internal/archtest$$')\n" +
+		"\tbash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest\n" +
 		"\tgo tool govulncheck ./..."
 )
 
 // referenceDevMakefile is the Makefile of section 6.1 of M0-squelette with the
-// rules dev, dev-down and verify replaced by those of section 3.5.
+// rules dev, dev-preflight, dev-down and verify replaced by those above.
 func referenceDevMakefile(t *testing.T) string {
 	t.Helper()
 	src := targetMakefile
 	for target, block := range map[string]string{
-		"dev": referenceDevRule, "dev-down": referenceDevDownRule, "verify": referenceVerifyRule,
+		"dev": referenceDevRule, "dev-preflight": referenceDevPreflightRule,
+		"dev-down": referenceDevDownRule, "verify": referenceVerifyRule,
 	} {
 		src = editRule(t, src, target, func(string, []string) []string { return strings.Split(block, "\n") })
 	}
@@ -1163,10 +1195,14 @@ func TestMakeDevUsesWait(t *testing.T) {
 	t.Run("negative_controls", func(t *testing.T) {
 		valid := referenceDevMakefile(t)
 		const (
-			upLine     = "\tdocker compose --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull\n"
+			upLine     = "\tbash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull\n"
 			ensureLine = "\tbash scripts/dev-env.sh ensure\n"
 			bootLine   = "\tbash scripts/dev-bootstrap.sh"
-			integLine  = "\tbash scripts/dev-env.sh run go test -tags=integration ./...\n"
+			plainLine  = "\t" + verifyPlainLine + "\n"
+			secretLine = "\t" + verifySecretLine + "\n"
+			devCall    = "\t$(MAKE) --no-print-directory dev\n"
+			flagsD9    = "docker compose without -p rempart-dev --env-file .env.dev -f docker-compose.yml (D9)"
+			stepUp     = "target dev: step \"bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait\" missing or out of order"
 		)
 		cases := []struct {
 			name string
@@ -1177,7 +1213,7 @@ func TestMakeDevUsesWait(t *testing.T) {
 			{
 				name: "no_wait", // mutation 13
 				src:  mustReplace(t, valid, "up -d --wait --wait-timeout 240", "up -d"),
-				want: []string{"target dev: step \"docker compose --env-file .env.dev -f docker-compose.yml up -d --wait\" missing or out of order"},
+				want: []string{stepUp},
 			},
 			{
 				name: "no_preflight", // mutation 14
@@ -1196,48 +1232,124 @@ func TestMakeDevUsesWait(t *testing.T) {
 			},
 			{
 				name: "integration_without_env", // mutation 16
-				src:  mustReplace(t, valid, integLine, "\tgo test -tags=integration ./...\n"),
-				want: []string{"target verify must run \"bash scripts/dev-env.sh run go test -tags=integration ./...\"", "integration tests without \"bash scripts/dev-env.sh run\""},
+				src:  mustReplace(t, valid, secretLine, "\tgo test -count=1 -tags=integration ./internal/archtest\n"),
+				want: []string{"target verify must run \"" + verifySecretLine + "\"", "integration line not allowed"},
 			},
 			{
 				name: "integration_before_dev",
-				src:  mustReplace(t, valid, "\t$(MAKE) --no-print-directory dev\n"+integLine, integLine+"\t$(MAKE) --no-print-directory dev\n"),
-				want: []string{"target verify runs the integration tests before starting the stack"},
+				src:  mustReplace(t, valid, devCall+plainLine+secretLine, plainLine+secretLine+devCall),
+				want: []string{"target verify runs the integration tests before starting the stack (dev): \"" + verifyPlainLine + "\"", "(dev): \"" + verifySecretLine + "\""},
+			},
+			{
+				name: "secret_pass_before_dev",
+				src:  mustReplace(t, valid, devCall+plainLine+secretLine, secretLine+devCall+plainLine),
+				want: []string{"(dev): \"" + verifySecretLine + "\""},
 			},
 			{
 				name: "verify_without_dev",
-				src:  mustReplace(t, valid, "\t$(MAKE) --no-print-directory dev\n", ""),
+				src:  mustReplace(t, valid, devCall, ""),
 				want: []string{"target verify must start the stack"},
 			},
 			{
 				name: "bare_compose",
 				src:  mustReplace(t, valid, upLine, "\tdocker compose up -d --wait\n"),
-				want: []string{"docker compose without --env-file .env.dev -f docker-compose.yml (D9)", "target dev: step \"docker compose"},
+				want: []string{flagsD9, stepUp},
+			},
+			{
+				name: "compose_without_project", // A3
+				src:  mustReplace(t, valid, "-p rempart-dev --env-file .env.dev -f docker-compose.yml up", "--env-file .env.dev -f docker-compose.yml up"),
+				want: []string{flagsD9, stepUp, "dev-env.sh run gives the secrets to"},
+			},
+			{
+				name: "compose_other_project",
+				src:  mustReplace(t, valid, "-p rempart-dev --env-file .env.dev -f docker-compose.yml down", "-p evil --env-file .env.dev -f docker-compose.yml down"),
+				want: []string{flagsD9},
+			},
+			{
+				name: "up_without_runner", // A1
+				src:  mustReplace(t, valid, upLine, "\tdocker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull\n"),
+				want: []string{stepUp},
+			},
+			{
+				name: "second_compose_file",
+				src:  mustReplace(t, valid, "-f docker-compose.yml up", "-f docker-compose.yml -f /tmp/evil.yml up"),
+				want: []string{"docker compose subcommand \"-f\" not allowed"},
 			},
 			{
 				name: "compose_without_explicit_file",
 				src:  mustReplace(t, valid, "down --remove-orphans", "down --remove-orphans; docker compose --env-file .env.dev down"),
-				want: []string{"docker compose without --env-file .env.dev -f docker-compose.yml (D9)"},
+				want: []string{flagsD9},
 			},
 			{
 				name: "legacy_binary",
-				src:  mustReplace(t, valid, upLine, "\tdocker-compose --env-file .env.dev -f docker-compose.yml up -d --wait\n"),
+				src:  mustReplace(t, valid, upLine, "\tdocker-compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait\n"),
 				want: []string{"legacy docker-compose binary"},
 			},
 			{
 				name: "compose_logs",
-				src:  mustReplace(t, valid, bootLine, bootLine+"\n\tdocker compose --env-file .env.dev -f docker-compose.yml logs --no-color"),
+				src:  mustReplace(t, valid, bootLine, bootLine+"\n\tbash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml logs --no-color"),
 				want: []string{"docker compose subcommand \"logs\" not allowed"},
 			},
 			{
 				name: "compose_config",
-				src:  mustReplace(t, valid, bootLine, bootLine+"\n\tdocker compose --env-file .env.dev -f docker-compose.yml config"),
+				src:  mustReplace(t, valid, bootLine, bootLine+"\n\tbash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml config"),
 				want: []string{"docker compose subcommand \"config\" not allowed"},
 			},
 			{
+				name: "secrets_to_all_packages", // A12 (corrected anchor)
+				src:  mustReplace(t, valid, "-count=1 -tags=integration ./internal/archtest\n", "-count=1 -tags=integration ./...\n"),
+				want: []string{"integration line not allowed", "dev-env.sh run gives the secrets to", "target verify must run \"" + verifySecretLine + "\""},
+			},
+			{
+				name: "secrets_to_all_packages_and_archtest",
+				src:  mustReplace(t, valid, secretLine, secretLine+"\tbash scripts/dev-env.sh run go test -tags=integration ./...\n"),
+				want: []string{"integration line not allowed", "dev-env.sh run gives the secrets to"},
+			},
+			{
+				name: "plain_without_skip", // A13
+				src:  mustReplace(t, valid, " | grep -v '/internal/archtest$$')", ")"),
+				want: []string{"integration line not allowed", "target verify must run \"" + verifyPlainLine + "\""},
+			},
+			{
+				name: "plain_whole_module",
+				src:  mustReplace(t, valid, plainLine, "\tgo test -tags=integration ./...\n"),
+				want: []string{"integration line not allowed", "target verify must run \"" + verifyPlainLine + "\""},
+			},
+			{
+				name: "plain_pass_missing",
+				src:  mustReplace(t, valid, plainLine, ""),
+				want: []string{"target verify must run \"" + verifyPlainLine + "\""},
+			},
+			{
+				name: "run_other_command",
+				src:  mustReplace(t, valid, bootLine, bootLine+"\n\tbash scripts/dev-env.sh run go run ./cmd/rempart-worker -dev"),
+				want: []string{"dev-env.sh run gives the secrets to"},
+			},
+			{
+				name: "run_second_command_on_compose_line",
+				src:  mustReplace(t, valid, "--wait-timeout 240 --quiet-pull\n", "--wait-timeout 240 --quiet-pull && bash scripts/dev-env.sh run env\n"),
+				want: []string{"dev-env.sh run gives the secrets to"},
+			},
+			{
+				name: "preflight_inline", // A14 and the M0-T03 form
+				src: editRule(t, valid, "dev-preflight", func(rule string, _ []string) []string {
+					return []string{
+						rule,
+						"\t@docker compose version >/dev/null 2>&1 || { echo \"dev-preflight : compose v2 requis.\" >&2; exit 2; }",
+						"\t@docker info >/dev/null 2>&1 || { echo \"dev-preflight : démon Docker injoignable.\" >&2; exit 2; }",
+					}
+				}),
+				want: []string{"target dev-preflight must run exactly \"bash scripts/dev-preflight.sh\""},
+			},
+			{
+				name: "preflight_disabled", // A14
+				src:  mustReplace(t, valid, "\t@bash scripts/dev-preflight.sh", "\t@true"),
+				want: []string{"target dev-preflight must run exactly \"bash scripts/dev-preflight.sh\""},
+			},
+			{
 				name: "source_env",
-				src:  mustReplace(t, valid, integLine, "\tsource .env.dev && go test -tags=integration ./...\n"),
-				want: []string{"source not allowed"},
+				src:  mustReplace(t, valid, secretLine, "\tsource .env.dev && go test -tags=integration ./...\n"),
+				want: []string{"source not allowed", "integration line not allowed"},
 			},
 			{
 				name: "dot_source_env",
@@ -1272,7 +1384,7 @@ func TestMakeDevUsesWait(t *testing.T) {
 			{
 				name: "ensure_after_up",
 				src:  mustReplace(t, mustReplace(t, valid, ensureLine, ""), bootLine, "\tbash scripts/dev-env.sh ensure\n"+bootLine),
-				want: []string{"target dev: step \"docker compose --env-file .env.dev -f docker-compose.yml up -d --wait\" missing or out of order"},
+				want: []string{stepUp},
 			},
 		}
 		for _, tc := range cases {

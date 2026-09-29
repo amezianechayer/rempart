@@ -1,7 +1,6 @@
 package archtest
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -14,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 )
 
 // Checks of the development stack scripts (docs/plans/M0-pile-dev.md section
@@ -69,32 +67,7 @@ func (r scriptResult) output() string { return redactHex(r.stdout + r.stderr) }
 // dev-env.sh run) and a 30 s deadline.
 func runIn(t *testing.T, dir, name string, args ...string) scriptResult {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	//nolint:gosec // G204: test helper, name and args are literals of these tests or temporary paths.
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.Env = []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-		"TMPDIR=" + t.TempDir(),
-		"LC_ALL=C",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=" + os.DevNull,
-	}
-	var stdout, stderr strings.Builder
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
-	res := scriptResult{stdout: stdout.String(), stderr: stderr.String()}
-	var exitErr *exec.ExitError
-	switch {
-	case err == nil:
-	case errors.As(err, &exitErr):
-		res.code = exitErr.ExitCode()
-	default:
-		t.Fatalf("%s %q: %v", name, args, err)
-	}
-	return res
+	return runInEnv(t, dir, nil, name, args...)
 }
 
 // devEnvWorkspace describes the Git state of the directory dev-env.sh runs in.
@@ -269,6 +242,7 @@ func devEnvChecks() []devEnvCheck {
 		{"missing_key", checkDevEnvMissingKey},
 		{"run_exports", checkDevEnvRunExports},
 		{"run_without_command", checkDevEnvRunWithoutCommand},
+		{"run_overrides_environment", checkDevEnvRunOverridesEnvironment}, // M0-T03b (an), (ao)
 	}
 }
 
@@ -545,11 +519,15 @@ func checkDevEnvStatic(src string) []string {
 }
 
 // referenceDevEnv is scripts/dev-env.sh of docs/plans/M0-pile-dev.md section
-// 3.2, verbatim.
+// 3.2 with the run header and function of docs/plans/M0-pile-dev-harden.md
+// section 3 (amendment V1: the COMPOSE_* names come from "${!COMPOSE_@}", a
+// bash expansion, instead of compgen, absent from a bash built without
+// programmable completion).
 const referenceDevEnv = `#!/usr/bin/env bash
 # Secrets de la pile de dev (M0-T03), depuis la racine du dépôt. N'affiche aucune valeur.
 #   ensure          crée .env.dev s'il manque (600), puis le valide
-#   run CMD [ARG]   valide .env.dev, exporte ses variables, exécute CMD
+#   run CMD [ARG]   valide .env.dev, exporte ses variables (prioritaires sur le shell),
+#                   retire les variables COMPOSE_*, exécute CMD (M0-T03b)
 set -euo pipefail
 umask 077
 readonly file=.env.dev
@@ -587,6 +565,8 @@ run() {
   check
   local k v
   while IFS='=' read -r k v; do export "$k=$v"; done <"$file"
+  local n
+  for n in "${!COMPOSE_@}"; do unset -v "$n"; done
   exec "$@"
 }
 
@@ -667,6 +647,27 @@ func TestDevEnvScript(t *testing.T) {
 				old: "  exec \"$@\"\n", replacement: "  \"$@\" || true\n",
 				want: []string{"(exit status of the command): exit 0, want 7"},
 			},
+			{
+				name: "run_keeps_compose", check: "run_overrides_environment", // M0-T03b A5
+				old: "  for n in \"${!COMPOSE_@}\"; do unset -v \"$n\"; done\n", replacement: "  :\n",
+				want: []string{"COMPOSE_PROJECT_NAME still exported", "COMPOSE_FILE still exported"},
+			},
+			{
+				name: "run_does_not_export", check: "run_overrides_environment", // M0-T03b A6
+				old: "  while IFS='=' read -r k v; do export \"$k=$v\"; done <\"$file\"\n", replacement: "  :\n",
+				want: []string{"run env: POSTGRES_PASSWORD not overridden by .env.dev", "OPENBAO_DEV_ROOT_TOKEN not overridden by .env.dev"},
+			},
+			{
+				name: "run_uses_compgen", check: "run_overrides_environment", // plan V0 form (risk R2)
+				old:         "  for n in \"${!COMPOSE_@}\"; do unset -v \"$n\"; done\n",
+				replacement: "  for n in $(compgen -e); do\n    if [[ $n == COMPOSE_* ]]; then unset -v \"$n\"; fi\n  done\n",
+				want:        []string{"without compgen: run env: COMPOSE_PROJECT_NAME still exported"},
+			},
+			{
+				name: "run_clears_environment", check: "run_overrides_environment",
+				old: "  exec \"$@\"\n", replacement: "  exec env -i \"$@\"\n",
+				want: []string{"DOCKER_HOST not kept"},
+			},
 		}
 		for _, m := range mutations {
 			t.Run(m.name, func(t *testing.T) {
@@ -688,6 +689,10 @@ func TestDevEnvScript(t *testing.T) {
 				expectProblems(t, checkDevEnvStatic(mustReplace(t, referenceDevEnv, s.old, s.replacement)), []string{s.want})
 			})
 		}
+
+		for _, c := range scriptModeCases() { // M0-T03b D5
+			t.Run("modes_"+c.name, func(t *testing.T) { expectProblems(t, checkScriptModes(c.modes), c.want) })
+		}
 	})
 
 	t.Run("repository", func(t *testing.T) {
@@ -702,16 +707,16 @@ func TestDevEnvScript(t *testing.T) {
 		}
 		t.Run("umask_first", func(t *testing.T) { reportProblems(t, checkDevEnvStatic(src)) })
 		t.Run("scripts_mode_755", func(t *testing.T) {
-			for _, name := range []string{"scripts/dev-env.sh", "scripts/dev-bootstrap.sh", "scripts/dev/postgres-init.sh"} {
+			modes := map[string]fs.FileMode{}
+			for _, name := range devScriptNames() {
 				info, err := fs.Stat(fsys, name)
 				if err != nil {
-					t.Errorf("%s: %v (created by M0-T03)", name, err)
+					t.Errorf("%s: %v (created by M0-T03 or M0-T03b)", name, err)
 					continue
 				}
-				if perm := info.Mode().Perm(); perm != 0o755 {
-					t.Errorf("%s: mode %o, want 755", name, perm)
-				}
+				modes[name] = info.Mode().Perm()
 			}
+			reportProblems(t, checkScriptModes(modes))
 		})
 	})
 }

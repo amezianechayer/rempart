@@ -317,3 +317,7 @@ Aucune boucle ni activité nouvelle : pas de fiche de boucle.
 5. Principal, impl B : `loopsrc.go`, `client.go`, `config.go`, `run.go` ; critères 10 à 16.
 6. `security-reviewer`, `acceptance-verifier` sur B (B1 à B18, critère 17).
 7. Principal : menaces, proposition 0007, STATUS ((an) à (as) soldées sauf résidu (aq), (bd) à (bh) soldées, (bi) en M1), commit `fix(worker,archtest,llm): harden dial, flags, usage and source rules (M0-T03b)`, `phase free`, `/close-milestone M0`.
+
+## V1
+
+V1 (test-author, étape A, base 3287b6b) : R1 levé sans changement (Docker 29.3.1 : `docker context inspect` sans argument rend `DOCKER_HOST` s'il est défini ; contexte absent : code 1). R2 infirmé : sans `compgen` (`enable -n compgen`), `$(compgen -e)` échoue dans la liste du `for`, `set -e` ne s'applique pas, `run` exécute la commande avec les `COMPOSE_*` ; section 3, `run` : `local n` puis `for n in "${!COMPOSE_@}"; do unset -v "$n"; done` (développement bash, sans complétion) ; A5 : `for n in "${!COMPOSE_@}"; do unset -v "$n"; done` -> `:` ; `run_overrides_environment` rejoue le cas avec `BASH_ENV` qui désactive `compgen`. A12 (ancre absente) : `-count=1 -tags=integration ./internal/archtest` -> `-count=1 -tags=integration ./...`. Critère 3 : insérer `| grep -v 'docker compose version'` avant le dernier `grep` (sinon `1`, ligne de `dev-preflight.sh`). Section 4 : `makefile_test.go` modifié aussi (règle 7 exigeait `go test -tags=integration ./...`, absent de D4 ; `$$(go list ./...` accepté).

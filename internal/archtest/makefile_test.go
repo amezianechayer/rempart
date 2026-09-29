@@ -459,10 +459,13 @@ func checkVerifyTargets(mf parsedMakefile, problems *problemList) {
 		problems.addf("Makefile line %d: target verify must have verify-quick as a prerequisite", verify.Line)
 	}
 	joined := strings.Join(verify.Recipe, "\n")
-	for _, want := range []string{"go test -tags=integration ./...", "go tool govulncheck ./..."} {
-		if !strings.Contains(joined, want) {
-			problems.addf("Makefile: target verify must run %q", want)
-		}
+	// M0-T03b (D4): the integration tests of the whole module may run as the
+	// two passes of TestMakeDevUsesWait, the first one listing the packages.
+	if !strings.Contains(joined, "go test -tags=integration ./...") && !strings.Contains(joined, "go test -tags=integration $$(go list ./...") {
+		problems.addf("Makefile: target verify must run %q", "go test -tags=integration ./...")
+	}
+	if !strings.Contains(joined, "go tool govulncheck ./...") {
+		problems.addf("Makefile: target verify must run %q", "go tool govulncheck ./...")
 	}
 	for _, l := range mf.Lines {
 		if strings.Contains(l.Text, "govulncheck") && !strings.Contains(l.Text, "go tool govulncheck") {
