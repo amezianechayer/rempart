@@ -49,9 +49,23 @@ RULES = [
      "bac à sable : seule la forme `make sandbox-apply SCENARIO=<nom>` (ou sandbox-destroy), seule sur la ligne, "
      "est permise ; elle demande l'approbation humaine (T29)."),
     # T31 et T32 : options et variables qui changent le fichier lu par make ou ignorent les échecs de recette.
-    (r"\b(MAKEFLAGS|MAKEFILES|GNUMAKEFLAGS)\s*=|\bg?make\b[^|;&]*\s(-[a-zA-Z]*[if][a-zA-Z]*|--ignore-errors|--eval|--file|--makefile)\b",
+    (r"\b(MAKEFLAGS|MAKEFILES|GNUMAKEFLAGS)\s*=|\bg?make\b[^|;&]*\s(-[a-zA-Z]*i[a-zA-Z]*\b|-[a-zA-Z]*f[a-zA-Z]*\b(?!\s+Makefile(\s|$))|--ignore-errors\b|--eval\b|--file\b|--makefile\b)",
      "make : -i, -f, --eval, MAKEFLAGS et MAKEFILES interdits ; ils ignorent les échecs de recette ou changent "
      "le fichier exécuté (T31, T32)."),
+    # T76 : secrets de la pile de dev recopiés dans le contexte de l'agent, donc chez le fournisseur LLM.
+    (r"\b(cat|less|more|head|tail|grep|awk|sed|cut|strings|xxd|od|base64|source)\b[^|;&]*\.env\.dev\b|(^|[;&|]\s*)\.\s+\S*\.env\.dev\b",
+     "lecture directe de .env.dev interdite : ses valeurs ne doivent jamais entrer dans le contexte (T76). "
+     "Utilise `bash scripts/dev-env.sh run <commande>`."),
+    (r"\bdocker\b[^|;&]*\bcompose\b[^|;&]*\sconfig\b(?![^|;&]*\s--(images|services|volumes|profiles|networks)\b)(?![^;&]*\|\s*jq\b)",
+     "`docker compose config` affiche les secrets substitués : seules les formes --images, --services, "
+     "--volumes, --profiles, --networks ou un filtre `| jq` ciblé sont permises (T76)."),
+    (r"\bdocker\b[^|;&]*\b(inspect|container\s+inspect)\b(?![^|;&]*\s(--format|-f)[\s=])",
+     "`docker inspect` sans --format ciblé affiche l'environnement des conteneurs, donc leurs secrets (T76)."),
+    (r"\bdocker\b[^|;&]*\b(exec|run)\b[^|;&]*\s(env|printenv|export|set)(\s|$)|\bdocker\b[^|;&]*\blogs\b[^|;&]*\bopenbao\b",
+     "affichage de l'environnement d'un conteneur ou des journaux d'OpenBao interdit (T76)."),
+    # (aq), T76 : lecture de fichiers de secrets dans les conteneurs ou le système.
+    (r"\bdocker\b[^|;&]*\b(exec|cp)\b[^|;&]*(\b(cat|head|tail|less|more|strings|xxd|od|base64|grep|sed|awk)\b|/proc/|/etc/temporal/config)|/proc/[^\s/]+/environ\b",
+     "lecture de secrets dans un conteneur de la pile ou dans /proc/*/environ interdite (T76, obligation aq)."),
 ]
 
 

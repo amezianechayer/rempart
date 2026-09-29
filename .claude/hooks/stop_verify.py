@@ -59,7 +59,8 @@ def check_plan():
             return ["go", "build", "./..."], "go build ./... (phase tests)", "last_compiled"
         return None
     if has_target():
-        return ["make", TARGET], f"make {TARGET}", "last_verified"
+        # T32 : -f Makefile, un GNUmakefile ou makefile ne remplace jamais le Makefile relu.
+        return ["make", "-f", "Makefile", TARGET], f"make -f Makefile {TARGET}", "last_verified"
     return None
 
 
