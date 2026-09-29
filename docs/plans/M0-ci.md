@@ -502,3 +502,7 @@ T6, T32 : tests ci-dessus, 0007. T82 (nouvelle, S, T, E) : CI détournée (`pull
 5. `security-reviewer` ; `acceptance-verifier` : critères 1 à 7, W1 à W11, G1 à G5.
 6. (principal) T6, T32, T82 dans `docs/02-THREAT-MODEL.md` ; R4 et T32 dans `docs/STATUS.md`.
 7. (humain, H1) Pousser, ouvrir la PR, rejouer le critère 5 ; protéger `main` (contrôle `verify` requis, "Require review from Code Owners") ; Actions : jeton en lecture, `actions/*` seulement avec SHA obligatoire, approbation des contributeurs externes ; critère 8.
+
+## V1 (2026-09-29, test-author)
+(1) `TestParseCIWorkflowDecoding` ajouté (lève R6), hors du préfixe `TestCI` : le critère 1 reste à `7`. (2) R6 levé : `on` décodé comme la chaîne `"on"`, clé nulle donne `nil`, `0` et `false` deviennent `"0"` et `"false"`, champs sans étiquette appariés en minuscules et toute autre casse refusée par `KnownFields` ; plus strict que GitHub : `pull_request: {}`, `fetch-depth: 00`, `cache: no` signalés. (3) Mutation G6 : supprimer `strict.KnownFields(true)` fait échouer `TestParseCIWorkflowDecoding`. (4) Le harnais refuse toute commande contenant `make` suivi de `-f` tant que la proposition 0007 n'est pas appliquée : éditions du workflow et mutations par fichier de script ou outil d'écriture. Aucune ancre à corriger.
+
