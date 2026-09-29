@@ -1,22 +1,22 @@
 # M0-T04 `ci` : GitHub Actions exécutant `make verify` sur chaque PR
 
-2026-09-29, `architect`, proposé. Sources : fiche M0-T04 et H1, `Makefile`, `scripts/dev-preflight.sh`, `docs/SETUP.md`, `.github/CODEOWNERS`, `docs/STATUS.md` (T32), menaces T6, T32.
+2026-09-29, `architect`, proposé. Sources : fiche M0-T04 et H1, `Makefile`, `scripts/dev-preflight.sh`, `docs/SETUP.md`, `.github/CODEOWNERS`, `docs/STATUS.md`, T6, T32.
 
 ## 1. Objectif et périmètre
 
-Chaque PR et chaque push sur `main` exécutent `make -f Makefile verify` sur GitHub Actions, chaîne d'approvisionnement durcie (dépôt public, T6). Livrables : `.github/workflows/verify.yml`, `internal/archtest/ci_test.go` (7 tests de la fiche et `TestNoShadowMakefile`), proposition `docs/proposals/0007-ci-makefile-codeowners.md`. Hors périmètre : modifier `.github/CODEOWNERS` (protégé), Dependabot, OPA en CI (aucun `.rego`), `EVAL_BASE` dans le `Makefile` (T23), H1. Ni API, ni dépendance, ni ADR (réversible).
+Chaque PR et chaque push sur `main` exécutent `make -f Makefile verify` sur GitHub Actions, chaîne d'approvisionnement durcie (T6). Livrables : `.github/workflows/verify.yml`, `internal/archtest/ci_test.go` (7 tests de la fiche et `TestNoShadowMakefile`), proposition 0007. Hors périmètre : modifier `.github/CODEOWNERS` (protégé), Dependabot, OPA en CI, `EVAL_BASE` dans le `Makefile` (T23), H1. Ni API, ni dépendance, ni ADR.
 
 ## 2. Décisions (les plus strictes)
 
-D1 `pull_request` sans filtre et `push` sur `main`, rien d'autre. D2 `contents: read`, `persist-credentials: false`, aucun secret ni jeton nommé. D3 `actions/checkout` et `actions/setup-go` seulement, par SHA et `# vX.Y.Z` ; golangci-lint par `go install` (`sum.golang.org`), version de `docs/SETUP.md`. D4 `go-version-file: go.mod`, `cache: false`, `GOTOOLCHAIN: local`. D5 `make -f Makefile`, aucune autre variable de job. D6 `EVAL_BASE` = SHA de base par `env`, jamais `${{ }}` dans `run`. D7 `ubuntu-24.04`, 45 minutes, `concurrency` par PR. D8 `.github/` = `CODEOWNERS` et `workflows/verify.yml`. D9 `/Makefile` dans `CODEOWNERS` (0007).
+D1 `pull_request` sans filtre, `push` sur `main`, rien d'autre. D2 `contents: read`, `persist-credentials: false`, aucun secret ni jeton. D3 `actions/checkout`, `actions/setup-go` seulement, par SHA et `# vX.Y.Z` ; golangci-lint par `go install`, version de `docs/SETUP.md`. D4 `go-version-file: go.mod`, `cache: false`, `GOTOOLCHAIN: local`. D5 `make -f Makefile`, aucune autre variable. D6 `EVAL_BASE` = SHA de base par `env`, jamais `${{ }}` dans `run`. D7 `ubuntu-24.04`, 45 minutes, `concurrency`. D8 `.github/` = `CODEOWNERS`, `workflows/verify.yml`. D9 `/Makefile` dans `CODEOWNERS`.
 
 ## 3. Runner
 
-`ubuntu-24.04` : Docker, compose v2, contexte `default` en `unix:///var/run/docker.sock`, `DOCKER_HOST` vide, `runner` dans le groupe `docker` : `dev-preflight` passe si le moteur est en 28 ou plus (28.x à la date de connaissance), à confirmer avant H1 par `gh api repos/actions/runner-images/contents/images/ubuntu/Ubuntu2404-Readme.md --jq .content | base64 -d | grep -i docker`.
+`ubuntu-24.04` : Docker, compose v2, contexte `default` en socket unix local, `DOCKER_HOST` vide : `dev-preflight` passe si le moteur est en 28 ou plus (28.x à la date de connaissance, à confirmer avant H1 dans `Ubuntu2404-Readme.md` de `actions/runner-images`).
 
 ## 4. Code de référence
 
-`verify.yml` = texte exact de `validCIWorkflow`, précédé de `# M0-T04: make verify on every pull request and on main.`, SHA et versions de la section 5 à la place de `ciSHAA`, `v5.0.0`, `ciSHAB`, `v6.0.0`. `ci_test.go` (indenté à deux espaces ici, `gofumpt` rétablit les tabulations) réutilise `repoRoot`, `readRepoFile`, `problemList`, `expectProblems`, `expectError`, `reportProblems`, `mustReplace`, `checkComposeNode` :
+`verify.yml` = `validCIWorkflow` précédé de `# M0-T04: make verify on every pull request and on main.`, avec les SHA et versions de la section 5 au lieu de `ciSHAA`, `v5.0.0`, `ciSHAB`, `v6.0.0`. `ci_test.go`, indenté ici à deux espaces (`gofumpt` rétablit les tabulations), réutilise les aides de `repo_test.go` et `checkComposeNode` :
 
 ```go
 package archtest
@@ -114,7 +114,6 @@ type ciWorkflow struct {
   }
 }
 
-// parseCIWorkflow: one document, checkComposeNode, closed schema (KnownFields).
 func parseCIWorkflow(src string) (wf ciWorkflow, err error) {
   dec := yaml.NewDecoder(strings.NewReader(src))
   var doc yaml.Node
@@ -132,8 +131,6 @@ func parseCIWorkflow(src string) (wf ciWorkflow, err error) {
   }
   return wf, err
 }
-
-var ciSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func checkCITriggers(wf ciWorkflow, _ string) (p problemList) {
   if k := slices.Sorted(maps.Keys(wf.On)); !slices.Equal(k, []string{"pull_request", "push"}) {
@@ -168,7 +165,7 @@ func checkCIPinned(wf ciWorkflow, src string) (p problemList) {
     for _, s := range j.Steps {
       if s.Uses != "" {
         name, sha, _ := strings.Cut(s.Uses, "@")
-        if !slices.Contains(allowed, name) || !ciSHARe.MatchString(sha) {
+        if !slices.Contains(allowed, name) || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) {
           p.addf("uses %q: want %q pinned by a 40-hex commit SHA", s.Uses, allowed)
         }
         got = append(got, name)
@@ -261,8 +258,7 @@ func checkCIGoVersion(wf ciWorkflow, _ string) (p problemList) {
 
 func wants(s string) []string { return slices.DeleteFunc([]string{s}, func(x string) bool { return x == "" }) }
 
-// runCI: validCIWorkflow, then (old, new, want) mutations (want: a problem
-// substring, or "err:" then an error substring), then the repository file.
+// runCI: valid control, (old, new, want) mutations ("err:": parse error), repository.
 func runCI(t *testing.T, check, repo func(ciWorkflow, string) problemList, muts ...string) {
   t.Helper()
   muts = append([]string{"", "", ""}, muts...)
@@ -303,7 +299,7 @@ func TestCIWorkflowTriggers(t *testing.T) {
       got = append(got, e.Name())
     }
     if strings.Join(got, " ") != want {
-      t.Errorf("%s holds %q, want exactly %q (closed list)", dir, got, want)
+      t.Errorf("%s holds %q, want exactly %q", dir, got, want)
     }
   }
   runCI(t, checkCITriggers, checkCITriggers,
@@ -336,7 +332,7 @@ func TestCIRunsMakeVerify(t *testing.T) {
   setup, err := readRepoFile(fsys, "docs/SETUP.md", "M0")
   m := regexp.MustCompile(`golangci-lint@(v2\.[0-9]+\.[0-9]+)\b`).FindStringSubmatch(setup)
   if err != nil || m == nil {
-    t.Fatalf("docs/SETUP.md: no pinned golangci-lint@v2.x.y (%v)", err)
+    t.Fatalf("docs/SETUP.md: no golangci-lint@v2.x.y (%v)", err)
   }
   runCI(t,
     func(wf ciWorkflow, _ string) problemList { return checkCIVerify(wf, "v2.13.2") },
@@ -365,9 +361,6 @@ func TestCIGoVersionFromGoMod(t *testing.T) {
     "GOTOOLCHAIN: local", "GOTOOLCHAIN: auto", `GOTOOLCHAIN "auto"`)
 }
 
-// checkCodeowners: comments and "/pattern @owner..." lines only; "**" crosses
-// directories, "*" does not, a pattern covers what is below it; for each path,
-// the last matching rule (without owner: unset) must name exactly the human.
 func checkCodeowners(src string) (p problemList, err error) {
   type rule struct {
     re     *regexp.Regexp
@@ -394,7 +387,7 @@ func checkCodeowners(src string) (p problemList, err error) {
     "CLAUDE.md", ".claude/settings.json", ".github/CODEOWNERS", ".github/workflows/verify.yml",
     "docs/decisions/0001-x.md", "Makefile", "evals/demo/baseline.json", "evals/demo/baseline/fake/m.json", "evals/demo/suite.yaml",
   } {
-    var owners []string
+    var owners []string // the last matching rule wins
     for _, r := range rules {
       if r.re.MatchString(path) {
         owners = r.owners
@@ -430,7 +423,7 @@ func TestCodeownersProtectsBaselines(t *testing.T) {
     })
   }
   _, fsys := repoRoot(t)
-  src, err := readRepoFile(fsys, ".github/CODEOWNERS", "human, proposals 0005 and 0007")
+  src, err := readRepoFile(fsys, ".github/CODEOWNERS", "human, proposal 0007")
   if err != nil {
     t.Fatal(err)
   }
@@ -441,8 +434,6 @@ func TestCodeownersProtectsBaselines(t *testing.T) {
   reportProblems(t, p)
 }
 
-// checkNoShadowMakefile (T32): without -f, make and every $(MAKE) read
-// GNUmakefile then makefile before Makefile.
 func checkNoShadowMakefile(fsys fs.FS) (p problemList) {
   entries, err := fs.ReadDir(fsys, ".")
   if err != nil {
@@ -450,7 +441,7 @@ func checkNoShadowMakefile(fsys fs.FS) (p problemList) {
   }
   for _, e := range entries {
     if n := e.Name(); n != "Makefile" && (strings.EqualFold(n, "makefile") || strings.EqualFold(n, "gnumakefile")) {
-      p.addf("%s at the repository root would replace Makefile", n)
+      p.addf("%s at the repository root would replace Makefile (T32)", n)
     }
   }
   return p
@@ -467,7 +458,7 @@ func TestNoShadowMakefile(t *testing.T) {
 
 ## 5. SHA des actions
 
-Aucun SHA n'est écrit ici. Pour `actions/checkout` puis `actions/setup-go`, l'agent principal (MCP GitHub ou `gh api`) : (1) version `gh api repos/OWNER/REPO/releases/latest --jq .tag_name`, au moins `v5.0.0` (checkout) et `v6.0.0` (setup-go) ; (2) SHA `gh api repos/OWNER/REPO/git/ref/tags/TAG --jq '.object.type+" "+.object.sha'`, déréférencé par `git/tags/<sha>` tant que le type est `tag` ; (3) seconde source égale : MCP `list_tags` (`commit.sha`) ; tag amont, jamais un SHA de fork ; (4) `gh api 'repos/OWNER/REPO/contents/action.yml?ref=<sha>' --jq .content | base64 -d | grep -c 'using: .node24.'` : `1` ; (5) tag, SHA et sorties dans `docs/STATUS.md`, l'humain rejoue le critère 5.
+Aucun SHA n'est écrit ici. Pour chaque action, l'agent principal (MCP GitHub ou `gh api`) : (1) `releases/latest`, au moins `v5.0.0` (checkout), `v6.0.0` (setup-go) ; (2) `gh api repos/OWNER/REPO/git/ref/tags/TAG --jq '.object.type+" "+.object.sha'`, déréférencé par `git/tags/<sha>` tant que le type est `tag` ; (3) seconde source égale : MCP `list_tags` (`commit.sha`), jamais un SHA de fork ; (4) `node24` dans `action.yml` à ce SHA ; (5) sorties dans `docs/STATUS.md`.
 
 ## 6. Tests d'acceptation
 
@@ -478,13 +469,13 @@ Aucun SHA n'est écrit ici. Pour `actions/checkout` puis `actions/setup-go`, l'a
 5. `grep -Eo 'uses: [^@ ]+@[0-9a-f]{40} # v[0-9.]+' .github/workflows/verify.yml | while read -r _ ref _ tag; do r=${ref%@*}; [ "$(gh api "repos/$r/commits/$tag" --jq .sha)" = "${ref#*@}" ] && echo "ok $r" || echo "MISMATCH $r"; done` : `ok actions/checkout`, `ok actions/setup-go`.
 6. `LC_ALL=C grep -c '[^[:print:]]' .github/workflows/verify.yml` : `0`.
 7. `make verify-quick; echo rc=$?` : `rc=0`.
-8. Après H1 : `gh run list --workflow verify.yml --limit 1 --json conclusion --jq '.[0].conclusion'` : `success` ; `gh run view <id> --log` contient `dev-preflight : Docker Engine 28`.
+8. Après H1 : `gh run list --workflow verify.yml --limit 1 --json conclusion --jq '.[0].conclusion'` : `success` ; le journal contient `dev-preflight : Docker Engine 28`.
 
-Mutations (une à la fois, puis restaurées) : `go test ./internal/archtest/ -run '^<Test>$'` finit par `FAIL`. Ancres uniques ; G compilables.
+Mutations, une à la fois puis restaurées ; `go test ./internal/archtest/ -run '^<Test>$'` finit par `FAIL` (ancres uniques, G compilables) :
 - TestCIWorkflowTriggers : W1 `  pull_request:` en `  pull_request_target:`.
-- TestCIPermissionsReadOnly : W2 `      contents: read` (6 espaces) en `      contents: write`.
+- TestCIPermissionsReadOnly : W2 `      contents: read` en `      contents: write`.
 - TestCIActionsPinnedBySHA : W3 `actions/checkout@<sha>` en `actions/checkout@v5` ; G1 `` `^[0-9a-f]{40}$` `` en `` `^[0-9a-f]{7,40}$` ``.
-- TestCIRunsMakeVerify : W4 `make -f Makefile verify` en `make verify` ; W5 `github.event.pull_request.base.sha || github.event.before` en `github.head_ref` ; W6 `ubuntu-24.04` en `ubuntu-latest` ; W7 ligne `if: always()` supprimée ; W8 ligne `persist-credentials: false` supprimée ; G2 `strings.Contains(s.Run, "${{")` en `strings.Contains(s.Run, "${{ secrets")`.
+- TestCIRunsMakeVerify : W4 `make -f Makefile verify` en `make verify` ; W5 `base.sha || github.event.before` en `head_ref` ; W6 `ubuntu-24.04` en `ubuntu-latest` ; W7 et W8 lignes `if: always()` et `persist-credentials: false` supprimées ; G2 `strings.Contains(s.Run, "${{")` en `strings.Contains(s.Run, "${{ secrets")`.
 - TestCINoSecrets : W9 ligne `      K: ${{ secrets.K }}` après `      GOTOOLCHAIN: local` ; G3 `|github\.token` supprimé.
 - TestCIGoVersionFromGoMod : W10 `go-version-file: go.mod` en `go-version: stable`.
 - TestCodeownersProtectsBaselines : G4 ligne `break` après `owners = r.owners`.
@@ -492,22 +483,22 @@ Mutations (une à la fois, puis restaurées) : `go test ./internal/archtest/ -ru
 
 ## 7. Risques
 
-R1 autre version de Docker sur l'image : échec précoce de `Docker preflight`. R2 limite de Docker Hub : échec visible. R3 SHA vieillissants : revue humaine périodique. R4 PR de fork : jeton en lecture, aucun identifiant, approbation des contributeurs externes. R5 `EVAL_BASE` vu par make : T23 le fige (`override EVAL_BASE := $(value EVAL_BASE)`, `callerVariables()`). R6 TestCodeowners rouge avant 0007 : l'impl attend l'humain. R7 comportement de `go.yaml.in/yaml/v3` (clé `on`, clé nulle, `0` et `false` en `string`, champs sans étiquette) à confirmer en phase tests, sans affaiblir un contrôle.
+R1 Docker de l'image inférieur à 28 : échec précoce. R2 SHA vieillissants : revue humaine. R3 PR de fork : jeton en lecture, aucun identifiant. R4 `EVAL_BASE` vu par make : T23 le fige (`override EVAL_BASE := $(value EVAL_BASE)`, `callerVariables()`). R5 TestCodeowners rouge avant 0007. R6 `go.yaml.in/yaml/v3` (clé `on`, clé nulle, `0` et `false` en `string`, champs sans étiquette) à confirmer en phase tests, sans affaiblir un contrôle.
 
-## 8. Modèle de menace (écrit par l'agent principal)
+## 8. Menaces (écrites par l'agent principal)
 
-T6 et T32 : tests ci-dessus, CODEOWNERS et Stop hook (0007). T82 (nouvelle, S, T, E) : CI détournée (`pull_request_target`, jeton en écriture, étiquette mobile ou SHA de fork, injection `${{ }}`, cache empoisonné, second workflow, runner self-hosted) ; D1 à D8.
+T6, T32 : tests ci-dessus, 0007. T82 (nouvelle, S, T, E) : CI détournée (`pull_request_target`, jeton en écriture, étiquette mobile, SHA de fork, injection `${{ }}`, cache, second workflow, runner self-hosted) ; D1 à D8.
 
-## 9. Décisions ouvertes (défaut : le plus strict)
+## 9. Décisions ouvertes (défaut le plus strict)
 
-1. `pull_request` sans filtre (défaut) ou `main` seulement. 2. `go install` (défaut) ou `golangci-lint-action`. 3. `cache: false` (défaut). 4. `/Makefile` exigé (défaut) ; si 0007 est refusée, le retirer de `checkCodeowners`, résidu T32 consigné. 5. Docker inférieur à 28 : échec (défaut) ou `docker-ce` épinglé (ADR). 6. Dependabot : non (défaut).
+1. `pull_request` sans filtre (défaut) ou `main`. 2. `go install` (défaut) ou `golangci-lint-action`. 3. `cache: false` (défaut). 4. `/Makefile` exigé (défaut) ; si 0007 est refusée, le retirer de `checkCodeowners`. 5. Docker inférieur à 28 : échec (défaut). 6. Dependabot : non (défaut).
 
 ## 10. Tâches ordonnées
 
-1. (principal) `docs/proposals/0007-ci-makefile-codeowners.md` et `.patch` : `/Makefile @amezianechayer` dans `CODEOWNERS`, `stop_verify.py` en `make -f Makefile verify-quick`, cas `test_hooks.sh`.
-2. (tests) `ci_test.go` : rouges, les 6 `TestCI*` et TestCodeowners avant 0007 ; `go build ./...` vert.
+1. (principal) Proposition 0007 : `/Makefile @amezianechayer` dans `CODEOWNERS`, `stop_verify.py` en `make -f Makefile verify-quick`, cas `test_hooks.sh`.
+2. (tests) `ci_test.go` : `TestCI*` rouges, TestCodeowners rouge avant 0007 ; `go build ./...` vert.
 3. (principal) SHA (section 5) dans `docs/STATUS.md`.
-4. (impl, après application de 0007) `verify.yml` ; critères 1 à 7.
-5. `security-reviewer` (T6, T32, T82) ; `acceptance-verifier` : critères 1 à 7, W1 à W11, G1 à G5.
-6. (principal) T6, T32, T82 dans `docs/02-THREAT-MODEL.md` ; R5 et T32 dans `docs/STATUS.md` ; CI dans `docs/SETUP.md`.
-7. (humain, H1) Pousser, ouvrir la PR, rejouer le critère 5 ; protéger `main` (contrôle `verify` requis, "Require review from Code Owners", pas de push forcé) ; Actions : jeton en lecture par défaut, `actions/*` seulement avec SHA obligatoire, approbation des contributeurs externes ; critère 8.
+4. (impl, 0007 appliquée) `verify.yml` ; critères 1 à 7.
+5. `security-reviewer` ; `acceptance-verifier` : critères 1 à 7, W1 à W11, G1 à G5.
+6. (principal) T6, T32, T82 dans `docs/02-THREAT-MODEL.md` ; R4 et T32 dans `docs/STATUS.md`.
+7. (humain, H1) Pousser, ouvrir la PR, rejouer le critère 5 ; protéger `main` (contrôle `verify` requis, "Require review from Code Owners") ; Actions : jeton en lecture, `actions/*` seulement avec SHA obligatoire, approbation des contributeurs externes ; critère 8.
