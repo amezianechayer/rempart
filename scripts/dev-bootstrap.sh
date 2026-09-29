@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Préparation idempotente après up --wait (M0-T03). A1 : ni Transit, ni clé, ni jeton du worker.
 set -euo pipefail
-compose=(docker compose --env-file .env.dev -f docker-compose.yml)
+compose=(bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml)
 tcli() { "${compose[@]}" exec -T temporal temporal "$@" --address temporal:7233 >/dev/null 2>&1; }
 ok=
 for _ in $(seq 1 60); do

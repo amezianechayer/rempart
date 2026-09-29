@@ -2,7 +2,7 @@
 # Bases et rôles distincts (M0-T03, ADR 0003), une fois sur volume vide.
 # Aucun mot de passe littéral ni en argument.
 set -euo pipefail
-for v in TEMPORAL_DB_PASSWORD REMPART_DB_PASSWORD; do
+for v in POSTGRES_PASSWORD TEMPORAL_DB_PASSWORD REMPART_DB_PASSWORD; do
   [[ "${!v:-}" =~ ^[0-9a-f]{64}$ ]] || { echo "postgres-init : $v absent ou mal formé." >&2; exit 2; }
 done
 psql -v ON_ERROR_STOP=1 --no-psqlrc --username postgres --dbname postgres <<'SQL'

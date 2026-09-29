@@ -33,7 +33,8 @@ verify-quick:
 
 verify: verify-quick
 	$(MAKE) --no-print-directory dev
-	bash scripts/dev-env.sh run go test -tags=integration ./...
+	go test -tags=integration $$(go list ./... | grep -v '/internal/archtest$$')
+	bash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest
 	go tool govulncheck ./...
 
 # Étape OPA active seulement s'il existe au moins un fichier .rego sous POLICIES_DIR.
@@ -69,7 +70,7 @@ update-baseline:
 dev: dev-preflight
 	@test -f .env.dev || ! docker volume inspect rempart-dev_pgdata >/dev/null 2>&1 || { echo "dev : .env.dev absent mais le volume rempart-dev_pgdata existe (voir docs/SETUP.md)." >&2; exit 2; }
 	bash scripts/dev-env.sh ensure
-	docker compose --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull
+	bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull
 	bash scripts/dev-bootstrap.sh
 
 # Démo de bout en bout (M0-T20) : faux LLM derrière -dev, vérificateur qui refuse tout,
@@ -82,13 +83,11 @@ demo:
 
 # Vérifie Docker Engine, le plugin compose v2 et l'accès au démon, sans rien démarrer.
 dev-preflight:
-	@docker compose version >/dev/null 2>&1 || { echo "dev-preflight : Docker Engine et le plugin compose v2 sont requis (voir docs/SETUP.md)." >&2; exit 2; }
-	@docker info >/dev/null 2>&1 || { echo "dev-preflight : démon Docker injoignable (voir docs/SETUP.md)." >&2; exit 2; }
-	@echo "dev-preflight : Docker et compose v2 disponibles."
+	@bash scripts/dev-preflight.sh
 
 # Arrêt idempotent ; volume conservé (réinitialisation : docs/SETUP.md).
 dev-down: dev-preflight
-	@if [ -f .env.dev ]; then docker compose --env-file .env.dev -f docker-compose.yml down --remove-orphans; \
+	@if [ -f .env.dev ]; then bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml down --remove-orphans; \
 	elif [ -z "$$(docker ps -aq --filter label=com.docker.compose.project=rempart-dev)" ]; then echo "dev-down : aucune pile à arrêter."; \
 	else echo "dev-down : conteneurs rempart-dev sans .env.dev (voir docs/SETUP.md)." >&2; exit 2; fi
 

@@ -1,4 +1,4 @@
-# Pile de dev (M0-T03). Toujours : docker compose --env-file .env.dev -f docker-compose.yml
+# Pile de dev (M0-T03). Toujours : bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml
 name: rempart-dev
 
 services:

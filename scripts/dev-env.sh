@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Secrets de la pile de dev (M0-T03), depuis la racine du dépôt. N'affiche aucune valeur.
 #   ensure          crée .env.dev s'il manque (600), puis le valide
-#   run CMD [ARG]   valide .env.dev, exporte ses variables, exécute CMD
+#   run CMD [ARG]   valide .env.dev, exporte ses variables (prioritaires sur le shell),
+#                   retire les variables COMPOSE_*, exécute CMD (M0-T03b)
 set -euo pipefail
 umask 077
 readonly file=.env.dev
@@ -39,6 +40,8 @@ run() {
   check
   local k v
   while IFS='=' read -r k v; do export "$k=$v"; done <"$file"
+  local n
+  for n in "${!COMPOSE_@}"; do unset -v "$n"; done
   exec "$@"
 }
 
