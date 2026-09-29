@@ -459,3 +459,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-29 15:42 [harnais] PHASE FREE (discipline TDD suspendue) : tâche M0-T20 worker-e2e terminée
 
 - 2026-09-29 15:42 [harnais] phase : impl -> free
+
+- 2026-09-29 16:05 [harnais] phase : free -> tests
