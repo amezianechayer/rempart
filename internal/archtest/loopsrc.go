@@ -70,9 +70,9 @@ func moduleFile(p string) bool {
 
 var foreignSources = []string{".s", ".S", ".sx", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".m", ".f", ".F", ".for", ".f90", ".syso", ".swig", ".swigcxx"}
 
-var searchNames = []string{"GetTypedSearchAttributes", "UpsertTypedSearchAttributes", "UpsertSearchAttributes", "SearchAttributes", "TypedSearchAttributes", "UpsertMemo", "Memo", "UntypedSearchAttributes"}
+var searchNames = []string{"GetTypedSearchAttributes", "UpsertTypedSearchAttributes", "UpsertSearchAttributes", "SearchAttributes", "TypedSearchAttributes", "UpsertMemo", "Memo", "UntypedSearchAttributes", "UpsertedMemo"}
 
-var searchKeys = []string{"Memo", "SearchAttributes", "TypedSearchAttributes", "UntypedSearchAttributes"} // (bd)
+var searchKeys = []string{"Memo", "SearchAttributes", "TypedSearchAttributes", "UntypedSearchAttributes", "UpsertedMemo"} // (bd), V3 C4
 
 func ignoredElem(e string) bool { return e != "" && (e[0] == '_' || e[0] == '.' || e == "testdata") }
 
@@ -236,7 +236,7 @@ func (c *srcChecker) file(sf *SourceFile) {
 	wf := sf.Pkg == c.loops || under(sf.Pkg, c.loops+"/domain") || under(sf.Pkg, c.loops+"/codec") ||
 		under(sf.Pkg, c.loops) && c.wfPkg[sf.Pkg]
 	cmd := under(sf.Pkg, c.module+"/cmd")
-	sa := wf || cmd || c.sdkPkg[sf.Pkg] // (bd)
+	sa := wf || cmd || inLoops || c.sdkPkg[sf.Pkg] // (bd), V3 C4: every package under internal/loops
 	for _, is := range sf.File.Imports {
 		p, _ := strconv.Unquote(is.Path.Value)
 		if is.Name != nil && is.Name.Name == "." {

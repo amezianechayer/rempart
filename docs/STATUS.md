@@ -473,3 +473,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-29 20:16 [harnais] RETOUR EN PHASE TESTS depuis impl : M0-T03b V3: tests des correctifs apres BLOCK
 
 - 2026-09-29 20:16 [harnais] phase : impl -> tests
+
+- 2026-09-29 20:30 [harnais] phase : tests -> impl
