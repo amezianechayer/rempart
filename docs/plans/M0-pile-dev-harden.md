@@ -328,3 +328,12 @@ V2 (test-author, étape B, base 8af56e3) : section 5, `loopsrc.go` : `var search
 
 V2 (principal) : revue sécurité et acceptation faites une seule fois, sur les étapes A et B réunies (au lieu d'une revue après A), pour économiser un cycle ; tests de B commités en WIP à la demande du hook git (`7d59343`), passage en impl par la même méthode qu'en M0-T20 (`git reset --soft` sur le parent le temps du changement de phase, sans réécriture d'historique distant).
 
+## V3 (principal, revue sécurité BLOCK du 2026-09-29)
+
+Correctifs, un cycle tests puis impl :
+- C1 [haute] `dev-env.sh` : `.env.dev` lu une seule fois ; `check` remplit un tableau de paires validées, `run` exporte ce tableau (`builtin export`) ; une dernière ligne sans saut de ligne est exportée. Test : `run_overrides_environment` rejoué avec un fichier sans saut de ligne final.
+- C2 [haute] `docs/SETUP.md` : toute commande compose sous la forme D1 (`bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml ...`), tests d'intégration sous la forme D4 (secrets au seul `./internal/archtest`), Docker Engine 28, socket unix local, `COMPOSE_*` ignorées. Test d'architecture : toute ligne de `docs/SETUP.md` et de `docker-compose.yml` qui cite `docker compose` ou `docker-compose` a la forme D1 ; toute ligne qui cite `dev-env.sh run go test` vise `./internal/archtest` seul.
+- C3 [moyenne] `dev-env.sh run` : si la commande est `docker`, `bash scripts/dev-preflight.sh` est exécuté avant `exec` (démon local, Engine 28), sortie de preflight sur stderr. Test avec un faux `docker` et `DOCKER_HOST=tcp://...` : code 2, commande non exécutée.
+- C4 [moyenne] `loopsrc.go` : portée de `loops-no-search-attributes` étendue à tout paquet sous `internal/loops` (`sa := wf || cmd || inLoops`) et `UpsertedMemo` ajouté aux clés et sélecteurs. Tests : `api_start_request_memo` (`workflowservice.StartWorkflowExecutionRequest{Memo: nil}` dans un paquet de `internal/loops` sans SDK), `api_upserted_memo`, `alias_options_in_loops` (alias déclaré dans un paquet qui importe le SDK, rempli dans un autre paquet de `internal/loops`).
+- Résidus consignés (obligations) : décodage ou `reflect` vers des options SDK sous `cmd/` ; usage sous-déclaré à 0 sur un appel réussi (T10) ; erreurs après connexion non opaques et double préfixe `rempart-worker:` ; `BASH_ENV`, `ENV` et fonctions bash exportées (T77) ; proposition 0007 (garde `guard_bash` contre `exec` dans la pile).
+
