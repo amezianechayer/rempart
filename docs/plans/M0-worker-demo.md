@@ -301,7 +301,7 @@ Copie privée avec la section 3 : tout vert, dont `TestLoopSourcesConform` et `T
 13. `git diff --exit-code T20A -- 'internal/**/*_test.go'` (fin de A), `git diff --exit-code T20B -- '*_test.go' internal/loops/demo/testdata` (fin de B) : `rc=0`.
 14. Section 7 sur copie privée (`mktemp -d`, SHA consigné, T72) : toutes détectées.
 15. `make verify-quick; echo rc=$?` et `make verify; echo rc=$?` : `rc=0`.
-16. `wc -c < docs/plans/M0-worker-demo.md` : au plus `31000` (V1) ; `perl -CSD -ne 'print if /[^\n\x20-\x7E\x{C0}-\x{FF}\x{152}\x{153}]/' docs/plans/M0-worker-demo.md | wc -l` : `0`.
+16. `wc -c < docs/plans/M0-worker-demo.md` : au plus `33000` (V2) ; `perl -CSD -ne 'print if /[^\n\x20-\x7E\x{C0}-\x{FF}\x{152}\x{153}]/' docs/plans/M0-worker-demo.md | wc -l` : `0`.
 
 ## 7. Mutations (une à la fois ; le test cité échoue)
 
@@ -375,3 +375,8 @@ Copie privée avec la section 3 : tout vert, dont `TestLoopSourcesConform` et `T
 - 5.1 : `TestUsageErrorBound` : `canceled_after_call` ; `TestDemoProposeErrors` : `invalid_tenant` devient `direct_invalid_tenant` ; `rules_test.go` : 9 règles, fixtures `anthropic-unwired-m0`, autres fixtures jugées sans elle ; `loops_test.go` : `shadowed_package` à clés.
 - 7 : A9 : `any(errors.Unwrap(err))` : `any(errors.Join(err))`, test `-run TestRunLoop` (préfixe) ; A14 : `id == tenancy.System { // T34, T75` : `id == "" { // T34, T75` ; A16 à A19 ajoutées (test-author).
 - 6.16 : plafond porté à 31000 octets.
+
+## V2 (test-author, copie 0b0f1f9)
+- 7 : B9 : `set.SetOutput(io.Discard) // flag errors quote values` : `_ = io.Discard` (sinon `io` inutilisé : échec de compilation, non du test), avec `"%w: %w", ErrConfig, err)`.
+- 6.8, 11 (tâche 5) : sur copie, `make demo` lancerait `make dev` sans `.env.dev` (pile partagée) : critère 8 vérifié par la ligne `go run` de 4.4 ; `make demo` au dépôt en tâche 7.
+- 6.16 : plafond porté à 33000 octets.

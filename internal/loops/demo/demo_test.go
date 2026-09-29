@@ -892,3 +892,25 @@ func TestDemoInputDecodingFrozen(t *testing.T) {
 		})
 	}
 }
+
+// TestDemoExecutionTimeout (c, D16): the execution timeout of one demo run is
+// the bound of RunLoop, the approval wait, one late verification, the commit
+// and a fixed margin: 228 s for the 5 s wait of make demo.
+func TestDemoExecutionTimeout(t *testing.T) {
+	if demo.IDPrefix != "l0-demo" || demo.ExecutionMargin != 30*time.Second {
+		t.Errorf("IDPrefix %q, ExecutionMargin %v; want l0-demo, 30s", demo.IDPrefix, demo.ExecutionMargin)
+	}
+	if got := demo.Spec().MaxRunDuration(); got != 153*time.Second {
+		t.Errorf("Spec().MaxRunDuration() = %v, want 153s", got)
+	}
+	cases := []struct{ approval, want time.Duration }{
+		{5 * time.Second, 228 * time.Second},
+		{time.Hour, 3823 * time.Second},
+		{demo.MinApprovalTimeout, 224 * time.Second},
+	}
+	for _, tc := range cases {
+		if got := demo.ExecutionTimeout(tc.approval); got != tc.want {
+			t.Errorf("ExecutionTimeout(%v) = %v, want %v", tc.approval, got, tc.want)
+		}
+	}
+}
