@@ -44,21 +44,38 @@ func (o *once) Set(s string) error {
 	return nil
 }
 
+// onceBool is a boolean flag set at most once, to true or false only (bg).
+type onceBool struct{ v, set bool }
+
+func (o *onceBool) String() string { return strconv.FormatBool(o != nil && o.v) }
+
+func (o *onceBool) IsBoolFlag() bool { return true }
+
+func (o *onceBool) Set(s string) error {
+	if o.set || (s != "true" && s != "false") {
+		return errors.New("flag repeated or not a boolean")
+	}
+	o.v, o.set = s == "true", true
+	return nil
+}
+
 func LoadConfig(args []string) (Config, error) {
 	set := flag.NewFlagSet("rempart-worker", flag.ContinueOnError)
 	set.SetOutput(io.Discard) // flag errors quote values
 	var addr, ns, provider, script, tenant once
+	var dev, demoOnce onceBool
 	var cfg Config
 	set.Var(&addr, "temporal-address", "")
 	set.Var(&ns, "namespace", "")
 	set.Var(&provider, "llm", "")
 	set.Var(&script, "fake-script", "")
 	set.Var(&tenant, "tenant", "")
-	set.BoolVar(&cfg.Dev, "dev", false, "")
-	set.BoolVar(&cfg.DemoOnce, "demo-once", false, "")
+	set.Var(&dev, "dev", "")
+	set.Var(&demoOnce, "demo-once", "")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 {
 		return Config{}, fmt.Errorf("%w: command line refused", ErrConfig)
 	}
+	cfg.Dev, cfg.DemoOnce = dev.v, demoOnce.v
 	switch provider.v {
 	case "fake":
 	case "anthropic":

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -20,6 +22,10 @@ import (
 	"github.com/amezianechayer/rempart/internal/loops/demo/activities"
 	"github.com/amezianechayer/rempart/internal/tenancy"
 )
+
+var ErrTemporalUnavailable = errors.New("rempart-worker: Temporal unavailable")
+
+const workerIdentityPrefix = "rempart-worker"
 
 const (
 	fakeModel           = "fake-model-v1"
@@ -45,6 +51,10 @@ func run(ctx context.Context, cfg Config, stdout io.Writer) error {
 	if !cfg.Dev || cfg.LLMProvider != "fake" || !cfg.DemoOnce { // T41, even if LoadConfig is bypassed
 		return ErrFakeRequiresDev
 	}
+	opts, err := clientOptions(cfg)
+	if err != nil {
+		return err
+	}
 	cl, err := fakeClient(cfg)
 	if err != nil {
 		return err
@@ -57,12 +67,9 @@ func run(ctx context.Context, cfg Config, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	tc, err := client.Dial(client.Options{
-		HostPort: cfg.TemporalAddress, Namespace: cfg.Namespace,
-		Logger: tlog.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))),
-	})
+	tc, err := client.DialContext(ctx, opts)
 	if err != nil {
-		return err
+		return ErrTemporalUnavailable // (bh): fixed message, the cause may quote the address
 	}
 	defer tc.Close()
 	w := worker.New(tc, queue, worker.Options{})
@@ -86,6 +93,21 @@ func run(ctx context.Context, cfg Config, stdout io.Writer) error {
 		return err
 	}
 	return json.NewEncoder(stdout).Encode(demoResult{WorkflowID: id, Output: out})
+}
+
+// clientOptions checks the address again (bh, T14); opaque identity: no host name, no pid.
+func clientOptions(cfg Config) (client.Options, error) {
+	if !loopbackAddr(cfg.TemporalAddress) || !validNamespace(cfg.Namespace) {
+		return client.Options{}, fmt.Errorf("%w: -temporal-address or -namespace", ErrConfig)
+	}
+	identity, err := loops.NewWorkflowID(workerIdentityPrefix)
+	if err != nil {
+		return client.Options{}, err
+	}
+	return client.Options{
+		HostPort: cfg.TemporalAddress, Namespace: cfg.Namespace, Identity: identity,
+		Logger: tlog.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))),
+	}, nil
 }
 
 func fakeClient(cfg Config) (*llm.Client, error) {

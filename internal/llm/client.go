@@ -32,6 +32,7 @@ const (
 	MaxRequestTextBytes = 1 << 20
 	MaxCorrectionsLimit = 3
 	MaxTokensLimit      = 1 << 16
+	MaxReportedTokens   = 1 << 24
 )
 
 type Config struct {
@@ -170,6 +171,10 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 			bound += call.MaxTokens + RequestBytes(req)
 			return spent(opaque(ErrProviderFailed, err))
 		}
+		if !validUsage(resp.Usage) { // (be): a negative or oversized count would lower the bound
+			bound += call.MaxTokens + RequestBytes(req) // (be)
+			return spent(ErrProviderFailed)
+		}
 		tr.Usage.InputTokens += resp.Usage.InputTokens
 		tr.Usage.OutputTokens += resp.Usage.OutputTokens
 		bound += resp.Usage.InputTokens + resp.Usage.OutputTokens
@@ -186,6 +191,11 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 		}
 		req.Messages = append(req.Messages, correction(verr))
 	}
+}
+
+// validUsage: each declared count is in [0, MaxReportedTokens] (be, T10).
+func validUsage(u domain.Usage) bool {
+	return u.InputTokens >= 0 && u.OutputTokens >= 0 && u.InputTokens <= MaxReportedTokens && u.OutputTokens <= MaxReportedTokens
 }
 
 // loadPrompt: a secret in a system prompt is refused, never masked (hash).

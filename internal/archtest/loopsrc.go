@@ -70,7 +70,9 @@ func moduleFile(p string) bool {
 
 var foreignSources = []string{".s", ".S", ".sx", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".m", ".f", ".F", ".for", ".f90", ".syso", ".swig", ".swigcxx"}
 
-var searchNames = []string{"GetTypedSearchAttributes", "UpsertTypedSearchAttributes", "UpsertSearchAttributes", "SearchAttributes", "TypedSearchAttributes", "UpsertMemo", "Memo"}
+var searchNames = []string{"GetTypedSearchAttributes", "UpsertTypedSearchAttributes", "UpsertSearchAttributes", "SearchAttributes", "TypedSearchAttributes", "UpsertMemo", "Memo", "UntypedSearchAttributes"}
+
+var searchKeys = []string{"Memo", "SearchAttributes", "TypedSearchAttributes", "UntypedSearchAttributes"} // (bd)
 
 func ignoredElem(e string) bool { return e != "" && (e[0] == '_' || e[0] == '.' || e == "testdata") }
 
@@ -135,6 +137,7 @@ type srcChecker struct {
 	specMethods   map[string]bool
 	imps          map[*ast.File]map[string]string
 	wfPkg         map[string]bool // packages with a file importing sdk/workflow
+	sdkPkg        map[string]bool // packages with a file importing the SDK (bd)
 	types         []typeRef       // type declarations of the module
 	specTypes     map[string]bool // "pkg.name" of LoopSpec, ApprovalRequest and the types built on them
 	out           []SourceViolation
@@ -144,6 +147,7 @@ func CheckLoopSources(module string, files []SourceFile) []SourceViolation {
 	c := &srcChecker{
 		module: module, loops: module + "/internal/loops", kind: map[string]string{},
 		funcs: map[string]funcRef{}, imps: map[*ast.File]map[string]string{}, wfPkg: map[string]bool{},
+		sdkPkg: map[string]bool{},
 	}
 	for i := range files {
 		c.index(&files[i])
@@ -189,6 +193,9 @@ func (c *srcChecker) index(sf *SourceFile) {
 		if p == "go.temporal.io/sdk/workflow" {
 			c.wfPkg[sf.Pkg] = true
 		}
+		if under(p, "go.temporal.io/sdk") { // (bd)
+			c.sdkPkg[sf.Pkg] = true
+		}
 	}
 	c.imps[sf.File] = imp
 	declare := func(name, kind string) {
@@ -228,6 +235,8 @@ func (c *srcChecker) file(sf *SourceFile) {
 	dec := inLoops && !under(sf.Pkg, fake) // (au)
 	wf := sf.Pkg == c.loops || under(sf.Pkg, c.loops+"/domain") || under(sf.Pkg, c.loops+"/codec") ||
 		under(sf.Pkg, c.loops) && c.wfPkg[sf.Pkg]
+	cmd := under(sf.Pkg, c.module+"/cmd")
+	sa := wf || cmd || c.sdkPkg[sf.Pkg] // (bd)
 	for _, is := range sf.File.Imports {
 		p, _ := strconv.Unquote(is.Path.Value)
 		if is.Name != nil && is.Name.Name == "." {
@@ -239,6 +248,9 @@ func (c *srcChecker) file(sf *SourceFile) {
 		if under(p, c.module) && slices.ContainsFunc(strings.Split(p, "/"), ignoredElem) { // T73
 			c.add(sf, is, "no-ignored-dir-import", "import "+p)
 		}
+		if under(p, c.module+"/cmd") && !under(sf.Pkg, c.module+"/cmd") { // (bf)
+			c.add(sf, is, "no-cmd-import", sf.Pkg+" imports "+p)
+		}
 		if inLoops && slices.Contains([]string{"reflect", "unsafe", "C"}, p) { // (aw)
 			c.add(sf, is, "loops-no-reflection", "import "+p)
 		}
@@ -249,8 +261,12 @@ func (c *srcChecker) file(sf *SourceFile) {
 	}
 	for _, cg := range sf.File.Comments { // (aw)
 		for _, cm := range cg.List {
-			if inLoops && strings.HasPrefix(cm.Text, "//go:linkname") {
+			switch {
+			case !strings.HasPrefix(cm.Text, "//go:linkname"):
+			case inLoops: // (aw)
 				c.add(sf, cm, "loops-no-reflection", "go:linkname directive")
+			default: // (bf)
+				c.add(sf, cm, "no-linkname", "go:linkname directive")
 			}
 		}
 	}
@@ -277,7 +293,7 @@ func (c *srcChecker) file(sf *SourceFile) {
 				c.add(sf, n, "loops-raw-decoding-target", n.Sel.Name+" used as a value, not called")
 			case wf && n.Sel.Name == "Validator":
 				c.add(sf, n, "loops-raw-decoding-target", "Validator set outside a composite literal")
-			case wf && slices.Contains(searchNames, n.Sel.Name):
+			case sa && slices.Contains(searchNames, n.Sel.Name):
 				c.add(sf, n, "loops-no-search-attributes", n.Sel.Name)
 			case !called && under(sf.Pkg, c.loops) && c.specMethods[sf.Pkg+"."+n.Sel.Name]:
 				c.add(sf, n, "loops-no-spec-entrypoint", n.Sel.Name+" takes a LoopSpec or an ApprovalRequest and is used as a value")
@@ -319,13 +335,16 @@ func (c *srcChecker) file(sf *SourceFile) {
 			switch n.Type.(type) {
 			case *ast.ArrayType, *ast.MapType: // an elided type counts as a struct (D12)
 			default:
-				if wf && unkeyed(n) { // (at)
+				if (wf || cmd) && unkeyed(n) { // (at), (bd)
 					c.add(sf, n, "loops-keyed-literals", "composite literal element without field name")
 				}
 			}
 		case *ast.KeyValueExpr:
 			if k, isID := n.Key.(*ast.Ident); wf && isID && k.Name == "Validator" && !c.admittedHandler(sf, declNames(stack[1]), n.Value) {
 				c.add(sf, n, "loops-raw-decoding-target", "Validator handler takes a parameter other than workflow.Context or converter.RawValue")
+			}
+			if k, isID := n.Key.(*ast.Ident); sa && isID && slices.Contains(searchKeys, k.Name) { // (bd)
+				c.add(sf, n, "loops-no-search-attributes", "key "+k.Name+" in a composite literal")
 			}
 		case *ast.FuncLit:
 			if c.takesSpec(sf, n.Type) {
