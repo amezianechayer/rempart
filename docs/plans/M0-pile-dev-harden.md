@@ -337,3 +337,4 @@ Correctifs, un cycle tests puis impl :
 - C4 [moyenne] `loopsrc.go` : portée de `loops-no-search-attributes` étendue à tout paquet sous `internal/loops` (`sa := wf || cmd || inLoops`) et `UpsertedMemo` ajouté aux clés et sélecteurs. Tests : `api_start_request_memo` (`workflowservice.StartWorkflowExecutionRequest{Memo: nil}` dans un paquet de `internal/loops` sans SDK), `api_upserted_memo`, `alias_options_in_loops` (alias déclaré dans un paquet qui importe le SDK, rempli dans un autre paquet de `internal/loops`).
 - Résidus consignés (obligations) : décodage ou `reflect` vers des options SDK sous `cmd/` ; usage sous-déclaré à 0 sur un appel réussi (T10) ; erreurs après connexion non opaques et double préfixe `rempart-worker:` ; `BASH_ENV`, `ENV` et fonctions bash exportées (T77) ; proposition 0007 (garde `guard_bash` contre `exec` dans la pile).
 
+- Taille du plan portée à 32000 octets (V3).
