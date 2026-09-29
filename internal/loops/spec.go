@@ -105,6 +105,13 @@ func validName(s string) bool {
 
 func invalidName(s string) bool { return !validName(s) }
 
+// MaxRunDuration bounds RunLoop (c): wall time, then a verification started
+// just before it: MaxActivityAttempts attempts, backoff 1 s then 2 s.
+func (s LoopSpec) MaxRunDuration() time.Duration {
+	s = s.withDefaults()
+	return s.Budget.MaxWallTime + MaxActivityAttempts*s.ActivityTimeout + 3*time.Second
+}
+
 func (s LoopSpec) withDefaults() LoopSpec {
 	if s.SwitchAfter == 0 {
 		s.SwitchAfter = DefaultSwitchAfter

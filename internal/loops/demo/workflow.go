@@ -30,7 +30,15 @@ const (
 	ErrTypeInvalidDemoInput = "InvalidDemoInput"
 	identityBytes           = "abcdefghijklmnopqrstuvwxyz0123456789._-@"
 	planDomain              = "rempart-demo-plan-v1\n"
+	IDPrefix                = "l0-demo"
+	ExecutionMargin         = 30 * time.Second
 )
+
+// ExecutionTimeout bounds one execution (c, D16): RunLoop, the approval wait,
+// one late verification, the commit and a margin.
+func ExecutionTimeout(approvalTimeout time.Duration) time.Duration {
+	return Spec().MaxRunDuration() + approvalTimeout + loops.VerifyApprovalTimeout + CommitTimeout + ExecutionMargin
+}
 
 // Input: no phase, no loop result, no canary (amendment A1).
 type Input struct {

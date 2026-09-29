@@ -22,7 +22,7 @@ override GOFLAGS := -mod=readonly
 export GOFLAGS
 
 .PHONY: verify-quick verify opa-test arch-test evals update-baseline
-.PHONY: dev dev-preflight dev-down sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
+.PHONY: dev dev-preflight dev-down demo sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
 
 verify-quick:
 	go build ./...
@@ -71,6 +71,14 @@ dev: dev-preflight
 	bash scripts/dev-env.sh ensure
 	docker compose --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull
 	bash scripts/dev-bootstrap.sh
+
+# Démo de bout en bout (M0-T20) : faux LLM derrière -dev, vérificateur qui refuse tout,
+# tenant de démo fixe. Sortie standard : un seul document JSON.
+demo:
+	@$(MAKE) --no-print-directory dev >&2
+	@go run ./cmd/rempart-worker -dev -demo-once -llm=fake -tenant=0d3e0000-0000-4000-8000-000000000001 \
+		-temporal-address=127.0.0.1:7233 -namespace=rempart \
+		-fake-script=internal/loops/demo/testdata/scripts/converge.json
 
 # Vérifie Docker Engine, le plugin compose v2 et l'accès au démon, sans rien démarrer.
 dev-preflight:
