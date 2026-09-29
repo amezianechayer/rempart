@@ -486,3 +486,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-29 21:00 [harnais] PHASE FREE (discipline TDD suspendue) : tâche M0-T03b pile-dev-harden terminée
 
 - 2026-09-29 21:00 [harnais] phase : impl -> free
+
+- 2026-09-29 21:10 [harnais] phase : free -> tests
