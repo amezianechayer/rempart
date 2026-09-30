@@ -19,13 +19,13 @@ func TestContradictionsDetected(t *testing.T) {
 		})
 	}
 
-	legacyRegion := func(r string) func(m map[string]any) {
-		return func(m map[string]any) { item(m, "workloads", wLegacyVMs)["region"] = r }
+	legacyRegion := func(r string) func(t *testing.T, m map[string]any) {
+		return func(t *testing.T, m map[string]any) { item(t, m, "workloads", wLegacyVMs)["region"] = r }
 	}
 	cases := []struct {
 		name  string
 		ctx   TenantContext
-		edit  func(m map[string]any)
+		edit  func(t *testing.T, m map[string]any)
 		code  string
 		field string
 	}{
@@ -49,9 +49,9 @@ func TestContradictionsDetected(t *testing.T) {
 		},
 		{
 			name: "residency_fr_in_frankfurt",
-			edit: func(m map[string]any) {
-				item(m, "data", 0)["residency"] = "fr"
-				item(m, "workloads", wLegacyVMs)["region"] = "eu-central-1"
+			edit: func(t *testing.T, m map[string]any) {
+				item(t, m, "data", 0)["residency"] = "fr"
+				item(t, m, "workloads", wLegacyVMs)["region"] = "eu-central-1"
 			},
 			code:  "CONTRA-RESIDENCY",
 			field: "workloads[legacy-vms].region",
@@ -70,15 +70,15 @@ func TestContradictionsDetected(t *testing.T) {
 		},
 		{
 			name: "forbidden_cloud_in_constraints",
-			edit: func(m map[string]any) {
-				m["constraints"].(map[string]any)["forbidden_clouds"] = []any{"azure"}
+			edit: func(t *testing.T, m map[string]any) {
+				obj(t, m, "constraints")["forbidden_clouds"] = []any{"azure"}
 			},
 			code:  "CONTRA-FORBIDDEN-CLOUD",
 			field: "workloads[legacy-vms].cloud",
 		},
 		{
 			name:  "runs_on_vm_group",
-			edit:  func(m map[string]any) { item(m, "workloads", wObs)["runs_on"] = "legacy-vms" },
+			edit:  func(t *testing.T, m map[string]any) { item(t, m, "workloads", wObs)["runs_on"] = "legacy-vms" },
 			code:  "CONTRA-RUNS-ON-NOT-CLUSTER",
 			field: "workloads[obs].runs_on",
 		},

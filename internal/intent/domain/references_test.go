@@ -21,43 +21,43 @@ func TestReferencesMustExist(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		edit     func(m map[string]any)
+		edit     func(t *testing.T, m map[string]any)
 		code     string
 		resource string
 	}{
 		{
 			name:     "stored_in",
-			edit:     func(m map[string]any) { item(m, "data", 0)["stored_in"] = []any{"ghost"} },
+			edit:     func(t *testing.T, m map[string]any) { item(t, m, "data", 0)["stored_in"] = []any{"ghost"} },
 			code:     "INTENT-REF-UNKNOWN",
 			resource: "data[customer-db].stored_in",
 		},
 		{
 			name:     "runs_on",
-			edit:     func(m map[string]any) { item(m, "workloads", wObs)["runs_on"] = "ghost" },
+			edit:     func(t *testing.T, m map[string]any) { item(t, m, "workloads", wObs)["runs_on"] = "ghost" },
 			code:     "INTENT-REF-UNKNOWN",
 			resource: "workloads[obs].runs_on",
 		},
 		{
 			name:     "connectivity_from",
-			edit:     func(m map[string]any) { item(m, "connectivity", 0)["from"] = "ghost" },
+			edit:     func(t *testing.T, m map[string]any) { item(t, m, "connectivity", 0)["from"] = "ghost" },
 			code:     "INTENT-REF-UNKNOWN",
 			resource: "connectivity[0].from",
 		},
 		{
 			name:     "connectivity_to",
-			edit:     func(m map[string]any) { item(m, "connectivity", 0)["to"] = "ghost" },
+			edit:     func(t *testing.T, m map[string]any) { item(t, m, "connectivity", 0)["to"] = "ghost" },
 			code:     "INTENT-REF-UNKNOWN",
 			resource: "connectivity[0].to",
 		},
 		{
 			name:     "exposure_workload",
-			edit:     func(m map[string]any) { item(m, "exposure", 0)["workload"] = "ghost" },
+			edit:     func(t *testing.T, m map[string]any) { item(t, m, "exposure", 0)["workload"] = "ghost" },
 			code:     "INTENT-REF-UNKNOWN",
 			resource: "exposure[0].workload",
 		},
 		{
 			name: "duplicate_workload",
-			edit: func(m map[string]any) { item(m, "workloads", wGitops)["id"] = "obs" },
+			edit: func(t *testing.T, m map[string]any) { item(t, m, "workloads", wGitops)["id"] = "obs" },
 			code: "INTENT-REF-DUPLICATE",
 		},
 	}

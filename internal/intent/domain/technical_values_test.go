@@ -20,55 +20,55 @@ func TestTechnicalValuesRejected(t *testing.T) {
 		name  string
 		text  string
 		value string
-		edit  func(m map[string]any)
+		edit  func(t *testing.T, m map[string]any)
 	}{
 		{
 			name:  "ipv4_cidr_in_notes",
 			value: "10.0.0.0/16",
-			edit: func(m map[string]any) {
-				item(m, "workloads", wAppCluster)["notes"] = "réseau 10.0.0.0/16 pour le cluster"
+			edit: func(t *testing.T, m map[string]any) {
+				item(t, m, "workloads", wAppCluster)["notes"] = "réseau 10.0.0.0/16 pour le cluster"
 			},
 		},
 		{
 			name:  "ipv6_cidr_in_purpose",
 			value: "fd00::/8",
-			edit: func(m map[string]any) {
-				item(m, "connectivity", 0)["purpose"] = "plage fd00::/8 côté Azure"
+			edit: func(t *testing.T, m map[string]any) {
+				item(t, m, "connectivity", 0)["purpose"] = "plage fd00::/8 côté Azure"
 			},
 		},
 		{
 			name:  "asn_in_summary",
 			value: "AS64512",
-			edit: func(m map[string]any) {
-				m["summary"] = m["summary"].(string) + " Annonce BGP depuis AS64512."
+			edit: func(t *testing.T, m map[string]any) {
+				m["summary"] = str(t, m, "summary") + " Annonce BGP depuis AS64512."
 			},
 		},
 		{
 			name:  "iam_role_in_justification",
 			value: "arn:aws:iam::123456789012:role/admin",
-			edit: func(m map[string]any) {
-				item(m, "exposure", 0)["justification"] = "accès par arn:aws:iam::123456789012:role/admin"
+			edit: func(t *testing.T, m map[string]any) {
+				item(t, m, "exposure", 0)["justification"] = "accès par arn:aws:iam::123456789012:role/admin"
 			},
 		},
 		{
 			name:  "allowed_sources_not_in_text",
 			value: "198.51.100.0/24",
-			edit: func(m map[string]any) {
-				item(m, "exposure", 0)["allowed_sources"] = []any{"198.51.100.0/24"}
+			edit: func(t *testing.T, m map[string]any) {
+				item(t, m, "exposure", 0)["allowed_sources"] = []any{"198.51.100.0/24"}
 			},
 		},
 		{
 			name:  "allowed_sources_not_canonical",
 			text:  text + " Seules les adresses 203.0.113.1/24 peuvent joindre l'application.",
 			value: "203.0.113.1/24",
-			edit: func(m map[string]any) {
-				item(m, "exposure", 0)["allowed_sources"] = []any{"203.0.113.1/24"}
+			edit: func(t *testing.T, m map[string]any) {
+				item(t, m, "exposure", 0)["allowed_sources"] = []any{"203.0.113.1/24"}
 			},
 		},
 		{
 			name:  "override_not_in_text",
 			value: "198.51.100.0/24",
-			edit: func(m map[string]any) {
+			edit: func(t *testing.T, m map[string]any) {
 				m["explicit_overrides"] = []any{map[string]any{
 					"statement": "ouvrir l'application à 198.51.100.0/24",
 					"affects":   "exposure",
@@ -96,8 +96,8 @@ func TestTechnicalValuesRejected(t *testing.T) {
 
 	t.Run("witness_anchored_in_both_places", func(t *testing.T) {
 		txt := text + " Seules les adresses 203.0.113.0/24 peuvent joindre l'application."
-		d := draftFrom(t, "reference-draft.json", func(m map[string]any) {
-			item(m, "exposure", 0)["allowed_sources"] = []any{"203.0.113.0/24"}
+		d := draftFrom(t, "reference-draft.json", func(t *testing.T, m map[string]any) {
+			item(t, m, "exposure", 0)["allowed_sources"] = []any{"203.0.113.0/24"}
 			m["explicit_overrides"] = []any{map[string]any{
 				"statement": "restreindre l'accès à 203.0.113.0/24",
 				"affects":   "exposure",

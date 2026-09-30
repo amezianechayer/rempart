@@ -1,6 +1,7 @@
 package intent_test
 
 import (
+	"io/fs"
 	"os"
 	"reflect"
 	"strconv"
@@ -8,11 +9,12 @@ import (
 	"testing"
 )
 
-// Paths from this package directory (internal/intent) to the canonical IR
-// schema and to the reference schema of the intent-to-spec skill.
+// Paths, from the repository root, of the canonical IR schema and of the
+// reference schema of the intent-to-spec skill.
 const (
-	irSchemaPath         = "../../schemas/intent/v1.json"
-	skillReferenceIRPath = "../../.claude/skills/intent-to-spec/references/intent-ir-v1.schema.json"
+	repoRoot             = "../.."
+	irSchemaPath         = "schemas/intent/v1.json"
+	skillReferenceIRPath = ".claude/skills/intent-to-spec/references/intent-ir-v1.schema.json"
 )
 
 // TestSchemaDerivedFromReference: ADR 0006 decision 1, table 5.1 of the plan.
@@ -61,7 +63,7 @@ func TestSchemaDerivedFromReference(t *testing.T) {
 
 func readRepoFile(t *testing.T, path string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(path)
+	b, err := fs.ReadFile(os.DirFS(repoRoot), path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}

@@ -22,74 +22,74 @@ func TestInventedValueDetected(t *testing.T) {
 	invented := []struct {
 		name string
 		path string
-		edit func(m map[string]any)
+		edit func(t *testing.T, m map[string]any)
 	}{
 		{
 			name: "region_not_in_text",
 			path: "workloads[app-cluster].region",
-			edit: func(m map[string]any) { item(m, "workloads", wAppCluster)["region"] = "eu-central-1" },
+			edit: func(t *testing.T, m map[string]any) { item(t, m, "workloads", wAppCluster)["region"] = "eu-central-1" },
 		},
 		{
 			name: "size_count",
 			path: "workloads[app-cluster].size.count",
-			edit: func(m map[string]any) {
-				item(m, "workloads", wAppCluster)["size"].(map[string]any)["count"] = 5
+			edit: func(t *testing.T, m map[string]any) {
+				obj(t, item(t, m, "workloads", wAppCluster), "size")["count"] = 5
 			},
 		},
 		{
 			name: "port",
 			path: "connectivity[0].ports",
-			edit: func(m map[string]any) {
-				c := item(m, "connectivity", 0)
-				c["ports"] = append(c["ports"].([]any), "tcp/6379")
+			edit: func(t *testing.T, m map[string]any) {
+				c := item(t, m, "connectivity", 0)
+				c["ports"] = append(list(t, c, "ports"), "tcp/6379")
 			},
 		},
 		{
 			name: "classification_public",
 			path: "data[customer-db].classification",
-			edit: func(m map[string]any) { item(m, "data", 0)["classification"] = "public" },
+			edit: func(t *testing.T, m map[string]any) { item(t, m, "data", 0)["classification"] = "public" },
 		},
 		{
 			name: "compliance_dora",
 			path: "compliance",
-			edit: func(m map[string]any) { m["compliance"] = []any{"nis2", "dora"} },
+			edit: func(t *testing.T, m map[string]any) { m["compliance"] = []any{"nis2", "dora"} },
 		},
 		{
 			name: "budget",
 			path: "constraints.monthly_budget_eur",
-			edit: func(m map[string]any) { m["constraints"].(map[string]any)["monthly_budget_eur"] = 3000 },
+			edit: func(t *testing.T, m map[string]any) { obj(t, m, "constraints")["monthly_budget_eur"] = 3000 },
 		},
 		{
 			name: "environment_without_assumption",
 			path: "environment",
-			edit: func(m map[string]any) {
+			edit: func(t *testing.T, m map[string]any) {
 				m["environment"] = "prod"
-				dropAssumption(m, "environment")
+				dropAssumption(t, m, "environment")
 			},
 		},
 		{
 			name: "retention_without_assumption",
 			path: "observability.retention_days",
-			edit: func(m map[string]any) {
-				m["observability"].(map[string]any)["retention_days"] = 30
-				dropAssumption(m, "observability.retention_days")
+			edit: func(t *testing.T, m map[string]any) {
+				obj(t, m, "observability")["retention_days"] = 30
+				dropAssumption(t, m, "observability.retention_days")
 			},
 		},
 		{
 			name: "criticality_low",
 			path: "workloads[gitops].criticality",
-			edit: func(m map[string]any) { item(m, "workloads", wGitops)["criticality"] = "low" },
+			edit: func(t *testing.T, m map[string]any) { item(t, m, "workloads", wGitops)["criticality"] = "low" },
 		},
 		{
 			name: "assumption_same_path_other_value_environment",
 			path: "environment",
-			edit: func(m map[string]any) { m["environment"] = "prod" }, // assumption says staging
+			edit: func(t *testing.T, m map[string]any) { m["environment"] = "prod" }, // assumption says staging
 		},
 		{
 			name: "assumption_same_path_other_value_retention",
 			path: "observability.retention_days",
-			edit: func(m map[string]any) {
-				m["observability"].(map[string]any)["retention_days"] = 30 // assumption says 90
+			edit: func(t *testing.T, m map[string]any) {
+				obj(t, m, "observability")["retention_days"] = 30 // assumption says 90
 			},
 		},
 	}
@@ -104,20 +104,20 @@ func TestInventedValueDetected(t *testing.T) {
 
 	accepted := []struct {
 		name string
-		edit func(m map[string]any)
+		edit func(t *testing.T, m map[string]any)
 	}{
 		{
 			name: "exact_assumption",
-			edit: func(m map[string]any) {
+			edit: func(t *testing.T, m map[string]any) {
 				m["environment"] = "prod"
-				setAssumption(m, "environment", "prod")
+				setAssumption(t, m, "environment", "prod")
 			},
 		},
 		{
 			name: "criticality_high_safe_default",
-			edit: func(m map[string]any) {
-				item(m, "workloads", wLegacyVMs)["criticality"] = "high"
-				dropAssumption(m, "workloads[legacy-vms].criticality")
+			edit: func(t *testing.T, m map[string]any) {
+				item(t, m, "workloads", wLegacyVMs)["criticality"] = "high"
+				dropAssumption(t, m, "workloads[legacy-vms].criticality")
 			},
 		},
 	}
@@ -133,27 +133,27 @@ func TestInventedValueDetected(t *testing.T) {
 	blocking := []struct {
 		name string
 		path string
-		edit func(m map[string]any)
+		edit func(t *testing.T, m map[string]any)
 	}{
 		{
 			name: "assumed_cloud",
 			path: "workloads[legacy-vms].cloud",
-			edit: func(m map[string]any) { setAssumption(m, "workloads[legacy-vms].cloud", "azure") },
+			edit: func(t *testing.T, m map[string]any) { setAssumption(t, m, "workloads[legacy-vms].cloud", "azure") },
 		},
 		{
 			name: "assumed_region_not_allowed",
 			path: "workloads[legacy-vms].region",
-			edit: func(m map[string]any) {
-				item(m, "workloads", wLegacyVMs)["region"] = "westeurope"
-				setAssumption(m, "workloads[legacy-vms].region", "westeurope")
+			edit: func(t *testing.T, m map[string]any) {
+				item(t, m, "workloads", wLegacyVMs)["region"] = "westeurope"
+				setAssumption(t, m, "workloads[legacy-vms].region", "westeurope")
 			},
 		},
 		{
 			name: "assumed_classification_internal",
 			path: "data[customer-db].classification",
-			edit: func(m map[string]any) {
-				item(m, "data", 0)["classification"] = "internal"
-				setAssumption(m, "data[customer-db].classification", "internal")
+			edit: func(t *testing.T, m map[string]any) {
+				item(t, m, "data", 0)["classification"] = "internal"
+				setAssumption(t, m, "data[customer-db].classification", "internal")
 			},
 		},
 	}

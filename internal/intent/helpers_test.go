@@ -2,8 +2,8 @@ package intent_test
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/amezianechayer/rempart/internal/intent"
@@ -14,7 +14,7 @@ const referenceTenant = "3f6c2a9e-8b1d-4c7a-9e2f-5d4b3a2c1e0f"
 
 func readFixture(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", name))
+	b, err := fs.ReadFile(os.DirFS("testdata"), name)
 	if err != nil {
 		t.Fatalf("read %s: %v", name, err)
 	}
