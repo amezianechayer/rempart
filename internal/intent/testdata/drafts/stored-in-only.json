@@ -1,0 +1,48 @@
+{
+  "summary": "Application web publique sur Scaleway, données clients confidentielles.",
+  "environment": "prod",
+  "workloads": [
+    {
+      "id": "app",
+      "kind": "vm_group",
+      "cloud": "scaleway",
+      "region": "fr-par",
+      "criticality": "high",
+      "size": null,
+      "runs_on": null,
+      "notes": null
+    }
+  ],
+  "connectivity": [],
+  "exposure": [
+    {
+      "workload": "app",
+      "protocol": "https",
+      "port": 443,
+      "behind": [],
+      "allowed_sources": [],
+      "justification": "application web publique"
+    }
+  ],
+  "data": [
+    {
+      "id": "customer-data",
+      "classification": "confidential",
+      "regulation": [],
+      "stored_in": [
+        "app"
+      ],
+      "residency": null
+    }
+  ],
+  "observability": null,
+  "compliance": [],
+  "constraints": {
+    "monthly_budget_eur": null,
+    "allowed_regions": [],
+    "forbidden_clouds": []
+  },
+  "explicit_overrides": [],
+  "assumptions": [],
+  "open_questions": []
+}

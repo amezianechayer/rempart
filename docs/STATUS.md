@@ -568,3 +568,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-30 20:37 [harnais] phase : impl -> tests
 
 - 2026-09-30 20:38 [harnais] phase : tests -> impl
+
+- 2026-09-30 20:42 [harnais] RETOUR EN PHASE TESTS depuis impl : acceptation M1-T03 FAIL : mutation M7 masquee par la regle texte, sous-test stored_in isole
+
+- 2026-09-30 20:42 [harnais] phase : impl -> tests

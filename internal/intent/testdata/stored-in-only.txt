@@ -1,0 +1,1 @@
+Une application web publique accessible depuis Internet, sur Scaleway en fr-par, en production. Les données clients sont confidentielles.

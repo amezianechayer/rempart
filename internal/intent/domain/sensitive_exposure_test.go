@@ -49,9 +49,9 @@ func TestSensitiveExposureRejected(t *testing.T) {
 	t.Run("split_sentence", func(t *testing.T) {
 		text := readText(t, "c4-split-sentence.txt")
 		got := Check(text, draftFrom(t, "drafts/c4-split-sentence.json", nil), ctx)
-		if !hasFinding(got, "INTENT-DATA-OMITTED", loopsdomain.SeverityHigh, "") &&
-			!hasFinding(got, "INTENT-EXPOSURE-SENSITIVE", loopsdomain.SeverityHigh, "") {
-			t.Errorf("want INTENT-DATA-OMITTED or INTENT-EXPOSURE-SENSITIVE high, got %+v", got)
+		if !hasFinding(got, "INTENT-DATA-OMITTED", loopsdomain.SeverityHigh, "data") &&
+			!hasFinding(got, "INTENT-EXPOSURE-SENSITIVE", loopsdomain.SeverityHigh, "exposure[0].workload") {
+			t.Errorf("want INTENT-DATA-OMITTED high on data or INTENT-EXPOSURE-SENSITIVE high on exposure[0].workload, got %+v", got)
 		}
 	})
 
@@ -95,6 +95,17 @@ func TestSensitiveExposureRejected(t *testing.T) {
 					t.Errorf("%s: unexpected %+v", tc.name, f)
 				}
 			}
+		}
+	})
+
+	// Exposure and sensitivity sit in different sentences and no database is
+	// named, so only the stored_in rule of decision 4 can raise the finding.
+	t.Run("stored_in_only", func(t *testing.T) {
+		text := readText(t, "stored-in-only.txt")
+		got := atLeastMedium(Check(text, draftFrom(t, "drafts/stored-in-only.json", nil), ctx))
+		want := "INTENT-EXPOSURE-SENSITIVE"
+		if len(got) != 1 || !hasFinding(got, want, loopsdomain.SeverityHigh, "exposure[0].workload") {
+			t.Errorf("want only %s high on exposure[0].workload, got %+v", want, got)
 		}
 	})
 
