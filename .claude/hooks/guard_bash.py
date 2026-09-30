@@ -49,9 +49,13 @@ RULES = [
      "bac à sable : seule la forme `make sandbox-apply SCENARIO=<nom>` (ou sandbox-destroy), seule sur la ligne, "
      "est permise ; elle demande l'approbation humaine (T29)."),
     # T31 et T32 : options et variables qui changent le fichier lu par make ou ignorent les échecs de recette.
-    (r"\b(MAKEFLAGS|MAKEFILES|GNUMAKEFLAGS)\s*=|\bg?make\b[^|;&]*\s(-[a-zA-Z]*i[a-zA-Z]*\b|-[a-zA-Z]*f[a-zA-Z]*\b(?!\s+Makefile(\s|$))|--ignore-errors\b|--eval\b|--file\b|--makefile\b)",
-     "make : -i, -f, --eval, MAKEFLAGS et MAKEFILES interdits ; ils ignorent les échecs de recette ou changent "
-     "le fichier exécuté (T31, T32)."),
+    # Obligation (bt) et résidus T32 de M0-T04b : liste blanche d'options (make accepte les options longues
+    # abrégées, une liste noire est contournable), MAKE et MAKE_COMMAND refusés comme MAKEFLAGS.
+    (r"\b(MAKEFLAGS|MAKEFILES|GNUMAKEFLAGS|MFLAGS|MAKE|MAKE_COMMAND|MAKELEVEL|MAKEOVERRIDES)\s*=|\bg?make\b[^|;&]*\s(?!(-[snkrR]+|-j[0-9]*|--no-print-directory|-f\s+Makefile)(\s|$))-\S|(^|[;&|(]\s*)(env\s+)?([A-Za-z_][A-Za-z0-9_]*=\S*\s+)*g?make\b[^|;&]*([\"']|\s/-)|\bg?make\b[^|;&]*\s(SHELL|\.SHELLFLAGS)\s*=",
+     "make : seules les options -s, -n, -k, -r, -R, -j<n>, --no-print-directory et `-f Makefile` sont admises, "
+     "sans guillemet ni barre oblique inverse dans les arguments ; MAKE, MAKE_COMMAND, MAKEFLAGS, MAKEFILES, "
+     "SHELL interdits. Les autres formes ignorent les échecs de recette, sautent les recettes ou changent "
+     "le fichier, le shell ou la commande exécutés (T31, T32)."),
     # T76 : secrets de la pile de dev recopiés dans le contexte de l'agent, donc chez le fournisseur LLM.
     (r"\b(cat|less|more|head|tail|grep|awk|sed|cut|strings|xxd|od|base64|source)\b[^|;&]*\.env\.dev\b|(^|[;&|]\s*)\.\s+\S*\.env\.dev\b",
      "lecture directe de .env.dev interdite : ses valeurs ne doivent jamais entrer dans le contexte (T76). "

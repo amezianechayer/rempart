@@ -11,6 +11,7 @@
 """
 import datetime as dt
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,12 +21,20 @@ from _common import PROJECT_DIR, block, read_input, set_state, state  # noqa: E4
 
 MAX_ATTEMPTS = 3
 TARGET = "verify-quick"
+# T32 : variables héritées qui remplacent la commande des sous-make, le fichier lu ou les options
+# de make, ou qui injectent du code dans bash (SHELL := /bin/bash).
+ENV_STRIP = ("MAKE", "MAKE_COMMAND", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES",
+             "MAKELEVEL", "MAKEOVERRIDES", "BASH_ENV", "ENV")
+
+
+def clean_env() -> dict:
+    return {k: v for k, v in os.environ.items() if k not in ENV_STRIP and not k.startswith("BASH_FUNC_")}
 
 
 def sh(cmd, timeout=60):
     try:
         p = subprocess.run(cmd, cwd=PROJECT_DIR, capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=timeout)
+                           errors="replace", timeout=timeout, env=clean_env())
         return p.returncode, p.stdout, p.stderr
     except FileNotFoundError:
         return 127, "", f"commande introuvable : {cmd[0]}"
@@ -59,8 +68,9 @@ def check_plan():
             return ["go", "build", "./..."], "go build ./... (phase tests)", "last_compiled"
         return None
     if has_target():
-        # T32 : -f Makefile, un GNUmakefile ou makefile ne remplace jamais le Makefile relu.
-        return ["make", "-f", "Makefile", TARGET], f"make -f Makefile {TARGET}", "last_verified"
+        # T32 : -f Makefile, un GNUmakefile ou makefile ne remplace jamais le Makefile relu ; -r, aucune
+        # règle implicite intégrée ne refait le Makefile à partir d'un fichier voisin (Makefile.sh, RCS).
+        return ["make", "-r", "-f", "Makefile", TARGET], f"make -r -f Makefile {TARGET}", "last_verified"
     return None
 
 
