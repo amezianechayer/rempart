@@ -118,7 +118,7 @@ Mutations du vérificateur (appliquées par `acceptance-verifier` sur une copie 
 | C5 | ne vérifie pas que la cible est définie | M24 |
 | C6 | regex canonique sans `$` final | M18, M19, M20 |
 | C7 | regex canonique sans `^\t@?` (préfixe libre) | M12, M17 |
-| C8 | détection sans `\bMAKE\b` (seulement `$(MAKE)`) | M14, M22 |
+| C8 | détection sans `\bMAKE\b` (seulement `$(MAKE)`) | M14 (M22 contient aussi `make`, détecté par `\bg?make\b` ; constat de la campagne de mutation) |
 | C9 | détection sans `\bg?make\b` | M15, M16 |
 | C10 | détection sans `\bMAKEFILES\b` | M13 |
 | C11 | `checkSubMakeCalls` renvoie toujours `nil` | tous les M |
