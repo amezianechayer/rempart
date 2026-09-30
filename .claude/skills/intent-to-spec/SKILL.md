@@ -22,5 +22,8 @@ description: Transformer une demande d'infrastructure en langage naturel en Inte
 9. **`tenant_id` n'est jamais produit par le LLM** (menace T3). Il vient du contexte authentifié de la requête : le serveur rejette toute sortie du LLM qui contient un `tenant_id`, puis l'injecte lui-même avant la validation finale. Une injection dans la demande ne peut donc pas viser un autre tenant.
 10. **Cohérence vérifiée en code, pas par le schéma seul** : chaque référence (`data[].stored_in`, `workloads[].runs_on`, `connectivity[].from` et `to`, `exposure[].workload`) désigne un workload existant ; chaque `exposure[].allowed_sources` est une plage CIDR valide. Échec : erreur normalisée renvoyée au proposeur.
 
+## Note (M1-T03, ADR 0006)
+Le `tenant_id` du scénario de référence (`references/example-reference-scenario.json`, valeur `tenant-demo`) n'est pas un identifiant valide : l'IR canonique exige un UUID v4 en minuscules (ADR 0004), et certaines valeurs du scénario ne sont pas des chaînes. Pour les tests, `internal/intent/testdata/reference-ir.json` fait foi. Schémas du dépôt : `schemas/intent/v1.json` (IR canonique) et `schemas/intent/draft-v1.json` (brouillon strict rempli par le modèle, sans `tenant_id`).
+
 ## Evals
 `evals/intent/cases/` : au moins 20 cas, dont 5 ambigus, 4 contradictoires, 4 incomplets, 3 avec tentative d'injection, 4 nominaux multicloud. Grader déterministe : validité du schéma, champs attendus, absence de valeurs inventées hors `assumptions`, questions attendues posées.

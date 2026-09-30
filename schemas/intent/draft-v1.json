@@ -1,0 +1,577 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rempart Intent draft v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "environment",
+    "workloads",
+    "connectivity",
+    "exposure",
+    "data",
+    "observability",
+    "compliance",
+    "constraints",
+    "explicit_overrides",
+    "assumptions",
+    "open_questions"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "environment": {
+      "anyOf": [
+        {
+          "enum": [
+            "dev",
+            "staging",
+            "prod"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "workloads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "cloud",
+          "region",
+          "criticality",
+          "size",
+          "runs_on",
+          "notes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,40}$"
+          },
+          "kind": {
+            "enum": [
+              "k8s_cluster",
+              "vm_group",
+              "managed_db",
+              "object_storage",
+              "load_balancer",
+              "observability_stack",
+              "gitops_controller"
+            ]
+          },
+          "cloud": {
+            "enum": [
+              "aws",
+              "azure",
+              "scaleway",
+              "ovhcloud"
+            ]
+          },
+          "region": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 40
+          },
+          "criticality": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "count",
+                  "tier",
+                  "os"
+                ],
+                "properties": {
+                  "count": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tier": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "small",
+                          "medium",
+                          "large",
+                          "xlarge"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "os": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "linux",
+                          "windows"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runs_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{1,40}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "maxItems": 50,
+      "minItems": 1
+    },
+    "connectivity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "to",
+          "kind",
+          "bidirectional",
+          "ports",
+          "purpose"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,40}$"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,40}$"
+          },
+          "kind": {
+            "enum": [
+              "vpn_site_to_site",
+              "peering",
+              "private_link",
+              "internal"
+            ]
+          },
+          "bidirectional": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(tcp|udp)/[0-9]{1,5}(-[0-9]{1,5})?$"
+            },
+            "maxItems": 20
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "maxItems": 50
+    },
+    "exposure": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "workload",
+          "protocol",
+          "port",
+          "behind",
+          "allowed_sources",
+          "justification"
+        ],
+        "properties": {
+          "workload": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,40}$"
+          },
+          "protocol": {
+            "enum": [
+              "https",
+              "http",
+              "tcp",
+              "udp"
+            ]
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "behind": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "waf",
+                "load_balancer",
+                "cdn",
+                "api_gateway"
+              ]
+            },
+            "maxItems": 4
+          },
+          "allowed_sources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 50
+            },
+            "maxItems": 20
+          },
+          "justification": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 300
+          }
+        }
+      },
+      "maxItems": 50
+    },
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "classification",
+          "regulation",
+          "stored_in",
+          "residency"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,40}$"
+          },
+          "classification": {
+            "enum": [
+              "public",
+              "internal",
+              "confidential",
+              "regulated"
+            ]
+          },
+          "regulation": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "gdpr",
+                "health",
+                "financial",
+                "other"
+              ]
+            },
+            "maxItems": 4
+          },
+          "stored_in": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{1,40}$"
+            },
+            "maxItems": 50,
+            "minItems": 1
+          },
+          "residency": {
+            "anyOf": [
+              {
+                "enum": [
+                  "eu",
+                  "fr",
+                  "any"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "maxItems": 50
+    },
+    "observability": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "metrics",
+            "logs",
+            "dashboards",
+            "retention_days"
+          ],
+          "properties": {
+            "metrics": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "prometheus",
+                    "cloud_native",
+                    "none"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "logs": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "loki",
+                    "cloud_native",
+                    "none"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dashboards": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "grafana",
+                    "cloud_native",
+                    "none"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "retention_days": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 3650
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "compliance": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "nis2",
+          "dora",
+          "secnumcloud",
+          "iso27001",
+          "cis"
+        ]
+      },
+      "maxItems": 5
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monthly_budget_eur",
+        "allowed_regions",
+        "forbidden_clouds"
+      ],
+      "properties": {
+        "monthly_budget_eur": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed_regions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 40
+          },
+          "maxItems": 20
+        },
+        "forbidden_clouds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "aws",
+              "azure",
+              "scaleway",
+              "ovhcloud"
+            ]
+          },
+          "maxItems": 4
+        }
+      }
+    },
+    "explicit_overrides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statement",
+          "affects"
+        ],
+        "properties": {
+          "statement": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "affects": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      },
+      "maxItems": 10
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "field",
+          "value",
+          "rationale"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "rationale": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      },
+      "maxItems": 40
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "field",
+          "question",
+          "default"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "default": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "maxItems": 3
+    }
+  }
+}
