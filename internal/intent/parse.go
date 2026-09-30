@@ -48,3 +48,28 @@ func ParseDraft(raw []byte) (domain.Draft, error) {
 	}
 	return d, nil
 }
+
+// MaxIRBytes bounds the size of a serialized IR read by ParseIR (threat T10).
+const MaxIRBytes = 1 << 20
+
+// ParseIR decodes a serialized IR strictly (at most MaxIRBytes, duplicate keys
+// and excessive depth refused, unknown fields refused), then validates it with
+// ValidateIR. Every failure returns ErrIRInvalid, whose message quotes nothing.
+func ParseIR(raw []byte) (domain.IR, error) {
+	if len(raw) > MaxIRBytes {
+		return domain.IR{}, ErrIRInvalid
+	}
+	if _, err := schema.DecodeStrict(raw); err != nil {
+		return domain.IR{}, ErrIRInvalid
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var ir domain.IR
+	if err := dec.Decode(&ir); err != nil {
+		return domain.IR{}, ErrIRInvalid
+	}
+	if err := ValidateIR(ir); err != nil {
+		return domain.IR{}, ErrIRInvalid
+	}
+	return ir, nil
+}

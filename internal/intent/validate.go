@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
@@ -17,36 +16,10 @@ import (
 // not a customer tenant. Fixed message.
 var ErrIRInvalid = errors.New("intent: invalid IR")
 
-const irResource = "https://rempart.invalid/schemas/intent/v1.json"
-
-type denyLoader struct{}
-
-func (denyLoader) Load(string) (any, error) {
-	return nil, errors.New("intent: resource loading is denied")
-}
-
-var irSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
-	raw, err := schemas.FS.ReadFile(schemas.IntentIR)
-	if err != nil {
-		return nil, err
-	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	c := jsonschema.NewCompiler()
-	c.DefaultDraft(jsonschema.Draft2020)
-	c.UseLoader(denyLoader{})
-	if err := c.AddResource(irResource, doc); err != nil {
-		return nil, err
-	}
-	return c.Compile(irResource)
-})
-
 // ValidateIR checks ir against schemas/intent/v1.json (plan P1), then its
 // tenant with tenancy.ParseID; the system tenant is refused.
 func ValidateIR(ir domain.IR) error {
-	s, err := irSchema()
+	s, err := schemas.Compile(schemas.IntentIR)
 	if err != nil {
 		return ErrIRInvalid
 	}

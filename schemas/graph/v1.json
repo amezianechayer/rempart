@@ -1,0 +1,509 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rempart.dev/schemas/graph/v1.json",
+  "title": "Rempart architecture and security graph v1",
+  "description": "Graphe commun au conçu (L2) et au réel (L6). Seules les propriétés de untrusted_text portent du texte libre, par $defs/free_text.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "tenant_id",
+    "source",
+    "nodes",
+    "edges",
+    "untrusted_text"
+  ],
+  "properties": {
+    "version": {
+      "const": "1"
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "source": {
+      "enum": [
+        "design",
+        "observed"
+      ]
+    },
+    "nodes": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "maxItems": 50000,
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    },
+    "untrusted_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "$ref": "#/$defs/free_text"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "free_text": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "node_id": {
+      "type": "string",
+      "pattern": "^(internet|(net|wl|lb|data):[a-z0-9][a-z0-9.-]{0,80})$"
+    },
+    "cidr": {
+      "type": "string",
+      "pattern": "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}/([0-9]|[12][0-9]|3[0-2])$"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "attrs",
+        "untrusted_text"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/node_id"
+        },
+        "kind": {
+          "enum": [
+            "Internet",
+            "Network",
+            "Compute",
+            "K8sCluster",
+            "K8sWorkload",
+            "LoadBalancer",
+            "DataStore"
+          ]
+        },
+        "attrs": {
+          "$ref": "#/$defs/node_attrs"
+        },
+        "untrusted_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "notes": {
+              "$ref": "#/$defs/free_text"
+            },
+            "justification": {
+              "$ref": "#/$defs/free_text"
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "Network"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "subtype",
+                  "cidr",
+                  "cloud",
+                  "region",
+                  "env"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind",
+              "attrs"
+            ],
+            "properties": {
+              "kind": {
+                "const": "Network"
+              },
+              "attrs": {
+                "required": [
+                  "subtype"
+                ],
+                "properties": {
+                  "subtype": {
+                    "const": "subnet"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "tier"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "Compute"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "subtype",
+                  "cloud",
+                  "region",
+                  "count"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "K8sCluster"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "cloud",
+                  "region",
+                  "count",
+                  "api_public"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "LoadBalancer"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "public",
+                  "listeners"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "DataStore"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "subtype",
+                  "classification",
+                  "encrypted",
+                  "public_access"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "node_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cloud": {
+          "enum": [
+            "aws",
+            "azure",
+            "scaleway",
+            "ovhcloud"
+          ]
+        },
+        "region": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,30}[a-z0-9]$"
+        },
+        "env": {
+          "enum": [
+            "dev",
+            "staging",
+            "prod"
+          ]
+        },
+        "subtype": {
+          "enum": [
+            "vpc",
+            "subnet",
+            "vm",
+            "managed_db",
+            "object_storage",
+            "dataset"
+          ]
+        },
+        "cidr": {
+          "$ref": "#/$defs/cidr"
+        },
+        "tier": {
+          "enum": [
+            "public",
+            "app",
+            "data",
+            "mgmt"
+          ]
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "os": {
+          "enum": [
+            "linux",
+            "windows"
+          ]
+        },
+        "public": {
+          "type": "boolean"
+        },
+        "listeners": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "protocol",
+              "port"
+            ],
+            "properties": {
+              "protocol": {
+                "enum": [
+                  "tcp",
+                  "udp",
+                  "https",
+                  "http"
+                ]
+              },
+              "port": {
+                "$ref": "#/$defs/port"
+              }
+            }
+          }
+        },
+        "behind": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "waf",
+              "load_balancer",
+              "cdn",
+              "api_gateway"
+            ]
+          }
+        },
+        "classification": {
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "regulated"
+          ]
+        },
+        "regulation": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "gdpr",
+              "health",
+              "financial",
+              "other"
+            ]
+          }
+        },
+        "residency": {
+          "enum": [
+            "eu",
+            "fr",
+            "any"
+          ]
+        },
+        "encrypted": {
+          "type": "boolean"
+        },
+        "public_access": {
+          "type": "boolean"
+        },
+        "api_public": {
+          "type": "boolean"
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "src",
+        "dst",
+        "attrs",
+        "untrusted_text"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z_]+\\|[a-z0-9:.-]+\\|[a-z0-9:.-]+(\\|(tcp|udp|https|http)/[0-9]{1,5}(-[0-9]{1,5})?)?$"
+        },
+        "type": {
+          "enum": [
+            "MEMBER_OF",
+            "EXPOSES",
+            "CAN_REACH",
+            "STORES"
+          ]
+        },
+        "src": {
+          "$ref": "#/$defs/node_id"
+        },
+        "dst": {
+          "$ref": "#/$defs/node_id"
+        },
+        "attrs": {
+          "$ref": "#/$defs/edge_attrs"
+        },
+        "untrusted_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "purpose": {
+              "$ref": "#/$defs/free_text"
+            },
+            "justification": {
+              "$ref": "#/$defs/free_text"
+            }
+          }
+        }
+      }
+    },
+    "edge_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "enum": [
+            "tcp",
+            "udp",
+            "https",
+            "http"
+          ]
+        },
+        "port_from": {
+          "$ref": "#/$defs/port"
+        },
+        "port_to": {
+          "$ref": "#/$defs/port"
+        },
+        "via": {
+          "enum": [
+            "vpn_site_to_site",
+            "peering",
+            "private_link",
+            "internal",
+            "load_balancer"
+          ]
+        },
+        "path": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/node_id"
+          }
+        },
+        "allowed_sources": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/cidr"
+          }
+        }
+      }
+    }
+  }
+}
