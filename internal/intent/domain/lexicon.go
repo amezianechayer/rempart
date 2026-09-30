@@ -43,6 +43,11 @@ var (
 		"prometheus": {"prometheus"}, "loki": {"loki"}, "grafana": {"grafana"},
 		"cloud_native": {"cloudwatch", "monitor"},
 	}
+	// databaseMarkers: T85b, the user's text names a database.
+	databaseMarkers = []string{
+		"base de données", "base", "bdd", "database", "postgresql", "postgres", "mysql", "mariadb",
+		"mongodb", "sql",
+	}
 	exposureMarkers = []string{
 		"public", "publique", "publics", "publiques", "internet", "expose", "exposé", "exposée",
 		"exposer", "exposition", "extérieur",
@@ -120,6 +125,40 @@ func (ix tokenIndex) anchoredIn(d lexDomain, value string) bool {
 func (ix tokenIndex) exposureRequested() bool {
 	for _, m := range exposureMarkers {
 		if ix.set[m] {
+			return true
+		}
+	}
+	return false
+}
+
+// sensitiveRequested reports whether the text names sensitive data or a
+// database (T85b): forms of confidential or regulated, of any regulation, or a
+// database marker. It rests on the user's text, never on the model's draft.
+func (ix tokenIndex) sensitiveRequested() bool {
+	for _, v := range []string{"confidential", "regulated"} {
+		if ix.anchoredIn(lexClass, v) {
+			return true
+		}
+	}
+	for v := range lexRegulation {
+		if ix.anchoredIn(lexRegulation, v) {
+			return true
+		}
+	}
+	for _, m := range databaseMarkers {
+		if ix.has(m) {
+			return true
+		}
+	}
+	return false
+}
+
+// sensitiveExposureRequested (variant D): one sentence of the text holds both
+// an exposure marker and a sensitivity or database marker.
+func sensitiveExposureRequested(text string) bool {
+	for _, sentence := range strings.FieldsFunc(text, func(r rune) bool { return strings.ContainsRune(".!?;\n", r) }) {
+		ix := newIndex(sentence)
+		if ix.exposureRequested() && ix.sensitiveRequested() {
 			return true
 		}
 	}
