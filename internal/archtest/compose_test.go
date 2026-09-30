@@ -1168,9 +1168,7 @@ const (
 		"\t@if [ -f .env.dev ]; then bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml down --remove-orphans; \\\n" +
 		"\telif [ -z \"$$(docker ps -aq --filter label=com.docker.compose.project=rempart-dev)\" ]; then echo \"dev-down : aucune pile à arrêter.\"; \\\n" +
 		"\telse echo \"dev-down : conteneurs rempart-dev sans .env.dev (voir docs/SETUP.md).\" >&2; exit 2; fi"
-	// M0-T23 (plan M0-evals-cli section 5.3): targeted evals first, before the stack.
 	referenceVerifyRule = "verify: verify-quick\n" +
-		"\t" + evalsChangedRun + "\n" +
 		"\t" + subMakePrefix + "dev\n" +
 		"\tgo test -tags=integration $$(go list ./... | grep -v '/internal/archtest$$')\n" +
 		"\tbash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest\n" +

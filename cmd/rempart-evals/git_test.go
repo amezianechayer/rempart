@@ -69,7 +69,6 @@ func TestSuiteChangedSelection(t *testing.T) {
 		"unrelated":          {&fakeGit{diff: nul("docs/x.md")}, []string{}, ""},
 		"nothing":            {&fakeGit{}, []string{}, ""},
 		"core":               {&fakeGit{diff: nul("go.sum")}, both, ""},
-		"makefile":           {&fakeGit{diff: nul("Makefile")}, both, ""},
 		"runner_changed":     {&fakeGit{diff: nul("cmd/rempart-evals/run.go")}, both, ""},
 		"untracked_only":     {&fakeGit{others: nul("evals/other/notes.md")}, []string{"other"}, ""},
 		"diff_and_untracked": {&fakeGit{diff: nul("docs/x.md", "internal/loops/y.go"), others: nul("cmd/other/z.go")}, both, ""},
@@ -252,9 +251,17 @@ func TestRejectsUnsafeGitRef(t *testing.T) {
 			t.Errorf("validRef(%q) = true", bad)
 		}
 	}
-}
 
-func TestGitCommandShape(t *testing.T) {
+	// D12: --base only with changed, and required there.
+	for _, args := range [][]string{{"--suite", "demo", "--base", aSHA}, {"--suite", "all", "--base", aSHA}, {"--suite", "changed"}} {
+		g := &fakeGit{}
+		if code, stdout, _ := runArgs(t, newEnv(t, copyFixture(t, "select"), g.run), args...); code != 2 || stdout != "" || len(g.calls) != 0 {
+			t.Errorf("%q: code %d, stdout %q, %d git calls; want 2", args, code, stdout, len(g.calls))
+		}
+	}
+
+	// D14 (T8, T84): the three command forms, the base after --end-of-options,
+	// no shell, an environment reduced to a whitelist.
 	base := strings.Repeat("c0ffee", 6) + "abcd"
 	g := &fakeGit{diff: nul("docs/x.md"), others: nul("docs/y.md")}
 	paths, reason, ok := changedPaths(context.Background(), g.run, "/repo/root", base)

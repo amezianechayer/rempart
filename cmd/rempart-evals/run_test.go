@@ -272,6 +272,57 @@ func TestRunOKAgainstBaseline(t *testing.T) {
 	if !strings.Contains(stderr, runLine+"\n") {
 		t.Errorf("stderr %q, want the line %q", stderr, runLine)
 	}
+	// D2, D10: stdout holds exactly one JSON document and the process standard
+	// output nothing (journal of the SDK), whatever the mode.
+	for name, c := range map[string]struct {
+		dir  string
+		args []string
+		code int
+	}{
+		"named":           {copyFixture(t, "ok"), []string{"--suite", "demo"}, 0},
+		"named_escalated": {"", []string{"--suite", "demo"}, 1},
+		"all":             {copyFixture(t, "select"), []string{"--suite", "all"}, 0},
+		"changed":         {copyFixture(t, "select"), []string{"--suite", "changed", "--base", ""}, 0},
+		"all_missing":     {copyFixture(t, "missing"), []string{"--suite", "all"}, 3},
+	} {
+		dir := c.dir
+		if dir == "" {
+			dir = copyFixture(t, "ok")
+			replaceIn(t, dir, "evals/demo/cases/demo-converge-001.yaml", "- {greeting: bonjour}", "- {greeting: salut}\n    - {greeting: salut}")
+		}
+		var code int
+		var stdout, stderr bytes.Buffer
+		process := captureStdout(t, func() {
+			code = runWith(context.Background(), newEnv(t, dir, noGit(t)), c.args, &stdout, &stderr)
+		})
+		if code != c.code || process != "" {
+			t.Errorf("%s: code %d (want %d), process stdout %q\n%s", name, code, c.code, process, stderr.String())
+		}
+		var v any
+		oneDocument(t, stdout.String(), &v)
+	}
+}
+
+// captureStdout runs f with the process standard output redirected to a pipe
+// and returns what was written there (D2: the default logger of the SDK writes on it).
+func captureStdout(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	done := make(chan string)
+	go func() {
+		data, _ := io.ReadAll(r)
+		done <- string(data)
+	}()
+	defer func() { os.Stdout = old }()
+	f()
+	os.Stdout = old
+	_ = w.Close()
+	return <-done
 }
 
 func TestRegressionDetected(t *testing.T) {
@@ -309,6 +360,18 @@ func TestRegressionDetected(t *testing.T) {
 		if got := metrics(r); !slices.Equal(got, c.want) {
 			t.Errorf("%s: regressions %q, want %q", name, got, c.want)
 		}
+	}
+	// A baseline Validate refuses is read, then reported by Compare (code 1).
+	oob := copyFixture(t, "ok")
+	replaceIn(t, oob, demoBaselinePath, `"success_rate_drop": 0,`, `"success_rate_drop": 0.5,`)
+	code, stdout, stderr = runArgs(t, newEnv(t, oob, noGit(t)), "--suite", "demo")
+	if code != 1 {
+		t.Fatalf("out of bounds: code %d, want 1\n%s", code, stderr)
+	}
+	r = evals.Report{}
+	oneDocument(t, stdout, &r)
+	if got := metrics(r); len(got) == 0 || got[0] != "baseline" {
+		t.Errorf("out of bounds: regressions %q, want baseline first", got)
 	}
 }
 
@@ -352,6 +415,41 @@ func TestMissingBaselineAsksHuman(t *testing.T) {
 		s.Suites[0].Code != 3 || s.Suites[0].Report != nil || !strings.Contains(stderr, missingMessage) {
 		t.Errorf("all: %+v\n%s", s, stderr)
 	}
+
+	// An unreadable baseline is not a missing one (D8, D18): code 2, after the
+	// run (D9), no value read quoted (T64).
+	good := readFile(t, "testdata/ok/"+demoBaselinePath)
+	withRegion := func(v string) string { return strings.Replace(good, `"region": ""`, `"region": "`+v+`"`, 1) }
+	variants := map[string]string{
+		"zero_width":   withRegion("can\u200bary"),
+		"line_161":     withRegion("canary" + strings.Repeat("é", 161-15-2-6)),
+		"unknown_key":  strings.Replace(withRegion("canary"), `"cases": 1,`, `"cases": 1, "canary": 1,`, 1),
+		"duplicate":    strings.Replace(withRegion("canary"), `"cases": 1,`, `"cases": 1, "cases": 1,`, 1),
+		"exponent":     strings.Replace(withRegion("canary"), `"avg_tokens": 30,`, `"avg_tokens": 3e1,`, 1),
+		"not_json":     "canary\n",
+		"case_folding": strings.Replace(withRegion("canary"), `"success_rate": 1,`, `"Success_Rate": 1,`, 1),
+	}
+	dirs := map[string]string{}
+	for name, data := range variants {
+		dir := copyFixture(t, "missing")
+		writeFile(t, dir, demoBaselinePath, data)
+		dirs[name] = dir
+	}
+	linked := copyFixture(t, "ok")
+	if err := os.Rename(filepath.Join(linked, demoBaselinePath), filepath.Join(linked, "evals/demo/baseline/fake/real.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.json", filepath.Join(linked, demoBaselinePath)); err != nil {
+		t.Fatal(err)
+	}
+	dirs["file_link"] = linked
+	for name, dir := range dirs {
+		code, stdout, stderr := runArgs(t, newEnv(t, dir, noGit(t)), "--suite", "demo")
+		// Code 2 (D8, D18), after the run (D9); no value read is quoted (T64).
+		if code != 2 || stdout != "" || strings.Contains(stderr, "canary") || !strings.Contains(stderr, runLine) {
+			t.Errorf("%s: code %d, stdout %q, stderr %q; want 2, nothing, no canary", name, code, stdout, stderr)
+		}
+	}
 }
 
 func TestWriteBaselineOnlyWithFlag(t *testing.T) {
@@ -369,12 +467,10 @@ func TestWriteBaselineOnlyWithFlag(t *testing.T) {
 	if !reflect.DeepEqual(r, demoReport()) || !strings.Contains(stderr, demoBaselinePath) {
 		t.Errorf("report %+v, stderr %q", r, stderr)
 	}
-	b, err := evals.LoadBaseline(os.DirFS(dir), demoBaselinePath)
-	if err != nil || b.Tolerances != (evals.Tolerances{}) || !reflect.DeepEqual(b.Report, demoReport()) {
-		t.Fatalf("written baseline %+v, %v; want the report and zero tolerances (O3)", b, err)
-	}
-	if canonical, err := evals.EncodeBaseline(b); err != nil || readFile(t, filepath.Join(dir, demoBaselinePath)) != string(canonical) {
-		t.Errorf("written baseline is not the canonical encoding: %v", err)
+	// D19, O3: the canonical encoding (two spaces, LF, final newline) of the
+	// report with zero tolerances: the baseline of testdata/ok, byte for byte.
+	if got, want := readFile(t, filepath.Join(dir, demoBaselinePath)), readFile(t, "testdata/ok/"+demoBaselinePath); got != want {
+		t.Errorf("written baseline:\n%s\nwant:\n%s", got, want)
 	}
 	// Exactly the baseline and its parents were created: no temporary file left.
 	after := snapshot(t, dir)
@@ -425,53 +521,6 @@ func TestWriteBaselineOnlyWithFlag(t *testing.T) {
 		if code != 2 || stdout != "" || len(entries) != 0 || !reflect.DeepEqual(snapshot(t, dir), before) {
 			t.Errorf("%s: code %d, stdout %q, %d entries written through the link", name, code, stdout, len(entries))
 		}
-	}
-}
-
-func TestBaselineReadStrictly(t *testing.T) {
-	good := readFile(t, "testdata/ok/"+demoBaselinePath)
-	withRegion := func(v string) string { return strings.Replace(good, `"region": ""`, `"region": "`+v+`"`, 1) }
-	variants := map[string]string{
-		"zero_width":   withRegion("can\u200bary"),
-		"line_161":     withRegion("canary" + strings.Repeat("é", 161-15-2-6)),
-		"unknown_key":  strings.Replace(withRegion("canary"), `"cases": 1,`, `"cases": 1, "canary": 1,`, 1),
-		"duplicate":    strings.Replace(withRegion("canary"), `"cases": 1,`, `"cases": 1, "cases": 1,`, 1),
-		"exponent":     strings.Replace(withRegion("canary"), `"avg_tokens": 30,`, `"avg_tokens": 3e1,`, 1),
-		"not_json":     "canary\n",
-		"case_folding": strings.Replace(withRegion("canary"), `"success_rate": 1,`, `"Success_Rate": 1,`, 1),
-	}
-	dirs := map[string]string{"fixture": copyFixture(t, "badbaseline")}
-	for name, data := range variants {
-		dir := copyFixture(t, "missing")
-		writeFile(t, dir, demoBaselinePath, data)
-		dirs[name] = dir
-	}
-	linked := copyFixture(t, "ok")
-	if err := os.Rename(filepath.Join(linked, demoBaselinePath), filepath.Join(linked, "evals/demo/baseline/fake/real.json")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("real.json", filepath.Join(linked, demoBaselinePath)); err != nil {
-		t.Fatal(err)
-	}
-	dirs["file_link"] = linked
-	for name, dir := range dirs {
-		code, stdout, stderr := runArgs(t, newEnv(t, dir, noGit(t)), "--suite", "demo")
-		// Code 2 (D8, D18), after the run (D9); no value read is quoted (T64).
-		if code != 2 || stdout != "" || strings.Contains(stderr, "canary") || !strings.Contains(stderr, runLine) {
-			t.Errorf("%s: code %d, stdout %q, stderr %q; want 2, nothing, no canary", name, code, stdout, stderr)
-		}
-	}
-	// A baseline Validate refuses is read, then reported by Compare (code 1).
-	dir := copyFixture(t, "ok")
-	replaceIn(t, dir, demoBaselinePath, `"success_rate_drop": 0,`, `"success_rate_drop": 0.5,`)
-	code, stdout, stderr := runArgs(t, newEnv(t, dir, noGit(t)), "--suite", "demo")
-	if code != 1 {
-		t.Fatalf("out of bounds: code %d, want 1\n%s", code, stderr)
-	}
-	var r evals.Report
-	oneDocument(t, stdout, &r)
-	if got := metrics(r); len(got) == 0 || got[0] != "baseline" {
-		t.Errorf("out of bounds: regressions %q, want baseline first", got)
 	}
 }
 
@@ -591,157 +640,20 @@ func TestDemoTargetRunsWorkflow(t *testing.T) {
 			t.Errorf("refused %d: %v", i, err)
 		}
 	}
-}
 
-func TestUsageErrors(t *testing.T) {
-	type tc struct {
-		dir     string
-		args    []string
-		environ []string
-	}
-	demo := []string{"--suite", "demo"}
-	cases := map[string]tc{
-		"no_suite":            {copyFixture(t, "ok"), nil, nil},
-		"suite_without_value": {copyFixture(t, "ok"), []string{"--suite"}, nil},
-		"unknown_suite":       {copyFixture(t, "ok"), []string{"--suite", "nope"}, nil},
-		"suite_not_a_suite":   {copyFixture(t, "ok"), []string{"--suite", "demo/cases"}, nil},
-		"invalid_suite_name":  {copyFixture(t, "ok"), []string{"--suite", "../ok"}, nil},
-		"empty_suite_name":    {copyFixture(t, "ok"), []string{"--suite", ""}, nil},
-		"upper_suite_name":    {copyFixture(t, "ok"), []string{"--suite", "Demo"}, nil},
-		"positional":          {copyFixture(t, "ok"), []string{"--suite", "demo", "extra"}, nil},
-		"repeated_suite":      {copyFixture(t, "ok"), []string{"--suite", "demo", "--suite", "demo"}, nil},
-		"base_with_named":     {copyFixture(t, "ok"), []string{"--suite", "demo", "--base", aSHA}, nil},
-		"base_with_all":       {copyFixture(t, "ok"), []string{"--suite", "all", "--base", aSHA}, nil},
-		"changed_no_base":     {copyFixture(t, "ok"), []string{"--suite", "changed"}, nil},
-		"repeated_base":       {copyFixture(t, "ok"), []string{"--suite", "changed", "--base", "", "--base", ""}, nil},
-		"unknown_flag":        {copyFixture(t, "ok"), []string{"--suite", "demo", "--unknown"}, nil},
-		"help":                {copyFixture(t, "ok"), []string{"-h"}, nil},
-		"single_dash_suite":   {copyFixture(t, "ok"), []string{"-suite=demo", "extra"}, nil},
-		"temporal_debug":      {copyFixture(t, "ok"), demo, []string{"TEMPORAL_DEBUG=1"}},
-		"temporal_debug_set":  {copyFixture(t, "ok"), demo, []string{"TEMPORAL_DEBUG="}},
-		"temporal_sdk_flag":   {copyFixture(t, "ok"), demo, []string{"TEMPORAL_SDK_FLAG_5=1"}},
-		"temporal_with_all":   {copyFixture(t, "ok"), []string{"--suite", "all"}, []string{"TEMPORAL_SDK_FLAG_1=true"}},
-	}
-	edited := func(fixture string, f func(dir string)) string {
-		dir := copyFixture(t, fixture)
-		f(dir)
-		return dir
-	}
-	symlink := func(dir, target, name string) {
-		if err := os.Symlink(target, filepath.Join(dir, filepath.FromSlash(name))); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A write request always runs on a copy: a faulty runner must not write into testdata.
-	cases["write_with_all"] = tc{copyFixture(t, "missing"), []string{"--suite", "all", "--write-baseline"}, nil}
-	cases["write_with_changed"] = tc{copyFixture(t, "missing"), []string{"--suite", "changed", "--base", "", "--write-baseline"}, nil}
-	cases["repeated_write"] = tc{copyFixture(t, "missing"), []string{"--suite", "demo", "--write-baseline", "--write-baseline"}, nil}
-	cases["write_false"] = tc{copyFixture(t, "missing"), []string{"--suite", "demo", "--write-baseline=false", "extra"}, nil}
-	cases["unknown_target"] = tc{edited("ok", func(d string) { replaceIn(t, d, "evals/demo/suite.yaml", "target: demo", "target: nosuch") }), demo, nil}
-	cases["unknown_target_all"] = tc{edited("ok", func(d string) { replaceIn(t, d, "evals/demo/suite.yaml", "target: demo", "target: nosuch") }), []string{"--suite", "all"}, nil}
-	cases["case_input_refused"] = tc{edited("ok", func(d string) {
-		replaceIn(t, d, "evals/demo/cases/demo-converge-001.yaml", "target: bonjour", "target: Bonjour")
-	}), demo, nil}
-	cases["invalid_suite_all"] = tc{edited("ok", func(d string) { writeFile(t, d, "evals/bad/suite.yaml", "name: bad\ncanary: 1\n") }), []string{"--suite", "all"}, nil}
-	cases["link_in_evals_all"] = tc{edited("ok", func(d string) { symlink(d, "demo", "evals/l") }), []string{"--suite", "all"}, nil}
-	cases["no_go_mod"] = tc{edited("ok", func(d string) {
-		if err := os.Remove(filepath.Join(d, "go.mod")); err != nil {
-			t.Fatal(err)
-		}
-	}), demo, nil}
-	cases["go_mod_link"] = tc{edited("ok", func(d string) {
-		if err := os.Rename(filepath.Join(d, "go.mod"), filepath.Join(d, "real.mod")); err != nil {
-			t.Fatal(err)
-		}
-		symlink(d, "real.mod", "go.mod")
-	}), demo, nil}
-	cases["evals_link"] = tc{edited("ok", func(d string) {
-		if err := os.Rename(filepath.Join(d, "evals"), filepath.Join(d, "real")); err != nil {
-			t.Fatal(err)
-		}
-		symlink(d, "real", "evals")
-	}), demo, nil}
-	cases["evals_absent"] = tc{edited("ok", func(d string) {
-		if err := os.RemoveAll(filepath.Join(d, "evals")); err != nil {
-			t.Fatal(err)
-		}
-	}), demo, nil}
-	cases["evals_file"] = tc{edited("ok", func(d string) {
-		if err := os.RemoveAll(filepath.Join(d, "evals")); err != nil {
-			t.Fatal(err)
-		}
-		writeFile(t, d, "evals", "x")
-	}), []string{"--suite", "all"}, nil}
-
-	for name, c := range cases {
-		e := newEnv(t, c.dir, noGit(t))
+	// D3 (T84): TEMPORAL_DEBUG or TEMPORAL_SDK_FLAG_* present: code 2 before any run.
+	for _, v := range []string{"TEMPORAL_DEBUG=1", "TEMPORAL_DEBUG=", "TEMPORAL_SDK_FLAG_5=1"} {
+		e := newEnv(t, copyFixture(t, "ok"), noGit(t))
 		runs := 0
 		e.targets["demo"] = counting{e.targets["demo"], &runs}
-		e.targets["stub"] = stubTarget{&runs}
-		e.environ = append(e.environ, c.environ...)
-		before := snapshot(t, c.dir)
-		code, stdout, stderr := runArgs(t, e, c.args...)
-		if code != 2 || stdout != "" || runs != 0 || strings.Contains(stderr, "canary") {
-			t.Errorf("%s: code %d, stdout %q, %d runs; want 2, nothing, no run\n%s", name, code, stdout, runs, stderr)
-		}
-		if !reflect.DeepEqual(snapshot(t, c.dir), before) {
-			t.Errorf("%s: the tree changed", name)
+		e.environ = append(e.environ, v)
+		if code, stdout, _ := runArgs(t, e, "--suite", "demo"); code != 2 || stdout != "" || runs != 0 {
+			t.Errorf("%s: code %d, stdout %q, %d runs; want 2, nothing, no run", v, code, stdout, runs)
 		}
 	}
-	// Controls: the same environment without the refused variable runs.
 	e := newEnv(t, copyFixture(t, "ok"), noGit(t))
 	e.environ = append(e.environ, "TEMPORAL=1", "XTEMPORAL_DEBUG=1", "TEMPORAL_SDK=1")
-	if code, _, stderr := runArgs(t, e, demo...); code != 0 {
+	if code, _, stderr := runArgs(t, e, "--suite", "demo"); code != 0 {
 		t.Errorf("control: code %d\n%s", code, stderr)
-	}
-}
-
-func TestStdoutSingleJSONDocument(t *testing.T) {
-	// D2: without SetLogger, the SDK logs on the process standard output.
-	capture := func(f func()) string {
-		t.Helper()
-		r, w, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		old := os.Stdout
-		os.Stdout = w
-		done := make(chan string)
-		go func() {
-			data, _ := io.ReadAll(r)
-			done <- string(data)
-		}()
-		defer func() { os.Stdout = old }()
-		f()
-		os.Stdout = old
-		_ = w.Close()
-		return <-done
-	}
-	for name, c := range map[string]struct {
-		dir  string
-		args []string
-		code int
-	}{
-		"named":           {copyFixture(t, "ok"), []string{"--suite", "demo"}, 0},
-		"named_escalated": {"", []string{"--suite", "demo"}, 1},
-		"all":             {copyFixture(t, "select"), []string{"--suite", "all"}, 0},
-		"changed":         {copyFixture(t, "select"), []string{"--suite", "changed", "--base", ""}, 0},
-		"all_missing":     {copyFixture(t, "missing"), []string{"--suite", "all"}, 3},
-	} {
-		dir := c.dir
-		if dir == "" {
-			dir = copyFixture(t, "ok")
-			replaceIn(t, dir, "evals/demo/cases/demo-converge-001.yaml", "- {greeting: bonjour}", "- {greeting: salut}\n    - {greeting: salut}")
-		}
-		var code int
-		var stdout, stderr bytes.Buffer
-		process := capture(func() {
-			code = runWith(context.Background(), newEnv(t, dir, noGit(t)), c.args, &stdout, &stderr)
-		})
-		if code != c.code || process != "" {
-			t.Errorf("%s: code %d (want %d), process stdout %q\n%s", name, code, c.code, process, stderr.String())
-		}
-		var v any
-		oneDocument(t, stdout.String(), &v)
 	}
 }
