@@ -28,11 +28,11 @@ verify-quick:
 	go build ./...
 	golangci-lint run ./...
 	go test -short ./...
-	$(MAKE) --no-print-directory opa-test
-	$(MAKE) --no-print-directory arch-test
+	$(MAKE) -f Makefile --no-print-directory opa-test
+	$(MAKE) -f Makefile --no-print-directory arch-test
 
 verify: verify-quick
-	$(MAKE) --no-print-directory dev
+	$(MAKE) -f Makefile --no-print-directory dev
 	go test -tags=integration $$(go list ./... | grep -v '/internal/archtest$$')
 	bash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest
 	go tool govulncheck ./...
@@ -76,7 +76,7 @@ dev: dev-preflight
 # Démo de bout en bout (M0-T20) : faux LLM derrière -dev, vérificateur qui refuse tout,
 # tenant de démo fixe. Sortie standard : un seul document JSON.
 demo:
-	@$(MAKE) --no-print-directory dev >&2
+	@$(MAKE) -f Makefile --no-print-directory dev >&2
 	@go run ./cmd/rempart-worker -dev -demo-once -llm=fake -tenant=0d3e0000-0000-4000-8000-000000000001 \
 		-temporal-address=127.0.0.1:7233 -namespace=rempart \
 		-fake-script=internal/loops/demo/testdata/scripts/converge.json
