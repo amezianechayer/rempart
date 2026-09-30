@@ -484,8 +484,15 @@ func TestWriteBaselineOnlyWithFlag(t *testing.T) {
 	if want := []string{"evals/demo/baseline", "evals/demo/baseline/fake", demoBaselinePath}; !slices.Equal(created, want) {
 		t.Errorf("created %q, want %q", created, want)
 	}
-	if code, _, stderr := runArgs(t, newEnv(t, dir, noGit(t)), "--suite", "demo"); code != 0 {
-		t.Errorf("second run without the flag: code %d, want 0\n%s", code, stderr)
+	// An existing baseline is never rewritten without the flag (mutation M14).
+	if code, _, stderr := runArgs(t, newEnv(t, dir, noGit(t)), "--suite", "demo"); code != 0 || !reflect.DeepEqual(snapshot(t, dir), after) {
+		t.Errorf("second run without the flag: code %d, want 0, or a file was changed\n%s", code, stderr)
+	}
+	// A regression never overwrites the baseline that detects it (mutation M14c).
+	reg := copyFixture(t, "regression")
+	regBefore := snapshot(t, reg)
+	if code, _, _ := runArgs(t, newEnv(t, reg, noGit(t)), "--suite", "demo"); code != 1 || !reflect.DeepEqual(snapshot(t, reg), regBefore) {
+		t.Errorf("regression without the flag: code %d, want 1, or the baseline was rewritten", code)
 	}
 
 	// Refused before any write: all, changed (D12), a link on the way (D19, T59).
