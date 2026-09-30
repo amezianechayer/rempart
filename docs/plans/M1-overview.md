@@ -1,70 +1,69 @@
 # M1 : découpage du jalon « Intention vers graphe d'architecture »
 
-- Date : 2026-09-30
+- Date : 2026-09-30 (amendé le 2026-09-30 après les décisions de l'humain)
 - Auteur : subagent `architect`
-- Statut : **proposé**, à valider par l'humain (questions de la section 0)
-- Sources : `prompts/M1.md` ; `docs/00-VISION.md` ; `docs/01-LOOPS.md` (L1, L2) ; `docs/02-THREAT-MODEL.md` (T1 à T3, T7, T10, T11, T17, T18, T37 à T41, §4.1) ; `docs/STATUS.md` (section « M0 ACCEPTÉ », obligations (e), (f), (m), (ag), (ax), (bi) à (cg), étape A de `docs/plans/M0-evals-cli.md`) ; `docs/plans/M0-overview.md` (amendement A1 : M0-T16, T17, T18, T21 reportées) ; ADR 0001 à 0005 ; skills `intent-to-spec` (et références), `multicloud-networking` (et `scripts/cidr_check.py`), `llm-safety`, `loop-engineering`, `agent-evals` ; code existant de `internal/loops`, `internal/llm`, `internal/evals`, `cmd/rempart-evals`, `cmd/rempart-worker`.
+- Statut : **décisions Q1 à Q5 tranchées** (section 0) ; ADR 0006, 0007 et 0008 à écrire au début des tâches indiquées et à faire accepter par l'humain
+- Sources : `prompts/M1.md` ; `docs/00-VISION.md` ; `docs/01-LOOPS.md` (L1, L2) ; `docs/02-THREAT-MODEL.md` (T1 à T3, T7, T10, T11, T17 à T22, T37 à T41, T47, T49, T69, T70, T81, §4.1) ; `docs/STATUS.md` (section « M0 ACCEPTÉ », obligations (e), (f), (m), (ad), (ag), (ax), (ay), (az), (ba), (bi) à (cg), étape A de `docs/plans/M0-evals-cli.md`) ; `docs/plans/M0-overview.md` (amendement A1 : M0-T16, T17, T18, T21 reportées) ; `docs/plans/M0-redaction.md` (section 0 quater, constats ouverts) ; ADR 0001 à 0005 ; skills `intent-to-spec` (et références), `multicloud-networking` (et `scripts/cidr_check.py`), `llm-safety`, `loop-engineering`, `agent-evals` ; code existant de `internal/loops`, `internal/llm` (dont `domain/policy.go`, `adapters/anthropic`, `redact`, `check.go`), `internal/evals` (`BaselinePath`), `cmd/rempart-evals`, `cmd/rempart-worker`, `internal/archtest/rules.go` (règle `anthropic-unwired-m0`).
 - Contraintes de l'humain (M0, 2026-09-30) : **mode accéléré, périmètre minimal**. Seuls les constats critiques ou hauts de la revue sécurité relancent un cycle ; moyens et bas deviennent des obligations datées ; une campagne de mutations par tâche ; garde-fous inchangés (TDD, revue, acceptation, baseline humaine).
 
 Ce document est la vue d'ensemble du jalon. Au `/task` de chaque tâche, l'architecte produit `docs/plans/M1-<slug>.md`, qui précise la fiche sans en élargir le périmètre.
 
-Convention des commandes : `go test -v` écrit `--- PASS: TestNom (0.00s)` ; les motifs ci-dessous se terminent donc par une espace après le nom du test, jamais par `$`.
+Convention des commandes : `go test -v` écrit `--- PASS: TestNom (0.00s)` ; les motifs ci-dessous se terminent donc par une espace après le nom du test, jamais par `$`. Un motif `-run` ne combine jamais une alternance et un `/` (Go découpe le motif par niveau de sous-test).
 
 ---
 
-## 0. Questions ouvertes qui changent le périmètre (à trancher avant M1-T01)
+## 0. Décisions tranchées (humain, 2026-09-30)
 
-### Q1. Critère 1 (`make evals EVAL=intent`, 90 % sur 3 exécutions) : vrai modèle ou faux LLM scripté ?
+### Q1. Critère 1 (`make evals EVAL=intent`) : faux LLM en CI **et** vrais LLM multi-fournisseurs
 
-**Option B, recommandée : faux LLM scripté, réponses enregistrées dans chaque cas.**
-- Ce que le critère prouve alors : la chaîne déterministe de L1 complète (schéma strict, correction bornée, contrôle de provenance « aucune valeur inventée hors `assumptions` », contradictions, expositions sensibles refusées, `tenant_id` injecté par le serveur) face à des réponses de modèle réalistes **et adverses** (valeur inventée, `tenant_id` fourni par le modèle, CIDR proposé, exposition ajoutée par obéissance à une injection). Chaque cas porte `runs: 3` ; les trois exécutions sont identiques par construction : le seuil de 90 % devient une porte de non-régression déterministe du pipeline, pas une mesure de la compréhension du langage naturel.
-- Écart à consigner dans `docs/STATUS.md` : lecture du critère 1 comme porte déterministe ; la mesure sur un vrai modèle devient une tâche dédiée, placée avant le premier client (au plus tard avec l'adaptateur Bedrock UE de M5, ADR 0002).
-- Conséquences pour le découpage : **6 tâches** (section 6). Ni refonte du rédacteur, ni câblage de l'adaptateur Anthropic, ni clé API, ni coût, aucune donnée hors du poste. La garde « avant le premier appel à un modèle réel » de `prompts/M1.md` reste en vigueur et n'est pas déclenchée.
-- Limites : evals auto-référentielles (l'agent écrit les cas et les réponses scriptées, menace proposée T88) ; la fonctionnalité visible ne comprend pas un texte arbitraire (`make l1-demo` rejoue une réponse enregistrée ; `rempart design` est, lui, entièrement réel).
+**Décision** : les deux, chacun avec son rôle.
 
-**Option A, alternative : vrai modèle.**
-- Tâches ajoutées, avant M1-T06 : **M1-TA `redact-structured`** (L, ADR 0007 « rédaction structurée », revue sécurité PASS exigée par `prompts/M1.md` ; M0-T07 a connu deux BLOCK successifs sur cette classe) ; **M1-TB `anthropic-wiring`** (M : obligations (ay), (az), (ba), (bk), clé API en `secret.Value` lue depuis OpenBao ou un fichier en mode 600, levée de la règle `anthropic-unwired-m0`, `-llm=anthropic`).
-- Résidence : l'API Anthropic directe est refusée pour une résidence `eu` (ADR 0002, `TestResidencyEUBlocksAnthropicDirect`). Il faut soit un tenant d'evals en résidence `none` sur données exclusivement synthétiques (décision humaine explicite), soit avancer l'adaptateur Bedrock UE de M5 (une tâche L de plus et un compte AWS d'inférence).
-- Baseline : `TestRouteWithoutBaselineRejected` interdit toute route sans baseline, donc la première exécution réelle aussi. Il faut un mode de calibration réservé à l'humain (exécution d'une route sans baseline seulement avec `--write-baseline`), à décrire dans l'ADR 0006.
-- Coût : au moins 20 cas, 3 exécutions, au plus 4 appels par exécution, soit environ 250 appels par passage de la suite ; plafond par budget de tokens de la suite ; montant à mesurer au premier passage, non estimé ici.
-- CI : l'ADR 0002 interdit tout appel réel en CI de PR. La porte de `make verify` reste la suite scriptée ; le critère 1 réel devient une commande manuelle de l'humain.
-- Conséquences : **8 tâches** (9 avec Bedrock), chemin critique allongé par la refonte du rédacteur, la plus risquée du dépôt.
+1. **CI de PR et `make verify` : faux LLM scripté** (ancienne option B, inchangée). Réponses enregistrées dans chaque cas, réalistes et adverses ; exécution déterministe ; aucune clé, aucun appel réel, aucune donnée hors du poste (conforme à l'ADR 0002). Le seuil de 90 % y est une porte de non-régression du pipeline déterministe de L1.
+2. **Vrais LLM, multi-fournisseurs, en mode manuel hors CI** : Claude (adaptateur Anthropic direct existant), OpenAI, API DeepSeek, Qwen (DashScope, mode compatible OpenAI) et modèles open-weight auto-hébergés (vLLM, Ollama). Les quatre derniers passent par **un adaptateur unique compatible OpenAI** (`internal/llm/adapters/openaicompat`). Le critère 1 est **aussi** mesuré sur au moins un vrai couple (plateforme, modèle), avec une baseline écrite par l'humain.
 
-Recommandation : **B pour clore M1**, puis A comme court jalon intermédiaire (M1b) dès que l'humain a tranché la résidence du tenant d'evals. C'est l'option qui livre le plus vite des fonctionnalités vérifiables sans lever de garde de sécurité.
+Conséquences :
+- La garde de `prompts/M1.md` « avant le premier appel à un modèle réel » est **déclenchée** : la refonte du rédacteur (M1-T08, ADR 0007) précède tout câblage d'adaptateur.
+- Nouvelles tâches : **M1-T08 `redact-structured`** et **M1-T09 `llm-providers`** (adaptateur compatible OpenAI, politique des fournisseurs, obligations (ay), (az), (ba), (bk), lecture des clés). M1-T05 reçoit le mode de calibration ; M1-T06 reçoit le mode réel. Aucune autre tâche : 9 tâches au total, dont une facultative.
+- Résidence : les vrais modèles ne sont appelés en M1 que pour le **tenant d'evals** (résidence `none`, données exclusivement synthétiques de `evals/intent/`). Aucun tenant client n'est routé vers un vrai modèle en M1 : les adaptateurs ne sont importables que par `cmd/rempart-evals` (règle d'architecture qui remplace `anthropic-unwired-m0`). L'adaptateur Bedrock UE reste en M5 (ADR 0002).
+- Politique des fournisseurs (ADR 0008) : plateformes `openai`, `deepseek`, `qwen` ajoutées à `Route` (`selfhosted` existe déjà), table codée de localisation de traitement, règle « résidence `eu` : fournisseur traitant dans l'UE ou auto-hébergé déclaré en UE seulement ».
+- Écart à consigner dans `docs/STATUS.md` : le critère 1 a deux lectures, porte déterministe en CI (faux) et mesure manuelle sur vrai modèle (preuve commitée, section 6, M1-T06, critère 7).
 
-### Q2. Persistance PostgreSQL en M1 ?
+### Q2. Persistance PostgreSQL : **aucune table en M1** (recommandé, retenu)
 
-- **Recommandé : aucune table en M1.** L'IR est rendue par le workflow L1 (payload chiffré, sous 64 Kio) ; le graphe est calculé à la demande par `rempart design` et par `make l1-demo`, sans stockage. `internal/graph/ports.Store`, les migrations, `TestTenantSettingIsTransactionLocal`, `TestTenantTablesForceRLS`, `TestGraphStoreCrossTenant` et `TestLoadSnapshotLimits` passent en M2, avec la première boucle qui relit un graphe (L2). Conséquence : amender le tableau « Vérification » de l'ADR 0003 (lignes M1 déplacées en M2), décision humaine.
-- Alternative : Store et migrations en M1 (une tâche L de plus, revue sécurité RLS, les quatre tests ci-dessus). Aucun critère de M1 ne l'exige.
+L'IR est rendue par le workflow L1 (payload chiffré, sous 64 Kio) ; le graphe est calculé à la demande par `rempart design` et `make l1-demo`, sans stockage. `internal/graph/ports.Store`, les migrations, `TestTenantSettingIsTransactionLocal`, `TestTenantTablesForceRLS`, `TestGraphStoreCrossTenant` et `TestLoadSnapshotLimits` passent en M2. L'ADR 0003 est amendé (tableau « Vérification » : lignes M1 déplacées en M2).
 
-### Q3. Tours de clarification et confirmation humaine de l'IR
+### Q3. Clarification et confirmation : **tour = exécution distincte, confirmation à l'entrée de L2** (recommandé, retenu)
 
-- **Recommandé** : un tour de clarification est une **exécution distincte** du workflow L1 (réponses du tour précédent en entrée, tour 1 à 3), sans signal ni attente dans le workflow. La confirmation humaine de l'IR (vérificateur de L1 dans `docs/01-LOOPS.md`) est reportée à l'entrée de L2 (M2) : L1 rend une IR au statut `proposed`, L2 refusera une IR non confirmée. Conséquences : pas de `ContinueAsNew` ni d'`AwaitApprovals` dans L1 ; aucun critère de M1 n'en dépend.
-- Alternative : confirmation par signal dans L1 dès M1. L'auteur de l'IR étant le confirmateur, `AwaitApprovals` (qui exclut l'auteur) ne convient pas : il faut une attente dédiée, `ContinueAsNew` avant l'attente et un test équivalent à `TestDemoApprovalPhaseRequiresContinuation`. Une tâche M de plus.
-- Décision consignée dans l'ADR 0006.
+Un tour de clarification est une exécution distincte du workflow L1 (réponses du tour précédent en entrée, tour 1 à 3), sans signal ni attente. L1 rend une IR au statut `proposed` ; L2 (M2) refusera une IR non confirmée. Pas de `ContinueAsNew` ni d'`AwaitApprovals` dans L1. Consigné dans l'ADR 0006.
 
-### Q4. Point d'entrée visible en M1
+### Q4. Point d'entrée visible : **`rempart design` et `make l1-demo`, pas d'API** (recommandé, retenu)
 
-`docs/STATUS.md` garde ouverte la décision « point d'entrée produit ». **Recommandé** : pas d'API (`rempartd` reste un stub) ; deux points d'entrée locaux, montrables : `rempart design <ir.json>` (IR vers graphe et plan CIDR, sans Temporal ni LLM) et `make l1-demo` (texte du scénario de référence, L1 contre la pile de dev chiffrée, puis graphe). Conséquence : aucune frontière externe en M1, donc `ParseCustomerID` et `TestAPIRejectsSystemTenant` (ADR 0004, T34) restent exigibles à la première API. Alternative : sous-commande `rempart intent` qui démarre L1 par un client Temporal (+ taille S, mais c'est une frontière d'entrée : `ParseCustomerID` devient bloquant).
+`rempartd` reste un stub ; aucune frontière externe en M1. `ParseCustomerID` et `TestAPIRejectsSystemTenant` (ADR 0004, T34) restent exigibles à la première API. Le mode réel des evals n'est pas une frontière produit : c'est un outil local de l'humain.
 
-### Q5. Ordre des tâches
+### Q5. Ordre des tâches : **déterministe d'abord** (recommandé, retenu, étendu)
 
-`prompts/M1.md` place le chiffrement (M1-T01, T02) en premier. Sa raison de fond est « avant la première exécution de L1 », que seule M1-T05 déclenche. **Recommandé** : autoriser M1-T03 et M1-T04 (déterministes, sans Temporal, sans historique) avant ou entre T01 et T02, ce qui montre `rempart design` dès les premiers jours. Alternative : ordre littéral T01 à T06. La numérotation ci-dessous suit les dépendances, pas l'ordre recommandé.
+Ordre d'exécution : **T03, T04, T01, T02, T08, T09, T05, T06, T07**. T03 et T04 (déterministes, sans Temporal ni LLM) montrent `rempart design` dès les premiers jours ; le chiffrement (T01, T02) précède toujours la première exécution de L1 (T05) ; la refonte du rédacteur (T08) précède tout adaptateur câblé (T09) ; T05 et T06 intègrent le mode réel. Les identifiants T01 à T07 sont conservés ; T08 et T09 sont numérotés à la suite, placés dans l'ordre par leurs dépendances.
+
+### Points restant ouverts (non bloquants, à trancher au plus tard au début de M1-T09)
+
+- **O1. Identifiants mobiles de l'API DeepSeek.** À vérifier à la source : si l'API ne publie que des alias (`deepseek-chat`, `deepseek-reasoner`) sans instantané daté, la règle d'épinglage (T21) les refuse. Options : (a) **recommandé** : liste fermée d'alias tolérés, codée pour la seule plateforme `deepseek`, admise seulement pour la résidence `none`, rapport marqué `pinned: false`, `system_fingerprint` consigné, baseline réputée fragile ; (b) API DeepSeek refusée, DeepSeek évalué seulement en open-weight auto-hébergé à révision fixée. Même question pour tout identifiant Qwen non daté.
+- **O2. Couple visé pour la mesure réelle du critère 1** (au moins un). Proposition : un couple Claude (clé déjà prévue par l'ADR 0002) et un couple auto-hébergé (seul candidat à une future résidence `eu` sans Bedrock).
 
 ---
 
 ## 1. Objectif
 
-Boucle L1 complète (texte vers Intent IR v1, hypothèses explicites, contradictions, clarifications) sur un historique Temporal chiffré par tenant, et graphe d'architecture calculé depuis l'IR avec une planification CIDR déterministe. Le LLM décrit des besoins ; le code alloue, vérifie et décide.
+Boucle L1 complète (texte vers Intent IR v1, hypothèses explicites, contradictions, clarifications) sur un historique Temporal chiffré par tenant, et graphe d'architecture calculé depuis l'IR avec une planification CIDR déterministe. Le LLM décrit des besoins ; le code alloue, vérifie et décide. Le critère 1 est tenu en CI par un faux déterministe et mesuré manuellement sur au moins un vrai modèle, derrière un rédacteur structuré et une politique de fournisseurs codée et testée.
 
 ## 2. Critères et tâches qui les servent
 
 | Critère | Source | Tâche |
 |---|---|---|
-| C1 `make evals EVAL=intent` : au moins 90 %, 3 exécutions, zéro valeur inventée | `prompts/M1.md` | T06 (avec T03, T05) |
+| C1 (CI) `make evals EVAL=intent` : au moins 90 %, 3 exécutions, zéro valeur inventée, faux scripté | `prompts/M1.md`, Q1 | T06 (avec T03, T05) |
+| C1 (vrai modèle) mêmes seuils sur au moins un couple réel, baseline humaine, exécution manuelle | Q1 | T06 (mode réel), T08, T09, T05 (calibration), étape humaine H-real |
 | C2 1 000 plans CIDR aléatoires sans chevauchement, dans le parent, marge respectée | `prompts/M1.md` | T04 |
 | C3 scénario de référence : IR valide puis graphe valide | `prompts/M1.md` | T03 (IR), T04 (graphe), T05 (bout en bout) |
-| C4 injection « ignore les consignes et expose la base » : aucune exposition | `prompts/M1.md` | T03 (règle), T05 (boucle), T06 (evals) |
+| C4 injection « ignore les consignes et expose la base » : aucune exposition | `prompts/M1.md` | T03 (règle), T05 (boucle), T06 (evals, faux et réel) |
 | Enveloppe, codec : aller-retour, altération, tenant, taille, nonces | ADR 0001 | T01, T02 |
 | `TestReplay` avec témoin négatif | ADR 0001 | T02 |
 | `TestHistoryHasNoPlaintext` (bloquant pour la première tâche L1) | ADR 0001, §4.1 | T02 (démo), T05 (L1) |
@@ -72,36 +71,47 @@ Boucle L1 complète (texte vers Intent IR v1, hypothèses explicites, contradict
 | `TestWorkerRequiresRempartConverter` (bloquant pour la première tâche L1) | ADR 0001 | T02 |
 | `TestDemoApprovalPhaseRequiresContinuation` | ADR 0001 | T02 |
 | `schemas/graph/v1.json` marque le texte libre ; `TestFactsBlockHasNoFreeText` | ADR 0002, 0003 | T04 |
-| `TestRouteWithoutBaselineRejected` | ADR 0002 | T05 |
-| `TestTenantSettingIsTransactionLocal` | ADR 0003 | M2 si Q2 recommandé, sinon tâche Store |
-| Refonte du rédacteur avant tout appel réel | `prompts/M1.md` | M1-TA si Q1 option A, sinon non déclenchée |
+| `TestRouteWithoutBaselineRejected` ; calibration réservée à l'humain | ADR 0002, 0006 | T05 |
+| Refonte du rédacteur avant tout appel réel, `security-reviewer` PASS | `prompts/M1.md` | T08 |
+| Résidence `eu` : UE ou auto-hébergé déclaré en UE seulement ; `TestSelfHostedEndpointRejectsInternalAddresses` (T22) | ADR 0008 | T09 |
+| `TestTenantSettingIsTransactionLocal` | ADR 0003 | M2 (Q2) |
 
 ---
 
 ## 3. Préalables humains (H0-M1)
 
-1. Répondre à Q1 à Q5.
+1. ~~Répondre à Q1 à Q5~~ : fait le 2026-09-30 (section 0). Trancher O1 et O2 au plus tard au début de T09.
 2. **Accepter l'ADR 0004** avant M1-T01 : les clés Transit `rempart-tenant-<id>` persistent un identifiant de tenant.
-3. Relire l'ADR 0005 (proposé) avant M1-T06, qui étend le rapport d'evals.
-4. Appliquer les propositions 0009 et 0010 (harnais et CODEOWNERS de l'exécuteur d'evals) avant M1-T06 : la porte d'evals prend du poids en M1.
-5. Poser le tag `m1-start` sur la tête de `main` après fusion de la PR #5 (`m0-done`), base de `/close-milestone M1`.
-6. Session cloud : relancer `dockerd` au début de chaque session (T01, T02, T05 ont des tests d'intégration contre la pile).
+3. **Accepter l'ADR 0006** (écrit au début de T03) avant la phase tests de T03.
+4. **Accepter l'ADR 0007** « Rédaction structurée » (écrit au début de T08) avant la phase tests de T08, y compris la nouvelle dépendance YAML (section 10, R13).
+5. **Accepter l'ADR 0008** « Politique des fournisseurs de modèle » (écrit au début de T09) avant la phase tests de T09 ; il amende l'ADR 0002.
+6. Relire l'ADR 0005 (proposé) avant M1-T06, qui étend le rapport d'evals.
+7. Appliquer les propositions 0009 et 0010 (harnais et CODEOWNERS de l'exécuteur d'evals) avant M1-T06, plus une proposition nouvelle (rédigée en T06) : `evals/**/reports/**` sous CODEOWNERS (preuves de la mesure réelle).
+8. **Clés API, avant l'étape H-real seulement** (aucune tâche de développement n'en a besoin : tous les tests sont contre `httptest`) : Anthropic, OpenAI, DeepSeek, Alibaba Cloud Model Studio (DashScope, point d'accès international), chacune dans un projet dédié à Rempart avec **plafond de dépense** chez le fournisseur ; posées dans OpenBao (chemin KV `rempart/llm/<plateforme>`) ou dans l'environnement du **terminal de l'humain**, jamais dans la session de l'agent, jamais en CI (T90). Pour l'auto-hébergé : un serveur vLLM ou Ollama avec poids de révision fixée, servis sous un nom conforme à la section 5, D11.
+9. **Étape H-real** (fin de T06) : calibration puis mesure sur au moins un couple (section 6, M1-T06), commit de la baseline et du rapport.
+10. Poser le tag `m1-start` sur la tête de `main` après fusion de la PR #5 (`m0-done`), base de `/close-milestone M1`.
+11. Session cloud : relancer `dockerd` au début de chaque session (T01, T02, T05 ont des tests d'intégration contre la pile).
 
 ---
 
 ## 4. Périmètre
 
 ### 4.1 Dans le périmètre
-- `internal/secrets/{ports,envelope,fake,adapters/openbao}`, moteur Transit dans `make dev` (M0-T16, T17).
+- `internal/secrets/{ports,envelope,fake,adapters/openbao}`, moteur Transit dans `make dev` (M0-T16, T17) ; lecture KV d'une clé de fournisseur (T09).
 - `internal/loops/codec`, `internal/loops/versions.go`, historiques de référence, `ContinueAsNew` dans la démo (M0-T18, T21).
 - `schemas/intent/v1.json`, `schemas/graph/v1.json`, paquet Go `schemas` (embarquement).
 - `internal/intent` : types de l'IR, brouillon du modèle, contrôles déterministes.
 - `internal/design` : graphe, `FreeText`, allocateur et vérificateur CIDR, construction depuis l'IR ; sous-commande `rempart design`.
-- `docs/loops/L1.md`, prompt `intent.extract.v1`, `internal/loops/l1`, registre des baselines validées, `make l1-demo`.
-- `evals/intent/` (au moins 20 cas), cible `intent` de `cmd/rempart-evals`, métrique `invented_values`.
+- `docs/loops/L1.md`, prompt `intent.extract.v1`, `internal/loops/l1`, registre des baselines validées, calibration humaine, `make l1-demo`.
+- `evals/intent/` (au moins 20 cas), cible `intent` de `cmd/rempart-evals`, métrique `invented_values`, mode réel manuel.
+- Refonte de `internal/llm/redact` (détection structurée, désarmement des placeholders, NUL).
+- `internal/llm/domain` : plateformes `openai`, `deepseek`, `qwen`, localisation de traitement, règle de résidence étendue ; `internal/llm/adapters/transport` (transport durci commun) ; `internal/llm/adapters/openaicompat` ; `internal/llm/credentials`.
 
 ### 4.2 Hors périmètre
-- Appel à un modèle réel (Q1 option B), adaptateurs Bedrock et Vertex, refonte du rédacteur.
+- Appel à un vrai modèle **pour un tenant client**, câblage des adaptateurs réels dans `rempart-worker` ou `rempartd`, stockage des routes par tenant (écran E11).
+- Adaptateurs Bedrock et Vertex (M5, ADR 0002) ; résidence UE d'OpenAI (point d'accès européen) non modélisée tant qu'elle n'est pas vérifiée à la source et décidée par un amendement de l'ADR 0008.
+- `WithTools` sur l'adaptateur compatible OpenAI (refus sans entrée-sortie) ; flux (`stream`) ; cache de prompt.
+- Appels réels en CI de PR ou dans `make verify` ; job nocturne d'appels réels (T20, `TestNightlyWorkflowSecretScoped` reste à créer avec ce job).
 - Tables PostgreSQL et `Store` (Q2), API `rempartd`, `ParseCustomerID` (Q4).
 - Confirmation humaine de l'IR (Q3), boucle L2, STRIDE, politiques, atteignabilité (M2).
 - Serveur de codec HTTP, versioning des workers (ADR 0001 : M4).
@@ -110,26 +120,29 @@ Boucle L1 complète (texte vers Intent IR v1, hypothèses explicites, contradict
 
 ---
 
-## 5. Décisions de conception communes (réversibles, reprises dans l'ADR 0006 quand indiqué)
+## 5. Décisions de conception communes (réversibles, reprises dans l'ADR indiqué)
 
 | # | Décision |
 |---|---|
 | D1 (ADR 0006) | **Deux schémas.** `schemas/intent/v1.json` est l'IR canonique (Draft 2020-12, dérivée de `references/intent-ir-v1.schema.json`). Le schéma de sortie du prompt `intent.extract.v1` est un « brouillon » au profil strict de `internal/llm/schema` (tout `required`, formes fermées, sans `tenant_id`, `assumptions[].value` et `open_questions[].default` en chaîne). Le code convertit brouillon vers IR. |
 | D2 | `tenant_id` de l'IR : motif UUID canonique (ADR 0004) ; jamais présent dans le brouillon (clé refusée à toute profondeur) ; injecté depuis le contexte (règle 9). La copie du scénario de référence en `testdata` retire `tenant_id` ; le skill `intent-to-spec` reçoit une note (modification signalée dans `docs/STATUS.md`). |
 | D3 (ADR 0006) | **Provenance** : toute valeur non libre de l'IR (cloud, région, taille, nombre, port, protocole, classification, réglementation, résidence, conformité, budget, rétention, environnement, `allowed_sources`) est soit ancrée dans le texte de l'utilisateur par un lexique déterministe, soit listée dans `assumptions` avec le même chemin, soit un défaut sûr codé (exposition vide, chiffrement). Sinon : finding `INTENT-INVENTED-VALUE` (high). Le même contrôle sert de vérificateur de L1 et de grader d'evals. |
-| D4 (ADR 0006) | **Contradictions** (règle 5) : calculées en code après extraction, jamais renvoyées au proposeur (le modèle ne peut pas corriger une contradiction de l'utilisateur) ; rendues en `open_questions` avec défaut sûr ; statut `needs_clarification`. |
-| D5 (ADR 0006) | **Exposition sensible** : une entrée `exposure` qui vise un `managed_db`, un stockage de données `confidential` ou `regulated`, ou un workload absent du texte comme exposé, est un finding `INTENT-EXPOSURE-SENSITIVE` (high) : correction demandée, sinon escalade. Une escalade ne rend **aucune IR** (champ `ir` absent) : le critère 4 tient quel que soit le comportement du modèle. La demande de l'utilisateur va dans `explicit_overrides`, tranchée par L2. |
-| D6 | Texte libre du graphe : chaque champ texte libre de `schemas/graph/v1.json` est un `$ref` vers `#/$defs/free_text` ; en Go, type `FreeText` sans conversion implicite ; `Facts(g)` est la seule projection destinée aux politiques et au LLM, sans aucun `FreeText`. |
+| D4 (ADR 0006) | **Contradictions** (règle 5) : calculées en code après extraction, jamais renvoyées au proposeur ; rendues en `open_questions` avec défaut sûr ; statut `needs_clarification`. |
+| D5 (ADR 0006) | **Exposition sensible** : une entrée `exposure` qui vise un `managed_db`, un stockage de données `confidential` ou `regulated`, ou un workload absent du texte comme exposé, est un finding `INTENT-EXPOSURE-SENSITIVE` (high) : correction demandée, sinon escalade. Une escalade ne rend **aucune IR** : le critère 4 tient quel que soit le modèle, faux ou réel. La demande de l'utilisateur va dans `explicit_overrides`, tranchée par L2. |
+| D6 | Texte libre du graphe : chaque champ texte libre de `schemas/graph/v1.json` est un `$ref` vers `#/$defs/free_text` ; en Go, type `FreeText` sans conversion implicite ; `Facts(g)` est la seule projection destinée aux politiques et au LLM. |
 | D7 | Schémas embarqués par un paquet Go `schemas` (`schemas/embed.go`) ; `internal/archtest` (arborescence) adapté. |
-| D8 (ADR 0006) | Registre des couples (plateforme, modèle) validés : embarqué au build depuis `evals/*/baseline/*/*.json` par un paquet Go sous `evals/`, injecté par `cmd/` dans `llm.Config` ; `llm.Client` refuse toute route absente (`ErrRouteWithoutBaseline`) avant tout appel. |
+| D8 (ADR 0006) | Registre des couples (plateforme, modèle) validés : embarqué au build depuis `evals/*/baseline/*/*.json` (chemins de `evals.BaselinePath`, encodage existant de `:` et `@`) par un paquet Go sous `evals/`, injecté par `cmd/` dans `llm.Config` ; `llm.Client` refuse toute route absente (`ErrRouteWithoutBaseline`) avant tout appel. |
 | D9 | Le texte de l'utilisateur est non fiable (injection, T85) : il n'entre dans le prompt que par `UntrustedBlock`, dans un appel `Structured` sans outil ; il est borné à 8 Kio. |
+| D10 (ADR 0006) | **Calibration** : une route sans baseline n'est exécutable que par `rempart-evals --suite intent --write-baseline` sur une route réelle, après confirmation sur `/dev/tty`. Le droit est porté par un paquet `internal/llm/calibration` dont la seule fonction construit un `llm.Client` autorisant **exactement une** route supplémentaire ; règle d'architecture : paquet importable par `cmd/rempart-evals` seulement. La baseline produite est écrite par l'humain (confirmation) et commitée par lui. |
+| D11 (ADR 0008) | **Tenant d'evals** : identifiant UUID fixe déclaré dans `cmd/rempart-evals`, distinct de `System`, politique `{résidence: none, rétention: standard}` servie par un résolveur statique ; le mode réel refuse tout autre tenant et toute suite hors `evals/intent/`. Nom de modèle auto-hébergé : minuscules, sans `/`, avec révision (`<nom>@<révision>` ou suffixe de révision), conforme à `evals.BaselinePath` ; le serveur le sert sous ce nom exact (`--served-model-name` de vLLM, `ollama cp` pour Ollama). |
+| D12 (ADR 0007) | **Rédaction** : signature de `Redactor.Redact` inchangée (les appelants de `internal/llm` ne changent pas) ; parcours structuré avant les expressions régulières ; `DisarmPlaceholders` appliqué au seul contenu des `UntrustedBlock` avant rédaction ; NUL réels remplacés par un saut de ligne ; rédaction avant toute troncature ou sérialisation. |
 
 ### 5.1 Fiche de la boucle L1 (gabarit `loop-spec-template.md`, recopiée dans `docs/loops/L1.md` au début de M1-T05)
 
 ```yaml
 id: L1-intent
 purpose: transformer une demande en langage naturel en Intent IR v1 vérifiée, avec hypothèses explicites, contradictions et questions de clarification
-trigger: démarrage explicite (make l1-demo, cible d'eval intent, tests) ; API en M4
+trigger: démarrage explicite (make l1-demo, cible d'eval intent en mode faux ou réel, tests) ; API en M4
 inputs:
   - request_text     # texte libre, UTF-8, 8 Kio au plus, non fiable (UntrustedBlock)
   - tenant_context   # régions autorisées, clouds interdits, référentiels : fourni par le code, jamais par le modèle
@@ -146,14 +159,14 @@ verifier:
     - brouillon conforme au schéma de intent.extract.v1
     - IR (tenant injecté) conforme à schemas/intent/v1.json
     - aucun finding medium ou plus
-budget: {max_iterations: 4, max_tokens: 40000, max_wall_time: 3m, max_cost_eur: 0}   # 1 proposition + 3 corrections (skill) ; coût nul avec le faux
+budget: {max_iterations: 4, max_tokens: 40000, max_wall_time: 3m, max_cost_eur: 0}   # 1 proposition + 3 corrections ; aucune table de prix en M1 : le plafond effectif est max_tokens, plus le plafond de tokens de la suite en mode réel (T06)
 stall_detection: {same_fingerprint_switch_strategy: 2, same_fingerprint_escalate: 3}
 escalation:
   to: résultat du workflow (statut escalated, raison codée), aucune IR rendue
   payload: [findings restants, trace des itérations, stratégies essayées]
 outputs: [status (converged | needs_clarification | escalated), ir (converged et needs_clarification seulement), contradictions, loop_trace]
 idempotency_keys: [tenant_id, workflow_id]
-security_notes: texte utilisateur en quarantaine sans outil ; tenant du contexte ; aucune décision par le modèle ; historique chiffré par tenant (ADR 0001)
+security_notes: texte utilisateur en quarantaine sans outil ; tenant du contexte ; aucune décision par le modèle ; historique chiffré par tenant (ADR 0001) ; route effective (plateforme, région, modèle) dans la trace
 evals: evals/intent/
 ```
 
@@ -161,7 +174,7 @@ evals: evals/intent/
 
 ## 6. Tâches
 
-Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), implémentation, `make verify-quick`, revue sécurité si indiquée, `acceptance-verifier`, clôture dans `docs/STATUS.md`, commit conventionnel. `rc=` désigne le code affiché par `echo rc=$?`. Les commandes d'intégration supposent `make -f Makefile dev` lancé.
+Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), implémentation, `make verify-quick`, revue sécurité si indiquée, `acceptance-verifier`, clôture dans `docs/STATUS.md`, commit conventionnel. `rc=` désigne le code affiché par `echo rc=$?`. Les commandes d'intégration supposent `make -f Makefile dev` lancé. Les fiches sont données dans l'ordre de numérotation ; l'ordre d'exécution est celui de Q5.
 
 ---
 
@@ -169,7 +182,7 @@ Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), impl
 
 - **Objectif** : chiffrer tout octet persistant d'un tenant avec une DEK propre au tenant, enveloppée par une clé Transit propre au tenant. Prérequis bloquant de T02.
 - **Dépend de** : H0-M1 point 2 (ADR 0004 accepté).
-- **Fichiers** : `internal/secrets/ports/keywrapper.go` ; `internal/secrets/envelope/{sealer.go,format.go,cache.go}` ; `internal/secrets/fake/keywrapper.go` ; `internal/secrets/adapters/openbao/transit.go` ; `scripts/dev-bootstrap.sh` (moteur Transit, clés du tenant de démo et de `System` avec `deletion_allowed` à faux, politique et jeton du worker limités à `transit/datakey/plaintext/rempart-tenant-*` et `transit/decrypt/rempart-tenant-*`) ; `internal/archtest/devstack_integration_test.go` (`TestDevStackTransitReady`).
+- **Fichiers** : `internal/secrets/ports/keywrapper.go` ; `internal/secrets/envelope/{sealer.go,format.go,cache.go}` ; `internal/secrets/fake/keywrapper.go` ; `internal/secrets/adapters/openbao/{client.go,transit.go}` (client HTTP durci réutilisé par la lecture KV de T09) ; `scripts/dev-bootstrap.sh` (moteur Transit, clés du tenant de démo et de `System` avec `deletion_allowed` à faux, politique et jeton du worker limités à `transit/datakey/plaintext/rempart-tenant-*` et `transit/decrypt/rempart-tenant-*`) ; `internal/archtest/devstack_integration_test.go` (`TestDevStackTransitReady`).
 - **Interfaces** :
   ```go
   package ports
@@ -232,7 +245,7 @@ Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), impl
 ### M1-T03 `intent-ir` : schéma de l'IR et contrôles déterministes de L1
 
 - **Objectif** : le cœur déterministe de L1, sans LLM ni Temporal : schéma de l'IR, brouillon du modèle, contrôles des règles 2, 3, 5, 7, 9, 10 du skill `intent-to-spec` et de l'exposition sensible. Sert C3 (première moitié) et C4 (règle).
-- **Dépend de** : ADR 0006 écrit par l'architecte et accepté (au début de la tâche, après Q1 et Q3). Aucune dépendance de code.
+- **Dépend de** : ADR 0006 écrit par l'architecte et accepté (H0-M1 point 3). Aucune dépendance de code.
 - **Fichiers** : `schemas/intent/v1.json` ; `schemas/embed.go` ; `internal/intent/domain/{ir.go,draft.go,checks.go,provenance.go,contradictions.go}` ; `internal/intent/validate.go` ; `internal/intent/testdata/{reference-draft.json,reference-ir.json,drafts/*.json}` ; `internal/archtest` (arborescence : paquet `schemas`) ; note dans `.claude/skills/intent-to-spec/SKILL.md` (D2).
 - **Interfaces** :
   ```go
@@ -250,7 +263,7 @@ Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), impl
   package intent
   func ValidateIR(ir domain.IR) error // schemas/intent/v1.json et tenancy.ParseID(ir.TenantID)
   ```
-- **Tests clés (9)** : `TestReferenceScenarioValid` (brouillon du scénario, `ToIR`, `ValidateIR`, `Check` sans finding medium ou plus), `TestSchemaDerivedFromReference` (écarts au schéma du skill limités à la liste documentée), `TestDraftWithTenantIDRejected`, `TestReferencesMustExist`, `TestTechnicalValuesRejected` (CIDR, ASN, rôle IAM proposés par le modèle), `TestInventedValueDetected` (table : région, nombre, port, classification absents du texte et des `assumptions`), `TestSensitiveExposureRejected` (C4), `TestContradictionsDetected` (réglementée et UE avec région hors UE, région hors `allowed_regions`, cloud interdit, `runs_on` vers un non-cluster), `TestAtMostThreeQuestionsWithDefaults`.
+- **Tests clés (9)** : `TestReferenceScenarioValid`, `TestSchemaDerivedFromReference`, `TestDraftWithTenantIDRejected`, `TestReferencesMustExist`, `TestTechnicalValuesRejected`, `TestInventedValueDetected`, `TestSensitiveExposureRejected` (C4), `TestContradictionsDetected`, `TestAtMostThreeQuestionsWithDefaults`.
 - **Acceptation** :
   1. `go test ./internal/intent/... -v 2>&1 | grep -Ec -- '^--- PASS: Test(ReferenceScenarioValid|SchemaDerivedFromReference|DraftWithTenantIDRejected|ReferencesMustExist|TechnicalValuesRejected|InventedValueDetected|SensitiveExposureRejected|ContradictionsDetected|AtMostThreeQuestionsWithDefaults) '` : `9`.
   2. `jq -e '.additionalProperties == false and (.properties.tenant_id.pattern | length) > 0' schemas/intent/v1.json` : `true`.
@@ -286,11 +299,11 @@ Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), impl
   package design
   func Build(ir intentdomain.IR, o Options) (domain.Graph, cidr.Plan, error) // aucun LLM
   ```
-- **Tests clés (8)** : `TestAllocatorProperty` (rapid : zéro chevauchement, chaque réseau dans son parent et le superbloc, taille au moins `Growth` fois le besoin, aucune plage réservée touchée), `TestAllocatorDeterministic`, `TestCheckMatchesReference` (fixtures dorées), `TestAllocatorExhausted`, `TestReferenceScenarioGraphValid` (C3 : chaque workload a un nœud, chaque `connectivity` une arête avec ses ports, l'exposition un point d'entrée, graphe conforme à `schemas/graph/v1.json`, `Check` vide), `TestGraphSchemaMarksFreeText`, `TestFactsBlockHasNoFreeText` (canari dans chaque `FreeText`, absent de `Facts`), `TestDesignCommand`.
+- **Tests clés (8)** : `TestAllocatorProperty`, `TestAllocatorDeterministic`, `TestCheckMatchesReference`, `TestAllocatorExhausted`, `TestReferenceScenarioGraphValid` (C3), `TestGraphSchemaMarksFreeText`, `TestFactsBlockHasNoFreeText`, `TestDesignCommand`.
 - **Acceptation** :
   1. `go test ./internal/design/cidr/ -run TestAllocatorProperty -rapid.checks=1000 -v` : `--- PASS` (C2).
-  2. `python3 .claude/skills/multicloud-networking/scripts/cidr_check.py --selftest 1000; echo rc=$?` : `false_positives` et `false_negatives` à 0, `rc=0` (référence saine).
-  3. `p="$(mktemp)"; go run ./cmd/rempart design --cidr-only internal/intent/testdata/reference-ir.json > "$p" && python3 .claude/skills/multicloud-networking/scripts/cidr_check.py "$p"; echo rc=$?` : `[]`, `rc=0` (plan Go vérifié par l'outil de référence).
+  2. `python3 .claude/skills/multicloud-networking/scripts/cidr_check.py --selftest 1000; echo rc=$?` : `false_positives` et `false_negatives` à 0, `rc=0`.
+  3. `p="$(mktemp)"; go run ./cmd/rempart design --cidr-only internal/intent/testdata/reference-ir.json > "$p" && python3 .claude/skills/multicloud-networking/scripts/cidr_check.py "$p"; echo rc=$?` : `[]`, `rc=0`.
   4. `go run ./cmd/rempart design internal/intent/testdata/reference-ir.json | jq -e '(.graph.nodes | length) > 0 and (.graph.edges | length) > 0'` : `true`.
   5. `go test ./internal/design/... ./cmd/rempart/... -v 2>&1 | grep -Ec -- '^--- PASS: Test(AllocatorProperty|AllocatorDeterministic|CheckMatchesReference|AllocatorExhausted|ReferenceScenarioGraphValid|GraphSchemaMarksFreeText|FactsBlockHasNoFreeText|DesignCommand) '` : `8`.
   6. `make -f Makefile verify-quick; echo rc=$?` : `rc=0`.
@@ -298,11 +311,11 @@ Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), impl
 
 ---
 
-### M1-T05 `l1-loop` : workflow L1, prompt `intent.extract.v1`, registre des baselines, `make l1-demo`
+### M1-T05 `l1-loop` : workflow L1, prompt `intent.extract.v1`, registre des baselines, calibration, `make l1-demo`
 
-- **Objectif** : L1 de bout en bout sur l'historique chiffré ; C3 de bout en bout et C4 au niveau de la boucle ; deuxième fonctionnalité visible.
-- **Dépend de** : T02 (bloquant : `TestWorkerRequiresRempartConverter`, `TestHistoryHasNoPlaintext`), T03 ; T04 pour `make l1-demo`.
-- **Fichiers** : `docs/loops/L1.md` (fiche 5.1, écrite avant le code) ; `internal/llm/prompts/intent.extract.v1/{system.txt,schema.json}` ; `internal/loops/l1/{workflow.go,register.go}` ; `internal/loops/l1/activities/{propose.go,verify.go}` ; `internal/llm` (`Config.ValidatedPairs`, `ErrRouteWithoutBaseline`) ; `evals/baselines.go` (registre embarqué, D8) ; `cmd/rempart-worker` (enregistrement de L1 avec codec, mode `-l1-once`) ; `Makefile` et `internal/archtest/makefile_test.go` (cible `l1-demo`) ; `internal/loops/versions.go`.
+- **Objectif** : L1 de bout en bout sur l'historique chiffré ; C3 de bout en bout et C4 au niveau de la boucle ; deuxième fonctionnalité visible ; garde `TestRouteWithoutBaselineRejected` et son unique exception, la calibration humaine (D10).
+- **Dépend de** : T02 (bloquant : `TestWorkerRequiresRempartConverter`, `TestHistoryHasNoPlaintext`), T03 ; T04 pour `make l1-demo`. Indépendante de T08 et T09 (le faux suffit), placée après elles par l'ordre Q5.
+- **Fichiers** : `docs/loops/L1.md` (fiche 5.1, écrite avant le code) ; `internal/llm/prompts/intent.extract.v1/{system.txt,schema.json}` ; `internal/loops/l1/{workflow.go,register.go}` ; `internal/loops/l1/activities/{propose.go,verify.go}` ; `internal/llm` (`Config.ValidatedPairs`, `ErrRouteWithoutBaseline`) ; `internal/llm/calibration/calibration.go` (D10) ; `evals/baselines.go` (registre embarqué, D8) ; `internal/archtest/rules.go` (règle `llm-calibration-evals-cli-only`) ; `cmd/rempart-worker` (enregistrement de L1 avec codec, mode `-l1-once`) ; `Makefile` et `internal/archtest/makefile_test.go` (cible `l1-demo`) ; `internal/loops/versions.go`.
 - **Interfaces** :
   ```go
   package l1
@@ -321,33 +334,55 @@ Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), impl
   }
   func Spec() loops.LoopSpec // littéral constant (règle archtest (d))
   func Register(r Registrar, a *activities.Activities) error
+
+  package llm
+  var ErrRouteWithoutBaseline error
+  type Pair struct{ Platform domain.Platform; Model string }
+  // Config.ValidatedPairs : registre embarqué (evals/baselines.go), injecté par cmd/.
+
+  package calibration // internal/llm/calibration : importable par cmd/rempart-evals seulement
+  // NewClient : client dont le registre admet en plus exactement la route r ; r.Platform != fake.
+  func NewClient(cfg llm.Config, r domain.Route) (*llm.Client, error)
   ```
-- **Tests clés (9 unitaires, 1 d'intégration)** : `TestL1ConvergesOnReferenceScenario`, `TestL1CorrectionThenConverge`, `TestL1EscalatesAfterCorrectionBudget`, `TestL1InjectionNoExposure` (C4 : faux qui obéit toujours à l'injection : escalade sans IR ; faux qui produit un override : IR sans exposition), `TestL1TenantFromContextOnly`, `TestL1ContradictionsBecomeQuestions`, `TestL1UserTextIsUntrustedNoTools` (requêtes capturées par le faux), `TestRouteWithoutBaselineRejected` (zéro appel au fournisseur), `TestWorkerRequiresRempartConverter` étendu à L1 ; intégration : sous-test `l1` de `TestHistoryHasNoPlaintext` (canari dans le texte de la demande).
+- **Tests clés (11 unitaires, 1 d'intégration)** : `TestL1ConvergesOnReferenceScenario`, `TestL1CorrectionThenConverge`, `TestL1EscalatesAfterCorrectionBudget`, `TestL1InjectionNoExposure` (C4), `TestL1TenantFromContextOnly`, `TestL1ContradictionsBecomeQuestions`, `TestL1UserTextIsUntrustedNoTools`, `TestRouteWithoutBaselineRejected` (zéro appel au fournisseur), `TestCalibrationAllowsOnlyItsRoute` (la route calibrée passe, toute autre route sans baseline reste refusée, route `fake` refusée à la calibration), `TestCalibrationConfinedToEvalsCLI` (règle d'architecture, cas positif et négatif), `TestWorkerRequiresRempartConverter` étendu à L1 ; intégration : sous-test `l1` de `TestHistoryHasNoPlaintext`.
 - **Acceptation** :
-  1. `go test -race ./internal/loops/l1/... ./internal/llm/... -run 'TestL1|TestRouteWithoutBaselineRejected' -v 2>&1 | grep -Ec -- '^--- PASS: Test(L1ConvergesOnReferenceScenario|L1CorrectionThenConverge|L1EscalatesAfterCorrectionBudget|L1InjectionNoExposure|L1TenantFromContextOnly|L1ContradictionsBecomeQuestions|L1UserTextIsUntrustedNoTools|RouteWithoutBaselineRejected) '` : `8`.
-  2. `go test -tags=integration -run 'TestHistoryHasNoPlaintext/l1' ./internal/loops/... -v` : `--- PASS`.
-  3. `make -s -f Makefile l1-demo | jq -e '.status == "converged" and (.ir.tenant_id | test("^[0-9a-f-]{36}$")) and (.graph.nodes | length) > 0'` : `true` (C3 de bout en bout).
-  4. `grep -c '^budget:' docs/loops/L1.md` : `1`.
-  5. `make -f Makefile verify; echo rc=$?` : `rc=0` (dont `workflowcheck` et les règles `loopsrc` sur `internal/loops/l1`).
-- **Revue sécurité** : oui (LLM, injection, tenant, T2, T3, T7, T10, T85).
+  1. `go test -race ./internal/loops/l1/... ./internal/llm/... -run 'TestL1|TestRouteWithoutBaselineRejected|TestCalibrationAllowsOnlyItsRoute' -v 2>&1 | grep -Ec -- '^--- PASS: Test(L1ConvergesOnReferenceScenario|L1CorrectionThenConverge|L1EscalatesAfterCorrectionBudget|L1InjectionNoExposure|L1TenantFromContextOnly|L1ContradictionsBecomeQuestions|L1UserTextIsUntrustedNoTools|RouteWithoutBaselineRejected|CalibrationAllowsOnlyItsRoute) '` : `9`.
+  2. `go test ./internal/archtest/ -run TestCalibrationConfinedToEvalsCLI -v` : `--- PASS`.
+  3. `go test -tags=integration -run 'TestHistoryHasNoPlaintext/l1' ./internal/loops/... -v` : `--- PASS`.
+  4. `make -s -f Makefile l1-demo | jq -e '.status == "converged" and (.ir.tenant_id | test("^[0-9a-f-]{36}$")) and (.graph.nodes | length) > 0'` : `true` (C3 de bout en bout).
+  5. `grep -c '^budget:' docs/loops/L1.md` : `1`.
+  6. `make -f Makefile verify; echo rc=$?` : `rc=0` (dont `workflowcheck` et les règles `loopsrc` sur `internal/loops/l1`).
+- **Revue sécurité** : oui (LLM, injection, tenant, calibration, T2, T3, T7, T10, T21, T85).
 
 ---
 
-### M1-T06 `evals-intent` : suite `evals/intent`, cible `intent`, métrique `invented_values`
+### M1-T06 `evals-intent` : suite `evals/intent`, cible `intent` (faux et réel), `invented_values`, étape H-real
 
-- **Objectif** : C1 et C4 mesurés par `make evals` ; porte de non-régression de L1 dans `make verify`.
-- **Dépend de** : T05 ; H0-M1 points 3 et 4.
-- **Fichiers** : `evals/intent/suite.yaml` ; `evals/intent/cases/*.yaml` (au moins 22 : 5 ambigus, 4 contradictoires, 4 incomplets, 5 injections dont celle de C4, un `tenant_id` et un CIDR imposés par la demande, 4 nominaux multicloud) ; `cmd/rempart-evals/targets.go` (cible `intent` : L1 dans un environnement de test neuf par exécution, convertisseur avec faux `KeyWrapper`, faux scripté par `replies`, entrée fermée `{text, context, replies}`) ; `internal/evals` (`Outcome.Invented`, `Report.InventedValues` toujours régressif au-dessus de 0, vocabulaire fermé des étiquettes : obligations (u) et (bz)) ; `cmd/rempart-evals` (confirmation sur `/dev/tty` avant toute écriture de baseline : partie binaire de (bx)) ; `docs/02-THREAT-MODEL.md` (T83, T84 de l'ADR 0005).
-- **Tests clés (6)** : `TestIntentTargetRunsCase`, `TestIntentInputClosed`, `TestInventedValuesRegressive`, `TestCaseTagsClosed`, `TestWriteBaselineRequiresTTY`, `TestIntentSuiteComposition` (décompte par étiquette conforme au skill).
-- **Étape humaine H3-intent** : `make update-baseline EVAL=intent` puis commit de `evals/intent/baseline/fake/fake-model-v1.json` ; si le rapport a changé de forme (risque R3), `make update-baseline EVAL=demo` dans le même commit.
+- **Objectif** : C1 et C4 mesurés par `make evals` sur le faux (porte de `make verify`) ; mode réel manuel, hors CI, sur un couple (plateforme, modèle) choisi par l'humain, avec calibration et baseline par couple (D10, D11).
+- **Dépend de** : T05, T09 ; H0-M1 points 6 et 7 ; H0-M1 point 8 pour l'étape H-real seulement.
+- **Fichiers** : `evals/intent/suite.yaml` ; `evals/intent/cases/*.yaml` (au moins 22 : 5 ambigus, 4 contradictoires, 4 incomplets, 5 injections dont celle de C4, un `tenant_id` et un CIDR imposés par la demande, 4 nominaux multicloud) ; `cmd/rempart-evals/targets.go` (cible `intent` : L1 dans un environnement de test neuf par exécution, convertisseur avec faux `KeyWrapper` ; faux scripté par `replies` par défaut ; en mode réel, `replies` ignorées) ; `cmd/rempart-evals/real.go` (options `--platform`, `--region`, `--model`, `--key-from env|openbao`, `--endpoint` pour `selfhosted` seulement, `--max-suite-tokens` ; tenant d'evals D11 ; construction des adaptateurs de T09 et du client, par `calibration.NewClient` seulement avec `--write-baseline`) ; `internal/evals` (`Outcome.Invented`, `Report.InventedValues`, champs `platform`, `region`, `model`, `pinned` du rapport, vocabulaire fermé des étiquettes : obligations (u) et (bz)) ; `cmd/rempart-evals` (confirmation sur `/dev/tty` avant toute écriture de baseline : partie binaire de (bx)) ; `internal/archtest` (`TestVerifyNeverRunsRealModel` sur `Makefile` et `.github/workflows/`) ; `docs/02-THREAT-MODEL.md` (T83, T84 de l'ADR 0005 ; T89 à T93, section 9) ; proposition de harnais CODEOWNERS `evals/**/reports/**`.
+- **Interfaces** :
+  ```go
+  package main // cmd/rempart-evals
+  // evalsTenant : UUID fixe, distinct de tenancy.System ; politique {none, standard} (D11).
+  // realOptions : aucune option ne porte une clé ; --model et --platform validés par evals.BaselinePath.
+  type realOptions struct{ Platform, Region, Model, KeyFrom, Endpoint string; MaxSuiteTokens int }
+  ```
+- **Tests clés (14)** : `TestIntentTargetRunsCase`, `TestIntentInputClosed`, `TestInventedValuesRegressive`, `TestCaseTagsClosed`, `TestWriteBaselineRequiresTTY`, `TestIntentSuiteComposition`, `TestRealModeFlags` (aucune option de clé ; `--endpoint` refusé hors `selfhosted` ; `--region` selon la plateforme), `TestRealModeOnlyEvalsTenant` (tenant d'evals seul, suite `intent` seule), `TestRealModeRequiresBaselineOrCalibration` (route sans baseline : refus sans appel ; avec `--write-baseline` et confirmation : une exécution, fichier écrit au chemin de `BaselinePath`), `TestRealModeSuiteTokenBudget` (arrêt au dépassement, rapport partiel marqué `aborted`, code de sortie non nul), `TestReportCarriesRoute`, `TestReportHasNoKey` (canari de clé absent du rapport, de stdout et de stderr), `TestRealModeAgainstHTTPTest` (bout en bout contre `httptest` compatible OpenAI, aucune sortie réseau), `TestVerifyNeverRunsRealModel`.
+- **Étape humaine H3-intent** : `make update-baseline EVAL=intent` puis commit de `evals/intent/baseline/fake/fake-model-v1.json` ; si le rapport a changé de forme (R3), `make update-baseline EVAL=demo` dans le même commit.
+- **Étape humaine H-real** (dans le terminal de l'humain, clé du couple choisi en place, H0-M1 point 8) :
+  1. Calibration : `go run ./cmd/rempart-evals --suite intent --platform <P> [--region <R>] --model <M> --key-from openbao --write-baseline` ; confirmation sur `/dev/tty` ; commit de `evals/intent/baseline/<P>/<M encodé>.json` par l'humain.
+  2. Mesure : `go run ./cmd/rempart-evals --suite intent --platform <P> [--region <R>] --model <M> --key-from openbao > evals/intent/reports/real/<P>/<M encodé>.json` ; commit par l'humain. Une passe de la suite suffit : chaque cas porte `runs: 3` (3 exécutions, coût contenu).
 - **Acceptation** :
-  1. C1 : `for i in 1 2 3; do make -s -f Makefile evals EVAL=intent | jq -e '.cases >= 20 and .runs == 3 * .cases and .success_rate >= 0.9 and .invented_values == 0 and .regressions_vs_baseline == []' || echo KO; done` : trois fois `true`, aucun `KO`.
-  2. C4 : `make -s -f Makefile evals EVAL=intent | jq -e '.injection_runs >= 15 and .injection_resistance == 1'` : `true`.
-  3. `go test ./cmd/rempart-evals/... ./internal/evals/... -run 'TestIntentTargetRunsCase|TestIntentInputClosed|TestInventedValuesRegressive|TestCaseTagsClosed|TestWriteBaselineRequiresTTY|TestIntentSuiteComposition' -v 2>&1 | grep -c -- '^--- PASS'` : `6`.
+  1. C1 (CI) : `for i in 1 2 3; do make -s -f Makefile evals EVAL=intent | jq -e '.cases >= 20 and .runs == 3 * .cases and .success_rate >= 0.9 and .invented_values == 0 and .regressions_vs_baseline == []' || echo KO; done` : trois fois `true`, aucun `KO`.
+  2. C4 (CI) : `make -s -f Makefile evals EVAL=intent | jq -e '.injection_runs >= 15 and .injection_resistance == 1'` : `true`.
+  3. `go test ./cmd/rempart-evals/... ./internal/evals/... ./internal/archtest/... -run 'TestIntentTargetRunsCase|TestIntentInputClosed|TestInventedValuesRegressive|TestCaseTagsClosed|TestWriteBaselineRequiresTTY|TestIntentSuiteComposition|TestRealModeFlags|TestRealModeOnlyEvalsTenant|TestRealModeRequiresBaselineOrCalibration|TestRealModeSuiteTokenBudget|TestReportCarriesRoute|TestReportHasNoKey|TestRealModeAgainstHTTPTest|TestVerifyNeverRunsRealModel' -v 2>&1 | grep -c -- '^--- PASS'` : `14`.
   4. `make -s -f Makefile evals EVAL=demo | jq -e '.regressions_vs_baseline == []'` : `true`.
   5. `grep -c 'StartDevServer' cmd/rempart-evals/*.go | grep -v ':0' | wc -l` : `0`.
-  6. `make -f Makefile verify; echo rc=$?` : `rc=0`.
-- **Revue sécurité** : oui (porte de fusion, T58, T61, T63, T66, T83, T84, T88).
+  6. `make -f Makefile verify; echo rc=$?` : `rc=0` (sans clé dans l'environnement).
+  7. C1 et C4 (vrai modèle, après H-real) : `n=0; for f in evals/intent/reports/real/*/*.json; do jq -e '.platform != "fake" and .cases >= 20 and .runs == 3 * .cases and .success_rate >= 0.9 and .invented_values == 0 and .injection_resistance == 1 and .regressions_vs_baseline == []' "$f" >/dev/null && n=$((n+1)); done; echo n=$n` : `n=` suivi d'un entier au moins égal à `1`.
+  8. Baseline du couple mesuré commitée par l'humain : pour chaque rapport retenu au critère 7, `git log --format=%ae -- evals/intent/baseline/<P>/<M encodé>.json | sort -u` ne rend que l'adresse de l'humain.
+- **Revue sécurité** : oui (porte de fusion, clés, sortie de données, T20, T58, T61, T63, T66, T83, T84, T88, T89, T90, T93).
 
 ---
 
@@ -357,6 +392,110 @@ Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), impl
 - **Dépend de** : T06. **Revue sécurité** : oui.
 - **Contenu** : (bj), (bv), (v) et (by), étape A de `M0-evals-cli` restante ((s), (t), (w), (y)).
 - **Acceptation** : un test nommé par obligation, rouge puis vert ; `make -f Makefile verify; echo rc=$?` : `rc=0`. Le détail des commandes est fixé par le plan de tâche.
+
+---
+
+### M1-T08 `redact-structured` : refonte du rédacteur (garde de `prompts/M1.md`)
+
+- **Objectif** : lever la garde « avant le premier appel à un modèle réel » : détection structurée pour les données sérialisées, expressions régulières réservées au texte libre, désarmement des placeholders d'origine non fiable (T38), octets NUL (T39), rédaction avant toute troncature ou sérialisation. Chaque constat ouvert de la contre-revue de M0-T07 devient un cas rouge puis vert.
+- **Dépend de** : ADR 0007 accepté (H0-M1 point 4). Aucune dépendance de code sur T01 à T04 ; bloque T09.
+- **Fichiers** : `internal/llm/redact/{redact.go,structured.go,disarm.go,rules.go}` ; `internal/llm/redact/testdata/open-findings/*` (entrées des constats, en phase tests) ; `internal/llm/check.go` (`redactMessages` : `DisarmPlaceholders` sur le contenu des `UntrustedBlock` avant `Redact`) ; `go.mod`, `go.sum` (dépendance YAML épinglée, ADR 0007) ; `.claude/skills/llm-safety/references/redaction-patterns.md` si un motif change (modification signalée dans `docs/STATUS.md`).
+- **Interfaces** :
+  ```go
+  package redact
+  const (
+  	MaxStructuredDepth = 64      // au-delà : repli en texte libre, jamais d'échec ouvert
+  	MaxStructuredNodes = 1 << 16 // budget de parcours (alias YAML, T81)
+  )
+  // Redact : signature inchangée. Ordre : NUL réels -> "\n" ; détection d'un document JSON, JSON doublement encodé
+  // ou YAML (texte entier ou blocs) et parcours des clés, des valeurs et des paires name/value ou key/value ;
+  // puis expressions régulières sur les feuilles et le texte libre. Idempotent.
+  func (r *Redactor) Redact(s string) (string, []Match)
+  // DisarmPlaceholders réécrit tout motif de placeholder présent dans une donnée non fiable, de sorte qu'aucun
+  // placeholder forgé ne soit pris pour une rédaction existante (T38). Appelé par internal/llm sur les UntrustedBlock.
+  func DisarmPlaceholders(s string) string
+  ```
+- **Tests clés (12)**, un par constat ou groupe de constats (section 0 quater de `M0-redaction.md` et obligation (ad)) : `TestRedactJSONPairWithBraces` (haute : `name`/`value` avec `{` ou `}` dans une chaîne, `kubectl -o json`, `ecs:DescribeTaskDefinition`), `TestRedactRealNUL` (`/proc/<pid>/environ`, `\x00sk-...`), `TestRedactEscapedAuthorizationKey`, `TestRedactXMLPreSharedKey`, `TestRedactAdjacentURLCredentialsOnePass`, `TestForgedPlaceholderDisarmed` (devant une clé, un jeton, dans un champ frère d'une paire), `TestRedactSSMPathName`, `TestRedactRelaxedPSKAndAuthorization` (mutations X3, X4), `TestRedactObligationADCases` (paire `name: Authorization` / `value`, secret coupé entre éléments d'`enum`, `password:` puis saut de ligne, `AKIA` coupé par un saut de ligne, `:AWS_SECRET_ACCESS_KEY=...`), `TestRedactDoubleEncodedJSON` (T69), `TestRedactBeforeTruncation`, `TestStructuredDecodeBounded` (profondeur, nœuds, bombe d'alias YAML : temps et allocations bornés).
+- **Acceptation** :
+  1. `go test -race ./internal/llm/redact/... -v 2>&1 | grep -Ec -- '^--- PASS: Test(RedactJSONPairWithBraces|RedactRealNUL|RedactEscapedAuthorizationKey|RedactXMLPreSharedKey|RedactAdjacentURLCredentialsOnePass|ForgedPlaceholderDisarmed|RedactSSMPathName|RedactRelaxedPSKAndAuthorization|RedactObligationADCases|RedactDoubleEncodedJSON|RedactBeforeTruncation|StructuredDecodeBounded) '` : `12`.
+  2. `go test -race ./internal/llm/... ; echo rc=$?` : `rc=0` (propriétés existantes du rédacteur, `TestNoSecretInOutgoingRequest` et idempotence inchangés).
+  3. `govulncheck ./... ; echo rc=$?` : `rc=0` (dépendance YAML).
+  4. `grep -Ec '^- .*M1-T08.*security-reviewer.*PASS' docs/STATUS.md` : au moins `1` (critère explicite de `prompts/M1.md`).
+  5. `make -f Makefile verify-quick; echo rc=$?` : `rc=0`.
+- **Revue sécurité** : oui, **PASS exigé** (T7, T37, T38, T39, T69, T81). Campagne de mutations : une mutation par constat au moins.
+
+---
+
+### M1-T09 `llm-providers` : politique des fournisseurs, adaptateur compatible OpenAI, clés, câblage limité aux evals
+
+- **Objectif** : rendre appelables Claude, OpenAI, DeepSeek, Qwen et l'auto-hébergé derrière `ModelProvider`, sous une politique de résidence codée et testée, sans aucun appel réseau dans les tests ; solder les obligations d'avant câblage (ay), (az), (ba), (bk).
+- **Dépend de** : T08 ; T01 (client OpenBao durci) ; ADR 0008 accepté et O1 tranché (H0-M1 points 1 et 5).
+- **Fichiers** : `internal/llm/domain/{types.go,policy.go,location.go}` (plateformes, localisation, règle `eu`, épinglage par plateforme) ; `internal/llm/adapters/transport/transport.go` (transport durci commun : obligation (ay), T22, T47, T49) ; `internal/llm/adapters/anthropic/provider.go` (migration vers le transport commun ; (ba)) ; `internal/llm/adapters/openaicompat/{provider.go,capabilities.go,endpoints.go}` ; `internal/llm/credentials/credentials.go` ; `internal/secrets/ports/secretreader.go`, `internal/secrets/adapters/openbao/kv.go` ; `internal/llm/check.go` (compilation stricte avant `Texts` et budget de travail : (ay)) ; `internal/llm/schema` ((az)) ; `internal/llm/usage.go` ((bk)) ; `internal/archtest/rules.go` (règle `llm-adapters-evals-cli-only` qui remplace `anthropic-unwired-m0`).
+- **Interfaces** :
+  ```go
+  package domain // internal/llm/domain
+  const (
+  	PlatformOpenAI   Platform = "openai"
+  	PlatformDeepSeek Platform = "deepseek"
+  	PlatformQwen     Platform = "qwen"
+  )
+  type Location string // eu, us, cn, sg, global, selfhosted, in-process : valeurs vérifiées à la source (ADR 0008)
+  var ErrUnknownLocation error
+  // ProcessingLocation : table codée (plateforme, région) ; couple absent : ErrUnknownLocation (échec fermé).
+  // anthropic -> us ; openai (région vide) -> us ; deepseek -> cn ; qwen -> selon la région DashScope ;
+  // bedrock et vertex -> tables existantes ; selfhosted -> eu seulement si Region est une région UE déclarée, sinon selfhosted ; fake -> in-process.
+  func ProcessingLocation(r Route) (Location, error)
+  // CheckPolicy (étendu) : résidence eu acceptée seulement pour une localisation eu ou in-process ; tout le reste : ErrResidency.
+  // Épinglage : openai et qwen avec instantané daté ; deepseek selon O1 ; selfhosted avec révision (D11).
+
+  package transport // internal/llm/adapters/transport
+  // Harden : transport neuf sans proxy ; transport injecté refusé s'il porte Dial, DialContext, DialTLS, DialTLSContext,
+  // GetProxyConnectHeader, OnProxyConnectResponse, ou un TLSClientConfig avec InsecureSkipVerify, KeyLogWriter,
+  // VerifyPeerCertificate, VerifyConnection ou RootCAs (obligation (ay)).
+  func Harden(rt http.RoundTripper) (http.RoundTripper, error)
+  // Client : aucune redirection, corps de réponse borné à 1 Mio, délai obligatoire, une seule tentative.
+  func Client(rt http.RoundTripper, timeout time.Duration) *http.Client
+  // CheckEndpoint : https obligatoire (http seulement en bouclage si allowLoopback) ; refus des adresses privées,
+  // de lien local et de métadonnées, contrôlé à la connexion (net.Dialer.Control) contre le rebinding DNS (T22).
+  func CheckEndpoint(raw string, allowLoopback bool) (*url.URL, error)
+
+  package openaicompat // internal/llm/adapters/openaicompat
+  type Config struct {
+  	APIKey        secret.Value      // obligatoire sauf selfhosted
+  	BaseURL       string            // vide en production : hôte tiré de la table (plateforme, région) ; tests : bouclage seulement
+  	Endpoint      string            // selfhosted seulement, fourni par l'opérateur, jamais par un tenant
+  	AllowLoopback bool              // tests et poste de l'humain
+  	Timeout       time.Duration
+  	Transport     http.RoundTripper // passé par transport.Harden
+  }
+  func New(p domain.Platform, cfg Config) (*Provider, error) // p parmi openai, deepseek, qwen, selfhosted
+  // Structured : POST <base>/chat/completions, stream=false, n=1, aucun champ tools, tool_choice, functions,
+  // parallel_tool_calls ; response_format json_schema strict si Capabilities le dit, sinon json_object et schéma
+  // rendu dans le message système ; parties non fiables par domain.RenderUntrusted ; Output = choices[0].message.content brut ;
+  // refus de tool_calls, function_call, refusal, choices multiples, finish_reason autre que stop, model différent de la route.
+  func (p *Provider) Structured(ctx context.Context, route domain.Route, req domain.Request) (domain.Response, error)
+  // WithTools : ErrUntrustedWithTools si req.HasUntrusted(), sinon ErrToolsUnsupported ; jamais d'entrée-sortie.
+  func (p *Provider) WithTools(ctx context.Context, route domain.Route, req domain.Request, tools []domain.ToolSpec) (domain.Response, error)
+  // Capabilities : table (plateforme, modèle) ; inconnu : NativeStructuredOutput faux, RequiresRetention vrai.
+  func (p *Provider) Capabilities(route domain.Route) domain.Capabilities
+
+  package credentials // internal/llm/credentials : importable par cmd/ seulement
+  func EnvVar(p domain.Platform) string // REMPART_LLM_KEY_<PLATEFORME>
+  // FromEnv lit la variable une fois, la retire de l'environnement du processus, rend une secret.Value ; vide : erreur.
+  func FromEnv(p domain.Platform, lookup func(string) (string, bool), unset func(string) error) (secret.Value, error)
+  func FromOpenBao(ctx context.Context, r secretsports.SecretReader, p domain.Platform) (secret.Value, error) // KV rempart/llm/<plateforme>
+  ```
+- **Tests clés (22 unitaires)** : `TestProcessingLocationTable` (chaque couple de la table, couple inconnu en échec fermé), `TestResidencyEUOnlyEUOrSelfHosted` (table sur toutes les plateformes : `openai`, `anthropic`, `deepseek`, `qwen` refusés en `eu` ; `selfhosted` accepté en `eu` seulement avec une région UE ; les cas existants de `TestCheckPolicyResidencyEU` inchangés), `TestModelPinnedPerPlatform`, `TestCapabilitiesTable`, `TestOpenAICompatContract` (corps capturé par `httptest` : `response_format` `json_schema` strict, `stream` faux, `n` à 1, clés d'outils absentes), `TestOpenAICompatJSONModeFallback`, `TestOpenAICompatRejectsUnexpectedContent`, `TestOpenAICompatModelMismatchRejected`, `TestOpenAICompatWithToolsNoIO`, `TestOpenAICompatHardened` (redirection, proxy d'environnement, corps de plus de 1 Mio, erreurs sans corps ni clé, une tentative), `TestEndpointFromRouteOnly` (hôte contacté égal à celui de la table, aucune lecture de l'environnement), `TestSelfHostedEndpointRejectsInternalAddresses` (T22), `TestAPIKeyOnlyInAuthorizationHeader`, `TestAPIKeyNeverLogged` (canari absent des erreurs, de `%v` et `%+v` de la configuration, des journaux), `TestKeyFromEnvUnset`, `TestKeyFromOpenBao` (contre `httptest`), `TestTransportInjectionRefused` et `TestCheckToolsCompilesBeforeTexts` ((ay), T81), `TestTextsFollowsCompositeNames` ((az)), `TestEmittedBodyStrictlyDecoded` ((ba), sur les deux adaptateurs), `TestZeroUsageFloor` ((bk)), `TestAdaptersConfinedToEvalsCLI` (règle d'architecture, cas positif et négatif) ; plus le sous-test `openaicompat` de `TestNoSecretInOutgoingRequest` et de `TestProviderContract`.
+- **Acceptation** :
+  1. `go test -race ./internal/llm/... ./internal/secrets/... -v 2>&1 | grep -Ec -- '^--- PASS: Test(ProcessingLocationTable|ResidencyEUOnlyEUOrSelfHosted|ModelPinnedPerPlatform|CapabilitiesTable|OpenAICompatContract|OpenAICompatJSONModeFallback|OpenAICompatRejectsUnexpectedContent|OpenAICompatModelMismatchRejected|OpenAICompatWithToolsNoIO|OpenAICompatHardened|EndpointFromRouteOnly|SelfHostedEndpointRejectsInternalAddresses|APIKeyOnlyInAuthorizationHeader|APIKeyNeverLogged|KeyFromEnvUnset|KeyFromOpenBao|TransportInjectionRefused|CheckToolsCompilesBeforeTexts|TextsFollowsCompositeNames|EmittedBodyStrictlyDecoded|ZeroUsageFloor) '` : `21`.
+  2. `go test ./internal/archtest/ -run TestAdaptersConfinedToEvalsCLI -v` : `--- PASS`.
+  3. `go test ./internal/llm/... -run 'TestNoSecretInOutgoingRequest|TestProviderContract' -v 2>&1 | grep -Ec -- '--- PASS: Test(NoSecretInOutgoingRequest|ProviderContract)/openaicompat '` : `2`.
+  4. `go test ./internal/llm/... -run 'TestResidencyEUBlocksAnthropicDirect|TestCheckPolicyResidencyEU'; echo rc=$?` : `rc=0` (cas existants inchangés, dont `selfhosted` sans région refusé en `eu`).
+  5. `grep -c 'anthropic-unwired-m0' internal/archtest/rules.go` : `0`.
+  6. `go list -deps ./internal/llm/adapters/openaicompat | grep -Ec '^github.com/(openai|sashabaranov)/'` : `0` (aucun SDK tiers : `net/http` et `encoding/json` seulement, ADR 0008).
+  7. `make -f Makefile verify; echo rc=$?` : `rc=0` (dont `govulncheck`).
+- **Revue sécurité** : oui (T7, T19, T20, T21, T22, T47, T49, T69, T70, T81, T89 à T92).
+- **Garde de taille** : tâche la plus lourde du jalon. Si elle dépasse 6 cycles, la couper en T09a (domaine, transport, obligations) et T09b (adaptateur, clés, règle d'architecture) sans changer les critères.
 
 ---
 
@@ -372,35 +511,38 @@ Chaque tâche suit `/task` : plan détaillé, tests rouges (`test-author`), impl
 | (m), (ag) rejeu réel d'historique | T02 | C'est `TestReplay` |
 | (ax) reste : entrée de workflow fermée | T02 | Même code (décodage du convertisseur) ; l'entrée de L1 ne doit jamais porter de tenant (règle 9) |
 | Réserves ADR 0001 : liste figée des workflows système, jeton du worker limité (T17), identifiant de workflow dans les données associées (à trancher au prototype, sinon limite consignée) | T01, T02 | Font partie de la décision acceptée |
-| `TestRouteWithoutBaselineRejected` (ADR 0002) | T05 | Garde « première boucle LLM » |
+| `TestRouteWithoutBaselineRejected` (ADR 0002) et calibration | T05 | Garde « première boucle LLM » ; seule voie vers une première exécution réelle |
 | `TestFactsBlockHasNoFreeText`, marquage du texte libre (ADR 0002, 0003) | T04 | Garde de `prompts/M1.md` |
-| (u) et (bz) vocabulaire fermé des étiquettes | T06 | La suite `intent` fixe les catégories ; les fermer au même moment évite une seconde révision des cas |
-| (bx) partie binaire (confirmation `/dev/tty`) | T06 | Intégrité de C1 : la baseline `intent` doit être écrite par l'humain ; la partie hook est une proposition de harnais (humain) |
+| (u) et (bz) vocabulaire fermé des étiquettes | T06 | La suite `intent` fixe les catégories |
+| (bx) partie binaire (confirmation `/dev/tty`) | T06 | Intégrité de C1 : baselines `intent` (faux et réelles) écrites par l'humain |
 | T83, T84 (ADR 0005) au modèle de menace | T06 | Le rapport d'evals change dans cette tâche |
-| Refonte du rédacteur (garde M0-T07), (ay), (az), (ba), (bk) | M1-TA, M1-TB | **Seulement si Q1 option A** : préalables au premier appel réel |
+| Refonte du rédacteur (garde M0-T07), (ad) | T08 | Garde déclenchée par Q1 : avant tout appel réel |
+| (ay), (az), (ba) | T09 | Obligations « avant tout câblage de l'adaptateur » ; le transport commun les applique aux deux adaptateurs |
+| (bk) plancher d'usage à 0 | T09 | Utile dès qu'un modèle facturé est appelé |
+| `TestSelfHostedEndpointRejectsInternalAddresses` (T22) | T09 | Première route auto-hébergée exécutable |
 
 ### 7.2 Non bloquantes (lot M1-T07 ou report en M2)
 
 | Obligation | Gravité | Traitement | Justification |
 |---|---|---|---|
-| (bj) alias de types Temporal hors `cmd/`, contrôle `go/types` | moyen | T07 | Défense en profondeur de `internal/archtest` ; aucun critère n'en dépend ; le code de L1 passe déjà `loopsrc` |
-| (bv) quoting bash de `shellComment` et `joinShellLines` | moyen | T07 | Trou de la garde (an) ; T01 modifie `dev-bootstrap.sh` sous revue humaine et CODEOWNERS |
-| (v), (by) motifs `watch` à jeu fermé | moyen | T07 | Intégrité de la sélection `changed` ; `EVAL=all` en clôture couvre le jalon |
-| (s), (t), (w), (y) étape A de M0-evals-cli | moyen | T07 | Durcissement du chargeur ; la cible `intent` passe par `LoadSuite` et `LoadBaseline` existants |
+| (bj) alias de types Temporal hors `cmd/`, contrôle `go/types` | moyen | T07 | Défense en profondeur de `internal/archtest` ; aucun critère n'en dépend |
+| (bv) quoting bash de `shellComment` et `joinShellLines` | moyen | T07 | Trou de la garde (an) |
+| (v), (by) motifs `watch` à jeu fermé | moyen | T07 | Intégrité de la sélection `changed` |
+| (s), (t), (w), (y) étape A de M0-evals-cli | moyen | T07 | Durcissement du chargeur |
 | (f) second signal de stagnation sur les codes | bas | M2 | Aucun critère ; L1 a un budget de 4 itérations |
 | (bi) idempotence si `ExecutionTimeout` expire pendant `Commit` | bas | M4 | L1 n'a aucun commit à effet externe |
-| (bk) plancher d'usage à 0 | bas | M1-TB ou M2 | Utile seulement avec un vrai modèle facturé |
-| (bl), (bn) preflight, `BASH_ENV`, coût de `tcli` | bas | M2 | Pile de dev locale ; T01 ne change pas `dev-env.sh` |
-| (bm) messages d'erreur fixes du worker | bas | M2 | Aucun critère ; à reprendre si T02 réécrit ces chemins |
-| (bq), (br), (cg), (ce) CI | bas | M2 | Durcissement CI, déjà reportés une fois ; aucun critère |
-| (bw) cibles `.PHONY` exigées | bas | M2 | Aucune cible non phony prévue ; T05 ajoute `l1-demo`, phony |
+| (bl), (bn) preflight, `BASH_ENV`, coût de `tcli` | bas | M2 | Pile de dev locale |
+| (bm) messages d'erreur fixes du worker | bas | M2 | Aucun critère |
+| (bq), (br), (cg), (ce) CI | bas | M2 | Durcissement CI ; aucun critère |
+| (bw) cibles `.PHONY` exigées | bas | M2 | T05 ajoute `l1-demo`, phony |
 | (ca), (cb), (cc) exécuteur d'evals | bas | M2 | Robustesse ; aucun effet sur C1 |
 | (cd) racine de `fakeClient` | bas | M2 | Chemin de développement seulement |
-| (cf) `git -c core.hooksPath=/dev/null`, `diff.external=` | bas | M2 | Menace à écrire (configuration git d'un clone non fiable) ; faible coût, peut entrer dans T07 |
+| (cf) `git -c core.hooksPath=/dev/null`, `diff.external=` | bas | M2 | Faible coût, peut entrer dans T07 |
 | (bb), (bc) | bas | M2 | Hygiène de tests |
 | `ParseCustomerID`, `TestAPIRejectsSystemTenant` (ADR 0004, T34) | moyen | première API | Aucune frontière externe en M1 (Q4) |
-| Tests Store et RLS de l'ADR 0003 | moyen | M2 | Q2 recommandé : aucune table en M1 |
+| Tests Store et RLS de l'ADR 0003 | moyen | M2 | Q2 : aucune table en M1 |
 | `TestCacheControlOnlyOnStaticPrefix` (ADR 0002) | moyen | premier usage du cache | Aucun cache de prompt en M1 |
+| `TestNightlyWorkflowSecretScoped` (T20) | moyen | job nocturne d'appels réels | Aucun appel réel en CI en M1 |
 | Durcissement `internal/archtest` T33 (revue M0-T02) | moyen | au premier `//go:build` non test | Condition non atteinte en M1 |
 | (q), (ah) approbations signées | haut en M4 | M4 | Hors M1 |
 
@@ -412,23 +554,31 @@ Obligations soldées en M0, rappelées pour éviter une double saisie : (bo), (b
 
 | ADR | Quand | Contenu |
 |---|---|---|
-| **0006 « Boucle L1 : contrat de sortie du modèle, provenance, clarification »** | début de T03, après réponse à Q1 et Q3 | D1, D3, D4, D5, D8 ; tours de clarification en exécutions distinctes ; confirmation à l'entrée de L2 ; si Q1 option A : mode de calibration humain d'une route sans baseline |
-| 0007 « Rédaction structurée » | seulement si Q1 option A, début de M1-TA | détection structurée JSON et YAML, désarmement des placeholders (T38), NUL (T39), rédaction avant troncature ; constats ouverts de M0-T07 en cas rouges |
-| Amendement de l'ADR 0003 | avec Q2 (humain) | vérifications M1 déplacées en M2 |
-| Amendement de l'ADR 0005 | T06 | champ `invented_values` du rapport, cible `intent` |
+| **0006 « Boucle L1 : contrat de sortie du modèle, provenance, clarification, calibration »** | début de T03 | D1, D3, D4, D5, D8, D10 ; tours de clarification en exécutions distinctes ; confirmation à l'entrée de L2 ; calibration humaine d'une route sans baseline (options : paquet confiné, contre drapeau de `llm.Config` ; recommandé : paquet confiné) |
+| **0007 « Rédaction structurée »** | début de T08 | Options : (a) parcours structuré JSON et YAML puis expressions régulières sur les feuilles et le texte libre, recommandé ; (b) expressions régulières durcies seules (deux BLOCK en M0-T07 sur cette classe) ; (c) liste blanche de champs par type de ressource (précise, mais coûteuse et aveugle au texte libre). Désarmement des placeholders (T38), NUL (T39), rédaction avant troncature, bornes de décodage, choix et épinglage de la bibliothèque YAML (T6), D12 ; constats ouverts de M0-T07 en cas rouges |
+| **0008 « Politique des fournisseurs de modèle »** (amende l'ADR 0002) | début de T09 | Options : (a) adaptateur unique compatible OpenAI en `net/http`, recommandé ; (b) SDK officiel par fournisseur (`openai-go` lit par défaut `OPENAI_API_KEY` et `OPENAI_BASE_URL`, dépendances multipliées, T6) ; (c) passerelle multi-fournisseurs (déjà écartée par l'ADR 0002). Plateformes `openai`, `deepseek`, `qwen` ; table de localisation de traitement avec la date et la source de chaque fait ; règle `eu` ; auto-hébergé en `eu` seulement avec région UE déclarée par l'opérateur ; épinglage par plateforme et réponse à O1 ; table de capacités (sortie `json_schema` ou mode JSON ; rétention exigée par défaut pour les fournisseurs publics) ; hôtes codés, point d'accès auto-hébergé fourni par l'opérateur (T22) ; sources de clés (environnement, OpenBao) ; tenant d'evals D11 ; adaptateurs confinés à `cmd/rempart-evals` en M1 ; amendement de `docs/00-VISION.md` §4 |
+| Amendement de l'ADR 0003 | avec Q2 (décidé) | vérifications M1 déplacées en M2 |
+| Amendement de l'ADR 0005 | T06 | champs `invented_values`, `platform`, `region`, `model`, `pinned`, `aborted` du rapport ; cible `intent` ; mode réel manuel |
+
+**Faits à revérifier à la source au début de T09**, consignés dans l'ADR 0008 avec leur date : localisation de traitement de l'API DeepSeek ; régions DashScope et leur localisation (le point d'accès international de Model Studio était, à la connaissance de l'architecte, situé à Singapour et non en Chine continentale : la règle `eu` le refuse dans les deux cas, mais la table doit dire vrai) ; existence d'une résidence UE pour OpenAI (hors périmètre M1) ; prise en charge de `response_format` `json_schema` par OpenAI, DeepSeek, Qwen, vLLM et Ollama ; politiques de rétention de chaque fournisseur ; forme des identifiants de modèle (datés ou alias).
 
 ---
 
 ## 9. Impact sur le modèle de menace (`docs/02-THREAT-MODEL.md`)
 
 - **Levé** : risque résiduel §4.1 « historique Temporal en clair » (T02, `TestHistoryHasNoPlaintext`). T1, T3, T7, T11 : vérifications M1 renseignées ; T17 (jeton du worker) et T18 (continuation) : tests nommés.
-- **Complété** : T2 (texte libre du graphe séparé des faits, `TestFactsBlockHasNoFreeText`) ; T10 (budget de L1) ; T40, T41 (cible `intent` en route `fake` explicite, outillage jamais livré).
+- **Complété** : T2 (texte libre du graphe séparé des faits) ; T10 (budget de L1, plafond de suite en mode réel) ; T19 (localisation de traitement codée, règle `eu` étendue) ; T20 (clés OpenAI, DeepSeek, DashScope ajoutées au périmètre ; jamais en CI) ; T21 (baseline par couple, calibration humaine, `TestRouteWithoutBaselineRejected`) ; T22 (`TestSelfHostedEndpointRejectsInternalAddresses` créé) ; T37, T38, T39, T69 (refonte du rédacteur, T08) ; T47, T49, T70, T81 (transport commun et obligations (ay), (ba)) ; T40, T41 (cible `intent` en route `fake` explicite par défaut, adaptateurs confinés à `cmd/rempart-evals`).
 - **Ajoutés** (proposés à `security-reviewer`) :
   - T83, T84 : repris de l'ADR 0005.
-  - **T85** injection dans la demande de l'utilisateur visant une décision de L1 (exposition, désactivation du chiffrement, autre tenant, CIDR imposé) : quarantaine sans outil, vérificateur déterministe, tenant du contexte, overrides tranchés par L2 ; `TestL1InjectionNoExposure`, cas d'injection de `evals/intent`.
-  - **T86** contournement du contrôle de provenance (valeur « ancrée » par une négation ou une citation, « pas sur AWS ») : résidu documenté, cas de test dédiés, revue humaine de l'IR (confirmation en M2).
-  - **T87** plan CIDR chevauchant des réseaux non déclarés (inventaire absent en M1, plages sur site oubliées) : plages réservées explicites, `Check` indépendant de `Allocate`, vérification post-déploiement en L5.
-  - **T88** evals auto-référentielles (Q1 option B) : l'agent écrit cas et réponses ; réponses adverses obligatoires dans chaque catégorie, CODEOWNERS sur `evals/` et l'exécuteur (proposition 0010), mesure sur vrai modèle avant le premier client.
+  - **T85** injection dans la demande de l'utilisateur visant une décision de L1 : quarantaine sans outil, vérificateur déterministe, tenant du contexte, overrides tranchés par L2 ; `TestL1InjectionNoExposure`, cas d'injection de `evals/intent` (faux et réel).
+  - **T86** contournement du contrôle de provenance (négation, citation) : résidu documenté, cas dédiés, confirmation humaine en M2.
+  - **T87** plan CIDR chevauchant des réseaux non déclarés : plages réservées explicites, `Check` indépendant d'`Allocate`, vérification post-déploiement en L5.
+  - **T88** evals auto-référentielles : l'agent écrit cas et réponses scriptées ; réponses adverses obligatoires ; CODEOWNERS sur `evals/` ; **atténuation nouvelle** : mesure sur au moins un vrai modèle (T06, critère 7), baseline écrite par l'humain.
+  - **T89** transfert des données d'un tenant vers un fournisseur hors UE (États-Unis, Chine, Singapour) par erreur de route, par un mode réel des evals mal ciblé ou par une table de localisation fausse (I) : table codée et datée, règle `eu` à chaque appel, mode réel limité au tenant d'evals `none` et à `evals/intent/`, adaptateurs importables par `cmd/rempart-evals` seulement ; `TestResidencyEUOnlyEUOrSelfHosted`, `TestRealModeOnlyEvalsTenant`, `TestAdaptersConfinedToEvalsCLI`.
+  - **T90** fuite d'une clé de fournisseur : environnement lu par l'agent si la clé est posée dans sa session, `/proc/<pid>/environ`, historique du shell, option de ligne de commande, journal, rapport, message d'erreur (I, D par le coût) : aucune option ne porte une clé, variable retirée après lecture (résidu : l'environnement initial reste lisible dans `/proc` pendant la vie du processus), OpenBao préféré, clés posées dans le terminal de l'humain seulement, plafond de dépense par clé ; `TestAPIKeyNeverLogged`, `TestReportHasNoKey`, `TestRealModeFlags`, `TestAPIKeyOnlyInAuthorizationHeader`.
+  - **T91** différentiel de protocole « compatible OpenAI » : serveur qui ignore `response_format`, renvoie `tool_calls`, `function_call`, un contenu de raisonnement, plusieurs `choices`, un `model` différent, ou accepte des champs d'outil que l'adaptateur n'envoie pas (T, I) : validation de schéma côté code toujours, tout contenu hors `message.content` refusé, `n` à 1, modèle comparé, aucune redirection, corps borné ; `TestOpenAICompatRejectsUnexpectedContent`, `TestOpenAICompatModelMismatchRejected`.
+  - **T92** modèle non épinglé ou piégé : tag mobile Ollama, alias DeepSeek (O1), nom servi par vLLM sans révision, poids open-weight d'origine non vérifiée qui dégradent la résistance aux injections (T) : révision obligatoire pour l'auto-hébergé, liste fermée d'alias tolérés en résidence `none` seulement, `pinned` et `system_fingerprint` dans le rapport, empreinte des poids consignée par l'humain ; `TestModelPinnedPerPlatform`.
+  - **T93** épuisement de coût par les evals réelles (relances, boucle de correction, suite entière sur un modèle cher) (D) : plafond de tokens de la suite, arrêt au dépassement, plafond de dépense chez le fournisseur, exécution manuelle seulement, jamais en CI ; `TestRealModeSuiteTokenBudget`, `TestVerifyNeverRunsRealModel`.
 
 ---
 
@@ -436,29 +586,36 @@ Obligations soldées en M0, rappelées pour éviter une double saisie : (bo), (b
 
 | # | Risque | Parade |
 |---|---|---|
-| R1 | `ContinueAsNew` dans l'environnement de test du SDK : la continuation n'est pas enchaînée automatiquement ; la cible `demo` et sa baseline peuvent changer | T02 conduit la continuation dans la cible ; si la projection change, nouvelle baseline par l'humain (une commande) |
-| R2 | Profil strict de `internal/llm/schema` sans forme « nullable » pour les champs facultatifs du brouillon | Champs facultatifs rendus obligatoires avec valeur vide ou tableau vide, convertis par `ToIR` ; tranché dans l'ADR 0006 |
-| R3 | Ajout de `invented_values` au rapport : la baseline `demo` est lue avec des clés exactes | Régénération humaine de la baseline `demo` dans H3-intent ; ADR 0005 amendé |
-| R4 | Lexique de provenance en français : faux positifs (synonymes, villes) ou faux négatifs (négations, T86) | Table de cas dans T03 ; tout ce qui est inféré (ville vers région) doit passer par `assumptions`, ce qui est le comportement voulu |
+| R1 | `ContinueAsNew` dans l'environnement de test du SDK : la cible `demo` et sa baseline peuvent changer | T02 conduit la continuation dans la cible ; nouvelle baseline par l'humain si besoin |
+| R2 | Profil strict de `internal/llm/schema` sans forme « nullable » pour les champs facultatifs du brouillon | Champs facultatifs obligatoires avec valeur vide, convertis par `ToIR` ; ADR 0006 |
+| R3 | Ajout de champs au rapport : la baseline `demo` est lue avec des clés exactes | Régénération humaine de la baseline `demo` dans H3-intent ; ADR 0005 amendé |
+| R4 | Lexique de provenance en français : faux positifs ou négatifs (T86) | Table de cas dans T03 ; toute inférence passe par `assumptions` |
 | R5 | OpenBao sur le chemin critique de `make verify` en CI | Bootstrap idempotent et testé ; evals sur faux `KeyWrapper`, sans pile |
-| R6 | Grammaire stricte du `Makefile` (M0-T04b) à étendre pour `l1-demo` | Prévu dans les fichiers de T05 ; `Makefile` sous CODEOWNERS, revue humaine |
-| R7 | Paquet Go sous `schemas/` et `evals/` : tests d'arborescence et règles d'import | Prévu dans T03 et T05 ; règle archtest : seuls `cmd/` et les tests importent le registre de `evals/` |
-| R8 | Option A : le registre des baselines empêche la première exécution réelle | Mode de calibration humain (ADR 0006) |
+| R6 | Grammaire stricte du `Makefile` à étendre pour `l1-demo` | Prévu dans T05 ; revue humaine (CODEOWNERS) ; aucune cible `make` pour le mode réel (commande `go run` manuelle) |
+| R7 | Paquets Go sous `schemas/` et `evals/` : tests d'arborescence et règles d'import | Prévu dans T03 et T05 ; seuls `cmd/` et les tests importent le registre de `evals/` |
+| R8 | Le registre des baselines empêche la première exécution réelle | Calibration humaine (D10, T05, T06) |
+| R9 | Aucun vrai couple n'atteint 90 % au critère 7 | Pas de baisse du seuil : révision du prompt (`intent.extract.v1` versionné, nouvelle calibration), puis autre couple ; au-delà de 6 cycles, arrêt et deux options présentées à l'humain (clore M1 sur la lecture CI seule avec écart consigné, ou jalon M1b) |
+| R10 | Hétérogénéité des serveurs compatibles OpenAI (`json_schema` absent, mot « json » exigé dans le prompt en mode JSON, champs d'usage manquants) | Table de capacités par (plateforme, modèle), repli en mode JSON, validation côté code, usage absent traité par le plancher (bk) |
+| R11 | Faits fournisseurs faux ou périmés (localisation, rétention, identifiants) | Vérification à la source au début de T09, date et source dans l'ADR 0008 ; toute évolution passe par un amendement |
+| R12 | Coût des evals réelles (au moins 22 cas, 3 exécutions, jusqu'à 4 appels : environ 260 appels par passe et par couple) | Une passe par couple pour la mesure ; `--max-suite-tokens` ; plafond chez le fournisseur ; montant mesuré à la calibration, non estimé ici |
+| R13 | Nouvelle dépendance YAML (T6) et bombes d'alias | Choix et épinglage dans l'ADR 0007 ; `govulncheck` ; `TestStructuredDecodeBounded` |
+| R14 | Non-déterminisme des vrais modèles : `regressions_vs_baseline` bruité, baseline calibrée sur une exécution aléatoire | Baseline par couple, seuils sur taux et non sur cas isolés (règle de l'ADR 0005 à confirmer pour le mode réel) ; `pinned: false` signalé ; nouvelle calibration humaine si la dérive est avérée |
+| R15 | T09 trop lourde pour un cycle | Garde de taille : découpage T09a et T09b sans changer les critères |
 
 ---
 
 ## 11. Synthèse
 
-Ordre recommandé (Q5) : T03, T04, T01, T02, T05, T06, puis T07 si l'humain le souhaite. Ordre littéral de `prompts/M1.md` : T01 à T06.
+Ordre d'exécution (Q5, décidé) : **T03, T04, T01, T02, T08, T09, T05, T06, T07**. Neuf tâches dont une facultative ; deux ajoutées par la décision Q1 (T08, T09), T05 et T06 étendues.
 
-| N° | Titre | Taille | Dépendances | Critère de M1 servi |
-|---|---|---|---|---|
-| M1-T01 | `envelope-transit` : enveloppe AES-256-GCM par tenant, OpenBao Transit | L | ADR 0004 accepté | ADR 0001 (enveloppe, `TestTransitRotation`) |
-| M1-T02 | `codec-replay` : codec Temporal, versioning, rejeu, `ContinueAsNew` | L | T01 | ADR 0001 (`TestReplay`, `TestHistoryHasNoPlaintext`, `TestWorkerRequiresRempartConverter`, `TestDemoApprovalPhaseRequiresContinuation`) |
-| M1-T03 | `intent-ir` : schéma de l'IR, brouillon, contrôles déterministes | M | ADR 0006 | C3 (IR), C4 (règle) |
-| M1-T04 | `design-cidr` : graphe, allocateur CIDR, `rempart design` | L | T03 | C2, C3 (graphe), `TestFactsBlockHasNoFreeText` |
-| M1-T05 | `l1-loop` : workflow L1, prompt, registre des baselines, `make l1-demo` | L | T02, T03, T04 | C3 (bout en bout), C4 (boucle), `TestRouteWithoutBaselineRejected` |
-| M1-T06 | `evals-intent` : suite `intent`, cible, `invented_values` | M | T05, H0-M1 points 3 et 4 | C1, C4 (evals) |
-| M1-T07 | `harden-batch` (facultative) : obligations moyennes non bloquantes | S à M | T06 | aucun (dette de M0) |
-| M1-TA | `redact-structured` (Q1 option A seulement) | L | ADR 0007 | garde « avant le premier appel réel » |
-| M1-TB | `anthropic-wiring` (Q1 option A seulement) | M | TA | C1 sur vrai modèle |
+| Ordre | N° | Titre | Taille | Dépendances | Critère de M1 servi |
+|---|---|---|---|---|---|
+| 1 | M1-T03 | `intent-ir` : schéma de l'IR, brouillon, contrôles déterministes | M | ADR 0006 accepté | C3 (IR), C4 (règle) |
+| 2 | M1-T04 | `design-cidr` : graphe, allocateur CIDR, `rempart design` | L | T03 | C2, C3 (graphe), `TestFactsBlockHasNoFreeText` |
+| 3 | M1-T01 | `envelope-transit` : enveloppe AES-256-GCM par tenant, OpenBao Transit | L | ADR 0004 accepté | ADR 0001 (enveloppe, `TestTransitRotation`) |
+| 4 | M1-T02 | `codec-replay` : codec Temporal, versioning, rejeu, `ContinueAsNew` | L | T01 | ADR 0001 (`TestReplay`, `TestHistoryHasNoPlaintext`, `TestWorkerRequiresRempartConverter`, `TestDemoApprovalPhaseRequiresContinuation`) |
+| 5 | M1-T08 | `redact-structured` : refonte du rédacteur | L | ADR 0007 accepté | garde « avant le premier appel réel » (`security-reviewer` PASS) |
+| 6 | M1-T09 | `llm-providers` : politique des fournisseurs, adaptateur compatible OpenAI, clés, (ay), (az), (ba), (bk) | L | T08, T01, ADR 0008 accepté, O1 | règle `eu` (ADR 0008), T22 ; prérequis de C1 réel |
+| 7 | M1-T05 | `l1-loop` : workflow L1, prompt, registre des baselines, calibration, `make l1-demo` | L | T02, T03, T04 | C3 (bout en bout), C4 (boucle), `TestRouteWithoutBaselineRejected` |
+| 8 | M1-T06 | `evals-intent` : suite, cible faux et réel, `invented_values`, H-real | L | T05, T09, H0-M1 points 6 à 9 | C1 et C4 (CI, faux) ; C1 et C4 (vrai modèle, au moins un couple) |
+| 9 | M1-T07 | `harden-batch` (facultative) : obligations moyennes non bloquantes | S à M | T06 | aucun (dette de M0) |
