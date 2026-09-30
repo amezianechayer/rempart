@@ -63,15 +63,21 @@ func TestSensitiveExposureRejected(t *testing.T) {
 			name, text, fixture string
 			edit                func(t *testing.T, m map[string]any)
 		}{
-			{"confidential_no_data", c4, "drafts/c4-override.json",
-				func(t *testing.T, m map[string]any) { m["data"] = []any{} }},
-			{"confidential_declared_internal", c4, "drafts/c4-override.json",
-				func(t *testing.T, m map[string]any) {
+			{
+				name: "confidential_no_data", text: c4, fixture: "drafts/c4-override.json",
+				edit: func(t *testing.T, m map[string]any) { m["data"] = []any{} },
+			},
+			{
+				name: "confidential_declared_internal", text: c4, fixture: "drafts/c4-override.json",
+				edit: func(t *testing.T, m map[string]any) {
 					item(t, m, "data", 0)["classification"] = "internal"
 					setAssumption(t, m, "data[customer-data].classification", "internal")
-				}},
-			{"gdpr_not_declared", reference, "reference-draft.json",
-				func(t *testing.T, m map[string]any) { item(t, m, "data", 0)["regulation"] = []any{} }},
+				},
+			},
+			{
+				name: "gdpr_not_declared", text: reference, fixture: "reference-draft.json",
+				edit: func(t *testing.T, m map[string]any) { item(t, m, "data", 0)["regulation"] = []any{} },
+			},
 		}
 		for _, tc := range omitted {
 			got := Check(tc.text, draftFrom(t, tc.fixture, tc.edit), ctx)
