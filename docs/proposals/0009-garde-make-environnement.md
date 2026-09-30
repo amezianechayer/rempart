@@ -17,8 +17,8 @@
 | Fichier | Changement |
 |---|---|
 | `.claude/hooks/stop_verify.py` | Commande `make -r -f Makefile verify-quick` (`-r` : aucune règle implicite intégrée, défense en profondeur de la ligne `Makefile: ;` du `Makefile`, M0-T04b D16). Toutes les commandes du hook sont lancées sans `MAKE`, `MAKE_COMMAND`, `MAKEFLAGS`, `MFLAGS`, `GNUMAKEFLAGS`, `MAKEFILES`, `MAKELEVEL`, `MAKEOVERRIDES`, `BASH_ENV`, `ENV` ni `BASH_FUNC_*`. |
-| `.claude/hooks/guard_bash.py` | Règle T31/T32 en **liste blanche** : après `make`, seules les options `-s`, `-n`, `-k`, `-r`, `-R` (groupables entre elles), `-j<n>`, `--no-print-directory` et `-f Makefile` sont admises, toute autre option courte ou longue (abrégée comprise) est refusée ; affectations `MAKE=`, `MAKE_COMMAND=`, `MFLAGS=`, `MAKELEVEL=`, `MAKEOVERRIDES=` refusées comme `MAKEFLAGS=`. |
-| `.claude/hooks/test_hooks.sh` | `make -C . arch-test` passe de admis à refusé ; 24 cas de commande (dont les formes abrégées `--fil=`, `--dir=`, `--makef=`, `--ign`, `--ev=`, `--quest`, et `-sf`, `--`) ; 4 cas du hook Stop (sous-make imbriqué avec `GNUmakefile` d'ombre, `MAKE=true` et `MAKEFLAGS=-i` hérités, `Makefile.sh` plus récent). |
+| `.claude/hooks/guard_bash.py` | Règle T31/T32 en **liste blanche** : après `make`, seules les options `-s`, `-n`, `-k`, `-r`, `-R` (groupables entre elles), `-j<n>`, `--no-print-directory` et `-f Makefile` sont admises, toute autre option courte ou longue (abrégée comprise) est refusée ; `make` en position de commande refuse tout guillemet et toute option échappée (`\-C`) dans ses arguments, et `SHELL=`, `.SHELLFLAGS=` en ligne de commande (quatrième revue sécurité de M0-T04b) ; affectations `MAKE=`, `MAKE_COMMAND=`, `MFLAGS=`, `MAKELEVEL=`, `MAKEOVERRIDES=` refusées comme `MAKEFLAGS=`. |
+| `.claude/hooks/test_hooks.sh` | `make -C . arch-test` passe de admis à refusé ; 33 cas de commande (dont les formes abrégées `--fil=`, `--dir=`, `--makef=`, `--ign`, `--ev=`, `--quest`, `-sf`, `--`, les options entre guillemets ou échappées, `SHELL=`, `.SHELLFLAGS=`, et deux messages contenant le mot make, admis) ; 4 cas du hook Stop (sous-make imbriqué avec `GNUmakefile` d'ombre, `MAKE=true` et `MAKEFLAGS=-i` hérités, `Makefile.sh` plus récent). |
 
 ## Décision prise sur délégation
 
@@ -26,9 +26,9 @@
 
 ## Vérification faite par l'agent
 
-- Copie du harnais à jour dans le scratchpad, modifications appliquées : `bash .claude/hooks/test_hooks.sh` sur la copie, **148 réussis, 0 échoués**.
+- Copie du harnais à jour dans le scratchpad, modifications appliquées : `bash .claude/hooks/test_hooks.sh` sur la copie, **157 réussis, 0 échoués**.
 - Contre-épreuve, première version : même copie avec l'ancien `stop_verify.py`, **2 échecs** attendus (`MAKE` hérité, `MAKEFLAGS` hérité) ; le cas du `GNUmakefile` d'ombre passait déjà grâce à `-f Makefile` (proposition 0007) et aux sous-make canoniques (M0-T04b).
-- Contre-épreuve, version finale : même copie avec le hook Stop sans `-r`, **1 échec** attendu (`Makefile.sh` plus récent refait le `Makefile` et rend `verify-quick` vert) ; avec `-r`, 148 réussis.
+- Contre-épreuve, version finale : même copie avec le hook Stop sans `-r`, **1 échec** attendu (`Makefile.sh` plus récent refait le `Makefile` et rend `verify-quick` vert) ; avec `-r`, tous réussis.
 - `git apply --check` du patch sur le dépôt : rc=0.
 
 Limite : `guard_bash` reste un filtre, pas un bac à sable ; une commande déguisée (nom de variable ou option construits par le shell, `eval`) n'est pas couverte. Le hook Stop, lui, nettoie l'environnement quelle que soit la façon dont il a été construit.
