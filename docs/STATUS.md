@@ -580,3 +580,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-30 20:44 [harnais] PHASE FREE (discipline TDD suspendue) : tâche M1-T03 intent-ir terminée
 
 - 2026-09-30 20:44 [harnais] phase : tests -> free
+
+- 2026-09-30 20:55 [harnais] phase : free -> tests
