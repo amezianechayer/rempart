@@ -91,7 +91,7 @@ func TestSuiteChangedSelection(t *testing.T) {
 		"merge_base_code_neg1": {&fakeGit{mergeCode: -1}, both, "git_failed"},
 	} {
 		g := c.git
-		e := newEnv(t, "testdata/select", g.run)
+		e := newEnv(t, copyFixture(t, "select"), g.run)
 		code, stdout, stderr := runArgs(t, e, "--suite", "changed", "--base", aSHA)
 		if code != 0 {
 			t.Errorf("%s: code %d, want 0\n%s", name, code, stderr)
@@ -117,17 +117,19 @@ func TestSuiteChangedSelection(t *testing.T) {
 	}
 	// Local changes: the diff runs against the working tree (O2), untracked files included.
 	t.Run("real_repo", func(t *testing.T) {
-		gitPath, err := exec.LookPath("git")
-		if err != nil {
+		if _, err := exec.LookPath("git"); err != nil {
 			t.Fatalf("git is required by this test (R2): %v", err)
 		}
 		dir := t.TempDir()
 		git := func(args ...string) string {
 			t.Helper()
-			cmd := exec.Command(gitPath, args...)
+			//nolint:gosec // G204: test helper, the name is "git" and the args are literals of this test or object names it read.
+			cmd := exec.CommandContext(t.Context(), "git", args...)
 			cmd.Dir = dir
-			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
-				"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid"}
+			cmd.Env = []string{
+				"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+				"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid",
+			}
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("git %q: %v\n%s", args, err, out)
@@ -137,6 +139,7 @@ func TestSuiteChangedSelection(t *testing.T) {
 		if err := os.CopyFS(dir, os.DirFS("testdata/ok")); err != nil {
 			t.Fatal(err)
 		}
+		writeFile(t, dir, "go.mod", fixtureGoMod)
 		if err := os.CopyFS(filepath.Join(dir, "evals/other"), os.DirFS("testdata/ok/evals/demo")); err != nil {
 			t.Fatal(err)
 		}
@@ -219,7 +222,7 @@ func TestRejectsUnsafeGitRef(t *testing.T) {
 			{"--suite", "changed", "--base=" + c.ref},
 		} {
 			g := &fakeGit{}
-			code, stdout, stderr := runArgs(t, newEnv(t, "testdata/select", g.run), args...)
+			code, stdout, stderr := runArgs(t, newEnv(t, copyFixture(t, "select"), g.run), args...)
 			if code != 0 {
 				t.Errorf("%q: code %d\n%s", c.ref, code, stderr)
 				continue

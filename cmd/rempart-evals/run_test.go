@@ -131,65 +131,78 @@ func runArgs(t *testing.T, e env, args ...string) (int, string, string) {
 	return code, stdout.String(), stderr.String()
 }
 
-// copyFixture copies testdata/name into a new temporary directory.
+// fixtureGoMod is the go.mod of a fixture root (D16). It is written in the
+// copy only: the repository holds no nested module (ReadSources, T74).
+const fixtureGoMod = "module example.invalid/evalsfixture\n"
+
+// copyFixture copies testdata/name into a new temporary directory and adds
+// the go.mod of a repository root.
 func copyFixture(t *testing.T, name string) string {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.CopyFS(dir, os.DirFS(filepath.Join("testdata", name))); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Lstat(filepath.Join(dir, "go.mod")); err == nil {
+		t.Fatalf("testdata/%s holds a go.mod: nested modules are refused (T74)", name)
+	}
+	writeFile(t, dir, "go.mod", fixtureGoMod)
 	return dir
 }
 
 func writeFile(t *testing.T, dir, name, data string) {
 	t.Helper()
 	p := filepath.Join(dir, filepath.FromSlash(name))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte(data), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func readFile(t *testing.T, name string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.FromSlash(name))
+	data, err := os.ReadFile(filepath.Clean(filepath.FromSlash(name)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(data)
 }
 
-func replaceIn(t *testing.T, dir, name, old, new string) {
+func replaceIn(t *testing.T, dir, name, old, repl string) {
 	t.Helper()
 	data := readFile(t, filepath.Join(dir, name))
 	if strings.Count(data, old) != 1 {
 		t.Fatalf("%s: %q found %d times, want once", name, old, strings.Count(data, old))
 	}
-	writeFile(t, dir, name, strings.Replace(data, old, new, 1))
+	writeFile(t, dir, name, strings.Replace(data, old, repl, 1))
 }
 
 // snapshot maps every entry under dir to its content ("<dir>" for a
 // directory, "-> target" for a link).
 func snapshot(t *testing.T, dir string) map[string]string {
 	t.Helper()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
 	out := map[string]string{}
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || p == "." {
 			return err
 		}
-		rel, _ := filepath.Rel(dir, p)
 		switch {
 		case d.Type()&fs.ModeSymlink != 0:
-			target, err := os.Readlink(p)
-			out[rel] = "-> " + target
+			target, err := root.Readlink(p)
+			out[p] = "-> " + target
 			return err
 		case d.IsDir():
-			out[rel] = "<dir>"
+			out[p] = "<dir>"
 		default:
-			data, err := os.ReadFile(p)
-			out[rel] = string(data)
+			data, err := root.ReadFile(p)
+			out[p] = string(data)
 			return err
 		}
 		return nil
@@ -241,7 +254,7 @@ func metrics(r evals.Report) []string {
 }
 
 func TestRunOKAgainstBaseline(t *testing.T) {
-	code, stdout, stderr := runArgs(t, newEnv(t, "testdata/ok", noGit(t)), "--suite", "demo")
+	code, stdout, stderr := runArgs(t, newEnv(t, copyFixture(t, "ok"), noGit(t)), "--suite", "demo")
 	if code != 0 {
 		t.Fatalf("code %d, want 0\n%s", code, stderr)
 	}
@@ -262,7 +275,7 @@ func TestRunOKAgainstBaseline(t *testing.T) {
 }
 
 func TestRegressionDetected(t *testing.T) {
-	code, stdout, stderr := runArgs(t, newEnv(t, "testdata/regression", noGit(t)), "--suite", "demo")
+	code, stdout, stderr := runArgs(t, newEnv(t, copyFixture(t, "regression"), noGit(t)), "--suite", "demo")
 	var r evals.Report
 	if code != 1 {
 		t.Fatalf("code %d, want 1\n%s", code, stderr)
@@ -316,9 +329,9 @@ func TestMissingBaselineAsksHuman(t *testing.T) {
 			t.Errorf("%s: the tree changed without --write-baseline", name)
 		}
 	}
-	check("fixture", "testdata/missing")
+	check("fixture", copyFixture(t, "missing"))
 	partial := copyFixture(t, "missing")
-	if err := os.MkdirAll(filepath.Join(partial, "evals/demo/baseline"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(partial, "evals/demo/baseline"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	check("parent_absent", partial)
@@ -329,7 +342,7 @@ func TestMissingBaselineAsksHuman(t *testing.T) {
 	check("other_model_only", other)
 
 	// With all: one selection document, the suite with code 3 and no report.
-	code, stdout, stderr := runArgs(t, newEnv(t, "testdata/missing", noGit(t)), "--suite", "all")
+	code, stdout, stderr := runArgs(t, newEnv(t, copyFixture(t, "missing"), noGit(t)), "--suite", "all")
 	var s selection
 	if code != 3 {
 		t.Fatalf("all: code %d, want 3\n%s", code, stderr)
@@ -368,7 +381,7 @@ func TestWriteBaselineOnlyWithFlag(t *testing.T) {
 	var created []string
 	for k := range after {
 		if _, ok := before[k]; !ok {
-			created = append(created, filepath.ToSlash(k))
+			created = append(created, k)
 		}
 	}
 	slices.Sort(created)
@@ -396,11 +409,11 @@ func TestWriteBaselineOnlyWithFlag(t *testing.T) {
 		"platform_link": {"evals/demo/baseline/fake", "../../../elsewhere"},
 	} {
 		dir := copyFixture(t, "missing")
-		if err := os.MkdirAll(filepath.Join(dir, "elsewhere"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, "elsewhere"), 0o750); err != nil {
 			t.Fatal(err)
 		}
 		p := filepath.Join(dir, filepath.FromSlash(link[0]))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Symlink(link[1], p); err != nil {
@@ -419,7 +432,7 @@ func TestBaselineReadStrictly(t *testing.T) {
 	good := readFile(t, "testdata/ok/"+demoBaselinePath)
 	withRegion := func(v string) string { return strings.Replace(good, `"region": ""`, `"region": "`+v+`"`, 1) }
 	variants := map[string]string{
-		"zero_width":   withRegion("can​ary"),
+		"zero_width":   withRegion("can\u200bary"),
 		"line_161":     withRegion("canary" + strings.Repeat("é", 161-15-2-6)),
 		"unknown_key":  strings.Replace(withRegion("canary"), `"cases": 1,`, `"cases": 1, "canary": 1,`, 1),
 		"duplicate":    strings.Replace(withRegion("canary"), `"cases": 1,`, `"cases": 1, "cases": 1,`, 1),
@@ -427,7 +440,7 @@ func TestBaselineReadStrictly(t *testing.T) {
 		"not_json":     "canary\n",
 		"case_folding": strings.Replace(withRegion("canary"), `"success_rate": 1,`, `"Success_Rate": 1,`, 1),
 	}
-	dirs := map[string]string{"fixture": "testdata/badbaseline"}
+	dirs := map[string]string{"fixture": copyFixture(t, "badbaseline")}
 	for name, data := range variants {
 		dir := copyFixture(t, "missing")
 		writeFile(t, dir, demoBaselinePath, data)
@@ -588,26 +601,26 @@ func TestUsageErrors(t *testing.T) {
 	}
 	demo := []string{"--suite", "demo"}
 	cases := map[string]tc{
-		"no_suite":            {"testdata/ok", nil, nil},
-		"suite_without_value": {"testdata/ok", []string{"--suite"}, nil},
-		"unknown_suite":       {"testdata/ok", []string{"--suite", "nope"}, nil},
-		"suite_not_a_suite":   {"testdata/ok", []string{"--suite", "demo/cases"}, nil},
-		"invalid_suite_name":  {"testdata/ok", []string{"--suite", "../ok"}, nil},
-		"empty_suite_name":    {"testdata/ok", []string{"--suite", ""}, nil},
-		"upper_suite_name":    {"testdata/ok", []string{"--suite", "Demo"}, nil},
-		"positional":          {"testdata/ok", []string{"--suite", "demo", "extra"}, nil},
-		"repeated_suite":      {"testdata/ok", []string{"--suite", "demo", "--suite", "demo"}, nil},
-		"base_with_named":     {"testdata/ok", []string{"--suite", "demo", "--base", aSHA}, nil},
-		"base_with_all":       {"testdata/ok", []string{"--suite", "all", "--base", aSHA}, nil},
-		"changed_no_base":     {"testdata/ok", []string{"--suite", "changed"}, nil},
-		"repeated_base":       {"testdata/ok", []string{"--suite", "changed", "--base", "", "--base", ""}, nil},
-		"unknown_flag":        {"testdata/ok", []string{"--suite", "demo", "--unknown"}, nil},
-		"help":                {"testdata/ok", []string{"-h"}, nil},
-		"single_dash_suite":   {"testdata/ok", []string{"-suite=demo", "extra"}, nil},
-		"temporal_debug":      {"testdata/ok", demo, []string{"TEMPORAL_DEBUG=1"}},
-		"temporal_debug_set":  {"testdata/ok", demo, []string{"TEMPORAL_DEBUG="}},
-		"temporal_sdk_flag":   {"testdata/ok", demo, []string{"TEMPORAL_SDK_FLAG_5=1"}},
-		"temporal_with_all":   {"testdata/ok", []string{"--suite", "all"}, []string{"TEMPORAL_SDK_FLAG_1=true"}},
+		"no_suite":            {copyFixture(t, "ok"), nil, nil},
+		"suite_without_value": {copyFixture(t, "ok"), []string{"--suite"}, nil},
+		"unknown_suite":       {copyFixture(t, "ok"), []string{"--suite", "nope"}, nil},
+		"suite_not_a_suite":   {copyFixture(t, "ok"), []string{"--suite", "demo/cases"}, nil},
+		"invalid_suite_name":  {copyFixture(t, "ok"), []string{"--suite", "../ok"}, nil},
+		"empty_suite_name":    {copyFixture(t, "ok"), []string{"--suite", ""}, nil},
+		"upper_suite_name":    {copyFixture(t, "ok"), []string{"--suite", "Demo"}, nil},
+		"positional":          {copyFixture(t, "ok"), []string{"--suite", "demo", "extra"}, nil},
+		"repeated_suite":      {copyFixture(t, "ok"), []string{"--suite", "demo", "--suite", "demo"}, nil},
+		"base_with_named":     {copyFixture(t, "ok"), []string{"--suite", "demo", "--base", aSHA}, nil},
+		"base_with_all":       {copyFixture(t, "ok"), []string{"--suite", "all", "--base", aSHA}, nil},
+		"changed_no_base":     {copyFixture(t, "ok"), []string{"--suite", "changed"}, nil},
+		"repeated_base":       {copyFixture(t, "ok"), []string{"--suite", "changed", "--base", "", "--base", ""}, nil},
+		"unknown_flag":        {copyFixture(t, "ok"), []string{"--suite", "demo", "--unknown"}, nil},
+		"help":                {copyFixture(t, "ok"), []string{"-h"}, nil},
+		"single_dash_suite":   {copyFixture(t, "ok"), []string{"-suite=demo", "extra"}, nil},
+		"temporal_debug":      {copyFixture(t, "ok"), demo, []string{"TEMPORAL_DEBUG=1"}},
+		"temporal_debug_set":  {copyFixture(t, "ok"), demo, []string{"TEMPORAL_DEBUG="}},
+		"temporal_sdk_flag":   {copyFixture(t, "ok"), demo, []string{"TEMPORAL_SDK_FLAG_5=1"}},
+		"temporal_with_all":   {copyFixture(t, "ok"), []string{"--suite", "all"}, []string{"TEMPORAL_SDK_FLAG_1=true"}},
 	}
 	edited := func(fixture string, f func(dir string)) string {
 		dir := copyFixture(t, fixture)
@@ -676,7 +689,7 @@ func TestUsageErrors(t *testing.T) {
 		}
 	}
 	// Controls: the same environment without the refused variable runs.
-	e := newEnv(t, "testdata/ok", noGit(t))
+	e := newEnv(t, copyFixture(t, "ok"), noGit(t))
 	e.environ = append(e.environ, "TEMPORAL=1", "XTEMPORAL_DEBUG=1", "TEMPORAL_SDK=1")
 	if code, _, stderr := runArgs(t, e, demo...); code != 0 {
 		t.Errorf("control: code %d\n%s", code, stderr)
@@ -709,11 +722,11 @@ func TestStdoutSingleJSONDocument(t *testing.T) {
 		args []string
 		code int
 	}{
-		"named":           {"testdata/ok", []string{"--suite", "demo"}, 0},
+		"named":           {copyFixture(t, "ok"), []string{"--suite", "demo"}, 0},
 		"named_escalated": {"", []string{"--suite", "demo"}, 1},
-		"all":             {"testdata/select", []string{"--suite", "all"}, 0},
-		"changed":         {"testdata/select", []string{"--suite", "changed", "--base", ""}, 0},
-		"all_missing":     {"testdata/missing", []string{"--suite", "all"}, 3},
+		"all":             {copyFixture(t, "select"), []string{"--suite", "all"}, 0},
+		"changed":         {copyFixture(t, "select"), []string{"--suite", "changed", "--base", ""}, 0},
+		"all_missing":     {copyFixture(t, "missing"), []string{"--suite", "all"}, 3},
 	} {
 		dir := c.dir
 		if dir == "" {

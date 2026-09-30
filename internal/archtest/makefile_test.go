@@ -1260,6 +1260,95 @@ func TestMakefileTargets(t *testing.T) {
 				}),
 				want: []string{"target update-baseline does not validate EVAL before go run"},
 			},
+			// M0-T23 (plan M0-evals-cli section 8.3): targeted evals in verify,
+			// EVAL_BASE frozen then exported, the baseline flag in update-baseline only.
+			{
+				name: "verify_without_evals", // M25
+				src:  mustReplace(t, valid, "\t"+evalsChangedRun+"\n", ""),
+				want: []string{fmt.Sprintf("target verify must run %q", evalsChangedRun)},
+			},
+			{
+				name: "evals_changed_without_base", // M27
+				src:  mustReplace(t, valid, "--suite changed --base \"$${EVAL_BASE:-}\"; else", "--suite changed; else"),
+				want: []string{fmt.Sprintf("target evals must run %q when EVAL is changed", evalsChangedRun)},
+			},
+			{
+				name: "evals_without_changed_branch",
+				src: editEvalsRecipe("evals", func(recipe []string) []string {
+					return append(recipe[:2], "\tgo run ./cmd/rempart-evals --suite \"$$EVAL\"")
+				}),
+				want: []string{fmt.Sprintf("target evals must run %q when EVAL is changed", evalsChangedRun)},
+			},
+			{
+				name: "evals_changed_empty_base",
+				src:  mustReplace(t, valid, "--suite changed --base \"$${EVAL_BASE:-}\"; else", "--suite changed --base \"\"; else"),
+				want: []string{fmt.Sprintf("target evals must run %q when EVAL is changed", evalsChangedRun)},
+			},
+			{
+				// M26: make would expand a command-line EVAL_BASE='$(shell ...)' (T28).
+				name: "override_eval_base_expands",
+				src:  mustReplace(t, valid, "override EVAL_BASE := $(value EVAL_BASE)\n", "override EVAL_BASE := $(EVAL_BASE)\n"),
+				wantErr: fmt.Sprintf("line %d: %s", physicalLine(t, mustReplace(t, valid, "override EVAL_BASE := $(value EVAL_BASE)\n",
+					"override EVAL_BASE := $(EVAL_BASE)\n"), "override EVAL_BASE := $(EVAL_BASE)"), errFormNotAllowed("EVAL_BASE")),
+			},
+			{
+				name:    "eval_base_default",
+				src:     mustReplace(t, valid, "EVAL ?= all\n", "EVAL ?= all\nEVAL_BASE ?= main\n"),
+				wantErr: errFormNotAllowed("EVAL_BASE"),
+			},
+			{
+				name: "eval_base_exported_before_frozen",
+				src:  mustReplace(t, valid, "EVAL ?= all\n", "EVAL ?= all\nexport EVAL_BASE\n"),
+				want: []string{"caller variable EVAL_BASE is exported before \"override EVAL_BASE := $(value EVAL_BASE)\""},
+			},
+			{
+				name: "eval_base_not_frozen",
+				src:  mustReplace(t, valid, "override EVAL_BASE := $(value EVAL_BASE)\n", ""),
+				want: []string{"caller variable EVAL_BASE is not frozen"},
+			},
+			{
+				name: "eval_base_not_exported",
+				src:  mustReplace(t, valid, callerExports, "export SCENARIO EVAL POLICIES_DIR OPA\n"),
+				want: []string{"caller variable EVAL_BASE is not exported"},
+			},
+			{
+				name: "eval_base_interpolated",
+				src:  mustReplace(t, valid, "\t"+evalsChangedRun+"\n", "\tgo run ./cmd/rempart-evals --suite changed --base \"$(EVAL_BASE)\"\n"),
+				want: []string{"EVAL_BASE interpolated by make", fmt.Sprintf("target verify must run %q", evalsChangedRun)},
+			},
+			{
+				name: "write_baseline_in_verify",
+				src: editRule(t, valid, "verify", func(rule string, recipe []string) []string {
+					return append(append([]string{rule}, recipe...), "\tgo run ./cmd/rempart-evals --suite demo --write-baseline")
+				}),
+				want: []string{"target verify passes the baseline flag"},
+			},
+			{
+				name: "write_baseline_in_evals",
+				src:  mustReplace(t, valid, "--suite \"$$EVAL\"; fi\n", "--suite \"$$EVAL\" --write-baseline; fi\n"),
+				want: []string{"target evals passes the baseline flag"},
+			},
+			{
+				name: "evals_after_dev", // M28
+				src: mustReplace(t, referenceDevMakefile(t), "\t"+evalsChangedRun+"\n\t"+subMakePrefix+"dev\n",
+					"\t"+subMakePrefix+"dev\n\t"+evalsChangedRun+"\n"),
+				want: []string{"target verify runs the evals after starting the stack (dev)"},
+			},
+			{
+				name: "verify_evals_errors_ignored",
+				src:  mustReplace(t, valid, "\t"+evalsChangedRun+"\n", "\t-"+evalsChangedRun+"\n"),
+				want: []string{"recipe line running rempart-evals ignores its failure"},
+			},
+			{
+				name: "verify_evals_or_true",
+				src:  mustReplace(t, valid, "\t"+evalsChangedRun+"\n", "\t"+evalsChangedRun+" || true\n"),
+				want: []string{"recipe line running rempart-evals ignores its failure", "target verify must run"},
+			},
+			{
+				name: "evals_failure_ignored",
+				src:  mustReplace(t, valid, "--suite \"$$EVAL\"; fi\n", "--suite \"$$EVAL\"; fi; exit 0\n"),
+				want: []string{"recipe line running rempart-evals ignores its failure"},
+			},
 			{
 				name: "update_baseline_without_flag",
 				src:  setRecipe(t, valid, "update-baseline", `go run ./cmd/rempart-evals --suite "$$EVAL"`),

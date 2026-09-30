@@ -88,16 +88,16 @@ func realTree(t *testing.T, files, links map[string]string) string {
 	dir := t.TempDir()
 	for name, data := range files {
 		p := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte(data), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for name, target := range links {
 		p := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Symlink(target, p); err != nil {
@@ -562,8 +562,11 @@ func TestReadRegularSameFile(t *testing.T) {
 	}
 	same := func(i fs.FileInfo) fs.FileInfo { return i }
 	for target := range files {
-		real := os.DirFS(dir).(fs.ReadLinkFS)
-		mapped := fstest.MapFS(mapOf(files))
+		realFS, isLink := os.DirFS(dir).(fs.ReadLinkFS)
+		if !isLink {
+			t.Fatal("os.DirFS is not a ReadLinkFS")
+		}
+		mapped := mapOf(files)
 		twinInfo := func(i fs.FileInfo) fs.FileInfo {
 			info, err := os.Stat(filepath.Join(twin, filepath.FromSlash(target)))
 			if err != nil {
@@ -575,9 +578,9 @@ func TestReadRegularSameFile(t *testing.T) {
 			fsys fs.FS
 			ok   bool
 		}{
-			"dirfs":          {real, true},
+			"dirfs":          {realFS, true},
 			"mapfs":          {mapped, true},
-			"dirfs_identity": {swapStatFS{real, target, same}, true},
+			"dirfs_identity": {swapStatFS{realFS, target, same}, true},
 			"mapfs_identity": {swapStatFS{mapped, target, same}, true},
 			"mapfs_size":     {swapStatFS{mapped, target, func(i fs.FileInfo) fs.FileInfo { return alter(i, func(a *altInfo) { a.size++ }) }}, false},
 			"mapfs_mode":     {swapStatFS{mapped, target, func(i fs.FileInfo) fs.FileInfo { return alter(i, func(a *altInfo) { a.mode = 0o600 }) }}, false},
@@ -585,9 +588,9 @@ func TestReadRegularSameFile(t *testing.T) {
 				return alter(i, func(a *altInfo) { a.mtime = a.mtime.Add(time.Second) })
 			}}, false},
 			"mapfs_sys_added":   {swapStatFS{mapped, target, func(i fs.FileInfo) fs.FileInfo { return alter(i, func(a *altInfo) { a.sys = struct{}{} }) }}, false},
-			"dirfs_other_file":  {swapStatFS{real, target, twinInfo}, false},
-			"dirfs_sys_removed": {swapStatFS{real, target, func(i fs.FileInfo) fs.FileInfo { return alter(i, func(a *altInfo) { a.sys = nil }) }}, false},
-			"dirfs_size":        {swapStatFS{real, target, func(i fs.FileInfo) fs.FileInfo { return alter(i, func(a *altInfo) { a.size++ }) }}, false},
+			"dirfs_other_file":  {swapStatFS{realFS, target, twinInfo}, false},
+			"dirfs_sys_removed": {swapStatFS{realFS, target, func(i fs.FileInfo) fs.FileInfo { return alter(i, func(a *altInfo) { a.sys = nil }) }}, false},
+			"dirfs_size":        {swapStatFS{realFS, target, func(i fs.FileInfo) fs.FileInfo { return alter(i, func(a *altInfo) { a.size++ }) }}, false},
 		} {
 			err := load(c.fsys, target)
 			if c.ok != (err == nil) {
