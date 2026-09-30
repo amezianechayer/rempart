@@ -1,6 +1,6 @@
 # 0006. Boucle L1 : contrat de sortie du modèle, provenance des valeurs, contradictions, exposition sensible, clarification
 
-- Statut : proposé
+- Statut : accepté le 2026-09-30 (décision humaine)
 - Date : 2026-09-30
 - Jalon : M1 (M1-T03 `intent-ir` met en oeuvre les décisions 1 à 5 ; M1-T05 `l1-loop` les décisions 6 et 7). À accepter par l'humain avant la phase impl de M1-T03.
 - Sources : `prompts/M1.md` (critères 1, 3, 4 ; piège « ne jamais laisser le LLM choisir des CIDR ») ; `docs/plans/M1-overview.md` (D1 à D9, fiche 5.1, Q1, Q3) ; skills `intent-to-spec` (règles 1 à 10), `llm-safety` (règles 1, 2, 5), `loop-engineering` (règles 1 à 3) ; ADR 0002 (registre des baselines), ADR 0004 (forme de l'identifiant de tenant) ; `docs/STATUS.md` (décisions humaines du 2026-09-30 : faux LLM scripté en CI et vrais LLM multi-fournisseurs en exécution manuelle ; une clarification est une nouvelle exécution de L1 ; mode accéléré).

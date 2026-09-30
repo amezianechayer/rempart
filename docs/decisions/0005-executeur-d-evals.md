@@ -1,6 +1,6 @@
 # 0005. Exécuteur d'evals : exécution en processus, contrat de sortie, sélection qui échoue fermée
 
-- Statut : proposé
+- Statut : accepté le 2026-09-30 (décision humaine)
 - Date : 2026-09-30
 - Jalon : M0 (tâche M0-T23), portée M1 et au-delà
 

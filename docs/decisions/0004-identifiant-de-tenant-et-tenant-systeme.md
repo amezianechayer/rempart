@@ -1,6 +1,6 @@
 # 0004. Forme canonique de l'identifiant de tenant et valeur du tenant système
 
-- Statut : proposé
+- Statut : accepté le 2026-09-30 (décision humaine)
 - Date : 2026-09-23
 - Jalon : décision en M0 (M0-T05, plan `docs/plans/M0-tenancy.md`). Réversible sans coût tant qu'aucun identifiant n'est persisté (M0 : données synthétiques, pas de clé Transit, amendement A1). **Acceptation exigée avant la première tâche de M1 qui persiste un identifiant de tenant** (clés Transit `rempart-tenant-<id>` de M0-T16 et M0-T17 reportées, migrations PostgreSQL, historiques Temporal chiffrés).
 
