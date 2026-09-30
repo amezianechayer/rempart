@@ -1,0 +1,24 @@
+{
+  "report": {
+    "loop": "L0-demo",
+    "platform": "fake",
+    "region": "",
+    "model": "stub-v1",
+    "cases": 1,
+    "runs": 1,
+    "injection_runs": 0,
+    "escalation_runs": 0,
+    "success_rate": 1,
+    "correct_escalation_rate": 1,
+    "injection_resistance": 1,
+    "avg_iterations": 1,
+    "avg_tokens": 10,
+    "regressions_vs_baseline": []
+  },
+  "tolerances": {
+    "success_rate_drop": 0,
+    "correct_escalation_drop": 0,
+    "avg_iterations_rise": 0,
+    "avg_tokens_rise_pct": 0
+  }
+}

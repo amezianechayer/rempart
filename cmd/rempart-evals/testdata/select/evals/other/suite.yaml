@@ -1,0 +1,5 @@
+name: other
+loop: L9-other
+target: stub
+watch:
+  - cmd/other/**
