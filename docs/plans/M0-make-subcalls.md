@@ -25,7 +25,7 @@ Cause racine commune aux constats 1 à 3 : la V0 validait les lignes qu'elle rec
 - Section 2 : décisions D7 (recettes), D8 (grammaire fermée, dans `parseMakefile`), D9 (détection V0 conservée), D10 (modèle de menace). Correspondance avec la décision du BLOCK : D1 devient D7, D2 devient D8, D3 devient D9, D4 devient D10 (renumérotées pour ne pas heurter D1 à D6 de la V0).
 - Section 3 : interfaces de la grammaire, messages d'erreur stables, nouveau test `TestMakefileGrammar`, ordre de décision de `checkSubMakeCalls`.
 - Section 4 : fixtures existantes à adapter (six cas deviennent des erreurs du parseur).
-- Section 5 : M13, M21, M22, M23 déplacés vers la grammaire (G11, G14, G15, G29) ; P6 devient le cas négatif M31 ; nouveaux cas M27 à M38 et G1 à G33 ; mutations du vérificateur C1 à C15 (révisées) et K1 à K17 (parseur).
+- Section 5 : M13, M21, M22, M23 déplacés vers la grammaire (G11, G14, G15, G29) ; P6 devient le cas négatif M31 ; nouveaux cas M27 à M38 et G1 à G36 (G34 à G36 en V1.1) ; mutations du vérificateur C1 à C15 (révisées) et K1 à K17 (parseur).
 - Section 6 : réécrite. L'affirmation V0 « une recette à autre préfixe fait échouer `parseMakefile`, donc échec franc » était fausse (constat 3) ; le résidu adverse n'est pas « fermé ».
 - Section 7 : critères mis à jour (comptes, formes D7 et D8 par `grep`, rejeu des trois attaques, mutations K).
 - Sections 8 et 9 : risques et tâches V1.
@@ -299,8 +299,11 @@ Chaque cas part de `targetMakefile` ; `wantErr` = `line <n>: ` + fragment du cod
 | G31 | `assign_trailing_comment` | `EVAL ?= all` devient `EVAL ?= all # défaut` | E1 |
 | G32 | `duplicate_rule_line` | fin : `arch-test: opa-test` (sans recette) | E7 |
 | G33 | `phony_with_recipe` | après la seconde ligne `.PHONY` : `\t@echo x` | E8 |
+| G34 | `gowork_changed` | `export GOWORK := off` devient `export GOWORK := /tmp/go.work` | E4 |
+| G35 | `goflags_changed` | `override GOFLAGS := -mod=readonly` devient `override GOFLAGS := -mod=mod` | E4 |
+| G36 | `default_goal_changed` | `.DEFAULT_GOAL := verify-quick` devient `.DEFAULT_GOAL := demo` | E4 |
 
-Total : 33 cas négatifs.
+Total : 36 cas négatifs. G34 à G36 (V1.1) : ajoutés après la campagne de mutations de V1-3, où la mutation K7b (valeurs figées de `GOWORK`, `GOFLAGS`, `.DEFAULT_GOAL` remplacées par « valeur sans `$` ») survivait.
 
 Contrôles positifs (`positive_controls`, `parseMakefile` sans erreur) : GP1 `valid_template` ; GP2 `go_env_lines` (après `export SCENARIO ...` : `export GOWORK := off`, `override GOFLAGS := -mod=readonly`, `export GOFLAGS`) ; GP3 `comments_with_syntax` (`# $(eval include evil.mk) # :` et `  # include evil.mk`) ; GP4 `reference_dev_makefile` (`referenceDevMakefile(t)`). Total : 4. Sous-test `repository` : `parseMakefile` du `Makefile` sans erreur.
 
@@ -372,7 +375,7 @@ Tous lancés depuis `/home/user/rempart`.
 1. `go test -count=1 -run 'TestMakefileSubMakeCalls|TestMakefileGrammar' ./internal/archtest/` : `ok`.
 2. Comptes :
    - `go test -count=1 -v -run 'TestMakefileSubMakeCalls/negative_controls' ./internal/archtest/ | grep -c -- '--- PASS: TestMakefileSubMakeCalls/negative_controls/'` : `34` ; même commande avec `positive_controls` : `6` ;
-   - `go test -count=1 -v -run 'TestMakefileGrammar/negative_controls' ./internal/archtest/ | grep -c -- '--- PASS: TestMakefileGrammar/negative_controls/'` : `33` ; même commande avec `positive_controls` : `4`.
+   - `go test -count=1 -v -run 'TestMakefileGrammar/negative_controls' ./internal/archtest/ | grep -c -- '--- PASS: TestMakefileGrammar/negative_controls/'` : `36` (V1.1) ; même commande avec `positive_controls` : `4`.
 3. `go test -count=1 -run 'TestMakefileTargets|TestMakeDevUsesWait|TestMakefileDemoTarget|TestMakefileGoflagsNeutralized|TestNoShadowMakefile|TestCIRunsMakeVerify' ./internal/archtest/` : `ok`.
 4. Forme du `Makefile`, indépendamment du code Go :
    - sous-make (V0) : `grep -cP '^\t@?\$\(MAKE\) -f Makefile --no-print-directory [a-z][a-z0-9-]*( >&2)?$' Makefile` affiche `4` ; `grep -nE '\bMAKE\b|\bg?make\b|\bMAKEFILES\b' Makefile | grep -vE '^[0-9]+:[[:blank:]]*#' | grep -cvP '^[0-9]+:\t@?\$\(MAKE\) -f Makefile --no-print-directory [a-z][a-z0-9-]*( >&2)?$'` affiche `0` ;

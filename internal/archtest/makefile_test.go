@@ -12,7 +12,7 @@ import (
 type makeRule struct {
 	Prereqs []string
 	Recipe  []string // logical lines, continuations joined, @ - + prefixes removed
-	Line    int      // line of the first rule naming the target
+	Line    int      // line of the rule naming the target (a single one, D8)
 }
 
 // makeLine is a logical Makefile line (continuations joined) and the number of
@@ -28,35 +28,66 @@ type parsedMakefile struct {
 	Lines []makeLine // every logical line, comments included, for whole-file rules
 }
 
-// Analysis rules of parseMakefile, a subset of GNU make syntax
-// (docs/plans/M0-squelette.md section 8.4):
+// Grammar of parseMakefile: the closed subset of GNU make of
+// docs/plans/M0-make-subcalls.md D8 (M0-T04b V1, threat T32). Whatever it does
+// not recognize is an error, never ignored:
 //  1. lines ending with a backslash are joined with the next one (separated by
 //     one space, leading blanks of the next line removed) before classification;
-//  2. a blank line or a line starting with "#" (outside a recipe) is ignored;
-//  3. an assignment (NAME = := ::= :::= ?= += != value) is ignored;
-//  4. include, -include, sinclude, export, unexport, override and vpath
-//     directives are ignored;
-//  5. ifeq, ifneq, ifdef, ifndef, else, endif, define and endef are errors: the
-//     test parser must be extended before the Makefile uses them;
-//  6. a rule is a line not starting with a tab whose first ":" is not followed
-//     by "=": targets before ":", prerequisites after it (up to ";" or "#",
-//     order-only prerequisites after "|" included); text after ";" is the first
-//     recipe line; ".PHONY" feeds the set of phony targets (several lines
-//     allowed); double-colon and static pattern rules are errors;
-//  7. a recipe is made of the lines starting with a tab that follow a rule;
-//     @ - + prefixes are removed; a blank line or a comment in column 0 does not
-//     end the recipe; a recipe line outside a rule is an error;
-//  8. two rules with a recipe for the same target are an error.
+//  2. a line starting with a tab is a recipe line of the current rule (@ - +
+//     prefixes removed); outside a rule, or after a .PHONY line, it is an error;
+//     a blank line or a make comment does not end the recipe;
+//  3. a blank line, or a line whose text starts with "#", is a make comment;
+//  4. any other line holding "#" is an error (E1): no trailing comment;
+//  5. ifeq, ifneq, ifdef, ifndef, else, endif, define, endef are errors (E2);
+//  6. an assignment ([override|export] NAME op value) must name a variable of
+//     makeVariables (E3) and be one of its allowed whole-line forms (E4);
+//  7. "export" must list names of makeExportable (E5);
+//  8. ".PHONY:" lists targets of the form [a-z][a-z0-9-]*;
+//  9. a rule is one target of that form, ":", then zero or more prerequisites
+//     of that form separated by one space; a target named by two rule lines is
+//     an error (E7);
+//  10. any other line is an error (E6): include, -include, sinclude, vpath,
+//     unexport, special targets, inline recipes, target-specific variables,
+//     double-colon and pattern rules, expansions outside recipes.
 var (
-	makeAssignRe      = regexp.MustCompile(`^[A-Za-z0-9_.]+\s*(::?=|:::=|\?=|\+=|!=|=)`)
-	makeIgnoredRe     = regexp.MustCompile(`^(include|-include|sinclude|export|unexport|override|vpath)(\s|$)`)
 	makeUnsupportedRe = regexp.MustCompile(`^(ifeq|ifneq|ifdef|ifndef|else|endif|define|endef)(\s|\(|$)`)
+	// Any assignment shape, recognized to be refused unless allowed (D8 step 3).
+	makeAssignShapeRe = regexp.MustCompile(`^(?:(?:override|export)\s+)?([^\s:#=!?+]+)\s*(?::{1,3}=|[?+!]?=)`)
+	makeExportWordRe  = regexp.MustCompile(`^export(\s|$)`)
+	makeExportRe      = regexp.MustCompile(`^export((?: [A-Z_]+)+)$`)
+	makePhonyRe       = regexp.MustCompile(`^\.PHONY:((?: [a-z][a-z0-9-]*)+)$`)
+	makeRuleRe        = regexp.MustCompile(`^([a-z][a-z0-9-]*):((?: [a-z][a-z0-9-]*)*)$`)
 )
 
+// makeVariables: the only variables the Makefile may assign (D8 step 3).
+func makeVariables() []string {
+	return []string{"SHELL", ".SHELLFLAGS", ".DEFAULT_GOAL", "EVAL", "POLICIES_DIR", "OPA", "SCENARIO", "GOWORK", "GOFLAGS"}
+}
+
+// makeExportable: the only names "export" may list (D8 step 4).
+func makeExportable() []string {
+	return []string{"SCENARIO", "EVAL", "POLICIES_DIR", "OPA", "GOWORK", "GOFLAGS"}
+}
+
+// makeAssignForms: whole-line forms allowed for the variables of makeVariables,
+// besides "override NAME := $(value NAME)" for callerVariables() (overrideValueRe,
+// both names equal). Values are frozen where a value without "$" would divert
+// the execution (SHELL, .SHELLFLAGS, GOWORK, GOFLAGS).
+var makeAssignForms = []*regexp.Regexp{
+	regexp.MustCompile(`^SHELL := /bin/bash$`),
+	regexp.MustCompile(`^\.SHELLFLAGS := -eu -o pipefail -c$`),
+	regexp.MustCompile(`^\.DEFAULT_GOAL := verify-quick$`),
+	regexp.MustCompile(`^(EVAL|POLICIES_DIR|OPA) \?= [A-Za-z0-9._/-]+$`),
+	regexp.MustCompile(`^export GOWORK := off$`),
+	regexp.MustCompile(`^override GOFLAGS := -mod=readonly$`),
+}
+
+// parseMakefile parses the closed grammar of docs/plans/M0-make-subcalls.md D8.
+// Errors start with "line <n>: ", n being the first physical line of the
+// refused logical line.
 func parseMakefile(src string) (parsedMakefile, error) {
 	p := makeParser{
-		mf:         parsedMakefile{Rules: map[string]makeRule{}, Phony: map[string]bool{}, Lines: joinMakeLines(src)},
-		recipeRule: map[string]int{},
+		mf: parsedMakefile{Rules: map[string]makeRule{}, Phony: map[string]bool{}, Lines: joinMakeLines(src)},
 	}
 	for _, ln := range p.mf.Lines {
 		if err := p.parseLine(ln); err != nil {
@@ -86,102 +117,92 @@ func joinMakeLines(src string) []makeLine {
 }
 
 type makeParser struct {
-	mf          parsedMakefile
-	current     []string       // targets of the rule whose recipe is being read, nil if none
-	currentLine int            // line of that rule
-	recipeRule  map[string]int // target -> line of the rule owning its recipe
+	mf      parsedMakefile
+	current string // target of the rule whose recipe is being read, "" if none
 }
 
 func (p *makeParser) parseLine(ln makeLine) error {
 	if strings.HasPrefix(ln.Text, "\t") {
-		if p.current == nil {
+		if p.current == "" {
 			return fmt.Errorf("line %d: recipe line outside a rule", ln.Num)
 		}
-		return p.addRecipe(ln.Text[1:], ln.Num)
+		p.addRecipe(ln.Text[1:])
+		return nil
 	}
 	text := strings.TrimSpace(ln.Text)
 	if text == "" || strings.HasPrefix(text, "#") {
 		return nil
 	}
-	p.current = nil
+	p.current = ""
 	switch {
+	case strings.Contains(text, "#"):
+		return fmt.Errorf("line %d: comment after make syntax not allowed (D8): %q", ln.Num, text)
 	case makeUnsupportedRe.MatchString(text):
 		return fmt.Errorf("line %d: unsupported directive %q: update the test parser before using it", ln.Num, text)
-	case makeIgnoredRe.MatchString(text), makeAssignRe.MatchString(text):
+	}
+	if m := makeAssignShapeRe.FindStringSubmatch(text); m != nil {
+		return checkMakeAssignment(text, m[1], ln.Num)
+	}
+	if makeExportWordRe.MatchString(text) {
+		return checkMakeExport(text, ln.Num)
+	}
+	if m := makePhonyRe.FindStringSubmatch(text); m != nil {
+		for _, name := range strings.Fields(m[1]) {
+			p.mf.Phony[name] = true
+		}
 		return nil
 	}
-	return p.parseRule(text, ln.Num)
+	m := makeRuleRe.FindStringSubmatch(text)
+	if m == nil {
+		return fmt.Errorf("line %d: line outside the Makefile grammar of the tests (D8): %q", ln.Num, text)
+	}
+	target := m[1]
+	if r, seen := p.mf.Rules[target]; seen {
+		return fmt.Errorf("line %d: target %q already named by the rule of line %d (D8)", ln.Num, target, r.Line)
+	}
+	p.mf.Rules[target] = makeRule{Prereqs: strings.Fields(m[2]), Line: ln.Num}
+	p.current = target
+	return nil
 }
 
-func (p *makeParser) parseRule(text string, num int) error {
-	colon := strings.IndexByte(text, ':')
-	if colon < 0 {
-		return fmt.Errorf("line %d: unrecognized line %q", num, text)
+// checkMakeAssignment: D8 step 3, name being the assigned variable.
+func checkMakeAssignment(text, name string, num int) error {
+	if !slices.Contains(makeVariables(), name) {
+		return fmt.Errorf("line %d: variable %q not allowed in the Makefile (D8)", num, name)
 	}
-	rest := text[colon+1:]
-	switch {
-	case strings.HasPrefix(rest, "="):
-		return fmt.Errorf("line %d: unrecognized assignment %q", num, text)
-	case strings.HasPrefix(rest, ":"):
-		return fmt.Errorf("line %d: double-colon rule %q not supported: update the test parser", num, text)
-	}
-	targets := strings.Fields(text[:colon])
-	if len(targets) == 0 {
-		return fmt.Errorf("line %d: rule without target %q", num, text)
-	}
-	inline := ""
-	if i := strings.IndexAny(rest, ";#"); i >= 0 {
-		if rest[i] == ';' {
-			inline = rest[i+1:]
-		}
-		rest = rest[:i]
-	}
-	var prereqs []string
-	for _, f := range strings.Fields(rest) {
-		if f == "|" {
-			continue
-		}
-		if strings.Contains(f, ":") {
-			return fmt.Errorf("line %d: static pattern rule or unsupported prerequisite %q: update the test parser", num, f)
-		}
-		prereqs = append(prereqs, f)
-	}
-	p.current, p.currentLine = targets, num
-	for _, target := range targets {
-		if target == ".PHONY" {
-			for _, pr := range prereqs {
-				p.mf.Phony[pr] = true
-			}
-			continue
-		}
-		r, seen := p.mf.Rules[target]
-		if !seen {
-			r.Line = num
-		}
-		r.Prereqs = append(r.Prereqs, prereqs...)
-		p.mf.Rules[target] = r
-	}
-	return p.addRecipe(inline, num)
-}
-
-func (p *makeParser) addRecipe(text string, num int) error {
-	cmd := strings.TrimSpace(strings.TrimLeft(text, "@-+ \t"))
-	if cmd == "" {
+	if m := overrideValueRe.FindStringSubmatch(text); m != nil && m[1] == m[2] && slices.Contains(callerVariables(), m[1]) {
 		return nil
 	}
-	for _, target := range p.current {
-		if target == ".PHONY" {
-			continue
+	for _, re := range makeAssignForms {
+		if re.MatchString(text) {
+			return nil
 		}
-		if owner, ok := p.recipeRule[target]; ok && owner != p.currentLine {
-			return fmt.Errorf("line %d: second recipe for target %q (first recipe under the rule of line %d)", num, target, owner)
+	}
+	return fmt.Errorf("line %d: form not allowed for variable %s (D8): %q", num, name, text)
+}
+
+// checkMakeExport: D8 step 4. A bare "export" exports every variable.
+func checkMakeExport(text string, num int) error {
+	m := makeExportRe.FindStringSubmatch(text)
+	if m == nil {
+		return fmt.Errorf("line %d: export not allowed (D8): %q", num, text)
+	}
+	for _, name := range strings.Fields(m[1]) {
+		if !slices.Contains(makeExportable(), name) {
+			return fmt.Errorf("line %d: export not allowed (D8): %q", num, text)
 		}
-		p.recipeRule[target] = p.currentLine
-		r := p.mf.Rules[target]
-		r.Recipe = append(r.Recipe, cmd)
-		p.mf.Rules[target] = r
 	}
 	return nil
+}
+
+func (p *makeParser) addRecipe(text string) {
+	cmd := strings.TrimSpace(strings.TrimLeft(text, "@-+ \t"))
+	if cmd == "" {
+		return
+	}
+	r := p.mf.Rules[p.current]
+	r.Recipe = append(r.Recipe, cmd)
+	p.mf.Rules[p.current] = r
 }
 
 // requiredMakeTargets must each be defined once and declared .PHONY.
@@ -226,9 +247,16 @@ var (
 	canonicalSubMakeRe = regexp.MustCompile(`^\t@?\$\(MAKE\) -f Makefile --no-print-directory ([a-z][a-z0-9-]*)( >&2)?$`)
 )
 
+// expandsMake reports whether make expands something in a recipe line (D7):
+// a "$" left once the "$$" pairs are removed, left to right.
+func expandsMake(recipeLine string) bool {
+	return strings.Contains(strings.ReplaceAll(recipeLine, "$$", ""), "$")
+}
+
 // checkSubMakeCalls reports every non-comment logical line of the Makefile that
-// mentions make (D2) and is not exactly a canonical sub-make recipe line naming
-// a defined target (D1, D3, D4, D5). See docs/plans/M0-make-subcalls.md.
+// mentions make (D2) or, for a recipe line, expands make syntax (D7), and is
+// not exactly a canonical sub-make recipe line naming a defined target (D1,
+// D3, D5, D9). At most one problem per line. See docs/plans/M0-make-subcalls.md.
 func checkSubMakeCalls(mf parsedMakefile) []string {
 	var problems problemList
 	for _, l := range mf.Lines {
@@ -236,17 +264,18 @@ func checkSubMakeCalls(mf parsedMakefile) []string {
 		if !recipe && strings.HasPrefix(strings.TrimSpace(l.Text), "#") {
 			continue // make comment (D3); a recipe line starting with # is shell text
 		}
-		if !subMakeRefRe.MatchString(l.Text) {
+		if m := canonicalSubMakeRe.FindStringSubmatch(l.Text); m != nil {
+			if _, ok := mf.Rules[m[1]]; !ok {
+				problems.addf("Makefile line %d: sub-make target %q is not defined", l.Num, m[1])
+			}
 			continue
 		}
-		m := canonicalSubMakeRe.FindStringSubmatch(l.Text)
-		if m == nil {
+		switch {
+		case subMakeRefRe.MatchString(l.Text):
 			problems.addf("Makefile line %d: sub-make must be exactly \"$(MAKE) -f Makefile --no-print-directory <target>\" "+
 				"on its own recipe line (T32): %q", l.Num, l.Text)
-			continue
-		}
-		if _, ok := mf.Rules[m[1]]; !ok {
-			problems.addf("Makefile line %d: sub-make target %q is not defined", l.Num, m[1])
+		case recipe && expandsMake(l.Text):
+			problems.addf("Makefile line %d: recipe line expands make syntax outside the canonical sub-make (D7, T32): %q", l.Num, l.Text)
 		}
 	}
 	return problems
@@ -736,6 +765,16 @@ func TestMakefileTargets(t *testing.T) {
 				return append([]string{rule}, edit(recipe)...)
 			})
 		}
+		// Mutations refused by the grammar of parseMakefile (M0-make-subcalls D8).
+		inlineDocker := setRuleLine(t, valid, "arch-test", "arch-test: ; docker compose up -d")
+		overrideExpands := mustReplace(t, valid, "override SCENARIO := $(value SCENARIO)\n", "override SCENARIO := $(SCENARIO)\n")
+		bareExport := mustReplace(t, valid, "EVAL ?= all\n", "export\nEVAL ?= all\n")
+		duplicate := valid + "\ndev-down:\n\t@echo \"second recipe\"\n"
+		duplicateLines := exactLines(duplicate, "dev-down:")
+		if len(duplicateLines) != 2 {
+			t.Fatalf("duplicate_rule: rule line dev-down: found on lines %d, want 2 lines", duplicateLines)
+		}
+		doubleColon := valid + "\ndev-down::\n\t@echo \"again\"\n"
 		cases := []struct {
 			name    string
 			src     string
@@ -840,9 +879,10 @@ func TestMakefileTargets(t *testing.T) {
 				want: []string{"target arch-test (reachable from verify-quick)", "curl -fsS"},
 			},
 			{
-				name: "docker_in_inline_recipe",
-				src:  setRuleLine(t, valid, "arch-test", "arch-test: ; docker compose up -d"),
-				want: []string{"target arch-test (reachable from verify-quick)", "docker compose up -d"},
+				// M0-make-subcalls D8: an inline recipe is outside the grammar.
+				name:    "docker_in_inline_recipe",
+				src:     inlineDocker,
+				wantErr: fmt.Sprintf("line %d: %s", physicalLine(t, inlineDocker, "arch-test: ;"), errOutsideGrammar),
 			},
 			{
 				name: "integration_tests_in_verify_quick",
@@ -919,9 +959,11 @@ func TestMakefileTargets(t *testing.T) {
 				want: []string{"caller variable OPA is not frozen"},
 			},
 			{
+				// M0-make-subcalls D8: the only override of SCENARIO is $(value SCENARIO).
 				name: "override_expands_caller_value",
-				src:  mustReplace(t, valid, "override SCENARIO := $(value SCENARIO)\n", "override SCENARIO := $(SCENARIO)\n"),
-				want: []string{"caller variable SCENARIO is not frozen", "SCENARIO interpolated by make"},
+				src:  overrideExpands,
+				wantErr: fmt.Sprintf("line %d: %s", physicalLine(t, overrideExpands, "override SCENARIO := $(SCENARIO)"),
+					errFormNotAllowed("SCENARIO")),
 			},
 			{
 				name: "override_after_export",
@@ -929,9 +971,10 @@ func TestMakefileTargets(t *testing.T) {
 				want: []string{"caller variable EVAL is exported before \"override EVAL := $(value EVAL)\""},
 			},
 			{
-				name: "bare_export_before_override",
-				src:  mustReplace(t, valid, "EVAL ?= all\n", "export\nEVAL ?= all\n"),
-				want: []string{"caller variable SCENARIO is exported before", "caller variable OPA is exported before"},
+				// M0-make-subcalls D8: a bare export (every variable) is refused.
+				name:    "bare_export_before_override",
+				src:     bareExport,
+				wantErr: fmt.Sprintf("line %d: %s", exactLine(t, bareExport, "export"), errExportNotAllowed),
 			},
 			{
 				name: "caller_variable_not_exported",
@@ -1007,9 +1050,10 @@ func TestMakefileTargets(t *testing.T) {
 				want: []string{"target arch-test must test ./internal/archtest/..."},
 			},
 			{
+				// M0-make-subcalls D8: a second rule line naming a target (E7).
 				name:    "duplicate_rule",
-				src:     valid + "\ndev-down:\n\t@echo \"second recipe\"\n",
-				wantErr: `second recipe for target "dev-down"`,
+				src:     duplicate,
+				wantErr: errAlreadyNamed(duplicateLines[1], "dev-down", duplicateLines[0]),
 			},
 			{
 				name:    "unsupported_conditional",
@@ -1022,9 +1066,10 @@ func TestMakefileTargets(t *testing.T) {
 				wantErr: "line 1: recipe line outside a rule",
 			},
 			{
+				// M0-make-subcalls D8: a double-colon rule is outside the grammar.
 				name:    "double_colon_rule",
-				src:     valid + "\ndev-down::\n\t@echo \"again\"\n",
-				wantErr: "double-colon rule",
+				src:     doubleColon,
+				wantErr: fmt.Sprintf("line %d: %s", physicalLine(t, doubleColon, "dev-down::"), errOutsideGrammar),
 			},
 		}
 		for _, tc := range cases {
@@ -1271,18 +1316,201 @@ func physicalLine(t *testing.T, src, fragment string) int {
 	return num
 }
 
+// exactLines returns the 1-based numbers of the physical lines of src equal to line.
+func exactLines(src, line string) []int {
+	var nums []int
+	for i, l := range strings.Split(src, "\n") {
+		if l == line {
+			nums = append(nums, i+1)
+		}
+	}
+	return nums
+}
+
+// exactLine returns the number of the single physical line of src equal to
+// line; zero or several such lines stop the test.
+func exactLine(t *testing.T, src, line string) int {
+	t.Helper()
+	nums := exactLines(src, line)
+	if len(nums) != 1 {
+		t.Fatalf("line %q found on lines %d, want exactly one line", line, nums)
+	}
+	return nums[0]
+}
+
+// Stable fragments of the errors of parseMakefile (docs/plans/M0-make-subcalls.md
+// section 3, codes E1 to E8), always preceded by "line <n>: ".
+const (
+	errTrailingComment  = "comment after make syntax not allowed (D8)"                               // E1
+	errUnsupported      = "unsupported directive"                                                    // E2
+	errExportNotAllowed = "export not allowed (D8)"                                                  // E5
+	errOutsideGrammar   = "line outside the Makefile grammar of the tests (D8)"                      // E6
+	errRecipeOutside    = "recipe line outside a rule"                                               // E8
+	errD7               = "recipe line expands make syntax outside the canonical sub-make (D7, T32)" // D7 problem
+)
+
+// errVariableNotAllowed is E3 for name.
+func errVariableNotAllowed(name string) string {
+	return fmt.Sprintf("variable %q not allowed in the Makefile (D8)", name)
+}
+
+// errFormNotAllowed is E4 for name.
+func errFormNotAllowed(name string) string {
+	return fmt.Sprintf("form not allowed for variable %s (D8)", name)
+}
+
+// errAlreadyNamed is the whole E7 error: the rule line num names target,
+// already named by the rule line first.
+func errAlreadyNamed(num int, target string, first int) string {
+	return fmt.Sprintf("line %d: target %q already named by the rule of line %d (D8)", num, target, first)
+}
+
+// TestMakefileGrammar (M0-T04b V1, threat T32): parseMakefile refuses every
+// line outside the closed grammar D8 of docs/plans/M0-make-subcalls.md, with
+// an error naming the mutated line. Nothing it does not recognize is ignored:
+// $(eval include ...) hidden behind "# :", .RECIPEPREFIX, include, assignment
+// of MAKE or of any unlisted variable, target-specific variables, inline
+// recipes, special targets.
+func TestMakefileGrammar(t *testing.T) {
+	valid := targetMakefile
+	const (
+		opaLine      = "OPA ?= opa\n"
+		opaOverride  = "override OPA := $(value OPA)\n"
+		exportLine   = "export SCENARIO EVAL POLICIES_DIR OPA\n"
+		secondPhony  = ".PHONY: dev dev-preflight dev-down sandbox-guard sandbox-plan sandbox-apply sandbox-destroy\n"
+		archCall     = "\t" + subMakePrefix + "arch-test\n"
+		evilInclude  = "$(eval include evil.mk)"
+		recipePrefix = ".RECIPEPREFIX"
+	)
+	// afterOPA inserts lines (newline included) after "OPA ?= opa".
+	afterOPA := func(lines string) string { return mustReplace(t, valid, opaLine, opaLine+lines) }
+
+	type testCase struct {
+		name    string
+		src     string
+		wantErr string // "": conforming input
+	}
+	// at builds a negative case whose error names the physical line holding fragment.
+	at := func(name, src, fragment, code string) testCase {
+		return testCase{name: name, src: src, wantErr: fmt.Sprintf("line %d: %s", physicalLine(t, src, fragment), code)}
+	}
+	// atExact is at for a mutated line given whole (its text is part of other lines).
+	atExact := func(name, src, line, code string) testCase {
+		return testCase{name: name, src: src, wantErr: fmt.Sprintf("line %d: %s", exactLine(t, src, line), code)}
+	}
+
+	g1 := valid + evilInclude + " # :\n"
+	g2 := valid + "X := evil.mk\n$(eval -include $(X)) # :\n"
+	g3 := valid + recipePrefix + " := >\nverify-quick:\n>@echo SHADOW # :\n"
+	g15 := mustReplace(t, afterOPA("SUB := $(MAKE)\n"), archCall, "\t$(SUB) -f Makefile --no-print-directory dev\n")
+	g25 := valid + "%:\n\t@echo x\n"
+	g32 := valid + "arch-test: opa-test\n"
+	g32Lines := exactLines(g32, "arch-test:")
+	if len(g32Lines) != 1 {
+		t.Fatalf("duplicate_rule_line: rule line arch-test: found on lines %d, want 1", g32Lines)
+	}
+	negatives := []testCase{
+		at("eval_include_comment_colon", g1, evilInclude, errTrailingComment),                                       // G1, BLOCK finding 1
+		at("eval_include_indirect", g2, "X := evil.mk", errVariableNotAllowed("X")),                                 // G2, BLOCK finding 1
+		at("recipeprefix", g3, recipePrefix, errVariableNotAllowed(recipePrefix)),                                   // G3, BLOCK finding 3
+		at("include_directive", afterOPA("include evil.mk\n"), "include evil.mk", errOutsideGrammar),                // G4
+		at("dash_include_directive", afterOPA("-include evil.mk\n"), "-include evil.mk", errOutsideGrammar),         // G5
+		at("sinclude_directive", afterOPA("sinclude evil.mk\n"), "sinclude evil.mk", errOutsideGrammar),             // G6
+		at("vpath_directive", afterOPA("vpath %.mk evil\n"), "vpath %.mk", errOutsideGrammar),                       // G7
+		at("unexport_directive", afterOPA("unexport OPA\n"), "unexport OPA", errOutsideGrammar),                     // G8
+		at("define_block", afterOPA("define X\nendef\n"), "define X", errUnsupported),                               // G9
+		at("assign_make", afterOPA("MAKE := make -f GNUmakefile\n"), "MAKE := make", errVariableNotAllowed("MAKE")), // G10
+		at("redefine_make", mustReplace(t, valid, opaOverride, opaOverride+"override MAKE := make -f GNUmakefile\n"), // G11
+			"override MAKE", errVariableNotAllowed("MAKE")),
+		at("assign_make_command", afterOPA("MAKE_COMMAND := evil\n"), "MAKE_COMMAND", errVariableNotAllowed("MAKE_COMMAND")), // G12
+		at("assign_makeflags", afterOPA("MAKEFLAGS := -i\n"), "MAKEFLAGS", errVariableNotAllowed("MAKEFLAGS")),               // G13
+		at("makefiles_assignment", mustReplace(t, valid, exportLine, exportLine+"export MAKEFILES := evil.mk\n"), // G14
+			"MAKEFILES", errVariableNotAllowed("MAKEFILES")),
+		at("indirect_variable", g15, "SUB := $(MAKE)", errVariableNotAllowed("SUB")), // G15
+		at("value_other_name", mustReplace(t, valid, "override EVAL := $(value EVAL)\n", "override EVAL := $(value OPA)\n"), // G16
+			"override EVAL := $(value OPA)", errFormNotAllowed("EVAL")),
+		at("assign_dollar_value", mustReplace(t, valid, "EVAL ?= all\n", "EVAL ?= $(shell id)\n"), "EVAL ?= $(shell id)", errFormNotAllowed("EVAL")), // G17
+		at("shell_assign", mustReplace(t, valid, "EVAL ?= all\n", "EVAL != id\n"), "EVAL != id", errFormNotAllowed("EVAL")),                          // G18
+		at("assign_shell_other", mustReplace(t, valid, "SHELL := /bin/bash\n", "SHELL := /tmp/evil.sh\n"), "SHELL := /tmp/evil.sh", // G19
+			errFormNotAllowed("SHELL")),
+		at("shellflags_changed", mustReplace(t, valid, ".SHELLFLAGS := -eu -o pipefail -c\n", ".SHELLFLAGS := -c evil\n"), // G20
+			".SHELLFLAGS := -c evil", errFormNotAllowed(".SHELLFLAGS")),
+		atExact("bare_export", afterOPA("export\n"), "export", errExportNotAllowed),                                                          // G21
+		at("export_other_name", mustReplace(t, valid, exportLine, exportLine+"export MAKEFLAGS\n"), "export MAKEFLAGS", errExportNotAllowed), // G22
+		at("unknown_special_var", valid+".SECONDEXPANSION:\n", ".SECONDEXPANSION:", errOutsideGrammar),                                       // G23
+		at("ignore_special_target", valid+".IGNORE:\n", ".IGNORE:", errOutsideGrammar),                                                       // G24
+		atExact("target_bad_chars", g25, "%:", errOutsideGrammar),                                                                            // G25
+		at("target_specific_variable", setRuleLine(t, valid, "arch-test", "arch-test: export MAKEFILES = evil.mk"), // G26
+			"arch-test: export", errOutsideGrammar),
+		at("prereq_expansion", setRuleLine(t, valid, "verify", "verify: verify-quick "+evilInclude), // G27
+			"verify: verify-quick $(eval", errOutsideGrammar),
+		at("phony_expansion", mustReplace(t, valid, ".PHONY: dev dev-preflight ", ".PHONY: "+evilInclude+" dev dev-preflight "), // G28
+			".PHONY: $(eval", errOutsideGrammar),
+		at("inline_recipe", setRuleLine(t, valid, "arch-test", "arch-test: ; "+subMakePrefix+"opa-test"), "arch-test: ;", errOutsideGrammar),        // G29
+		atExact("rule_trailing_comment", setRuleLine(t, valid, "dev-down", "dev-down: # arrêt"), "dev-down: # arrêt", errTrailingComment),           // G30
+		at("assign_trailing_comment", mustReplace(t, valid, "EVAL ?= all\n", "EVAL ?= all # défaut\n"), "EVAL ?= all # défaut", errTrailingComment), // G31
+		{name: "duplicate_rule_line", src: g32, wantErr: errAlreadyNamed(exactLine(t, g32, "arch-test: opa-test"), "arch-test", g32Lines[0])},       // G32
+		at("phony_with_recipe", mustReplace(t, valid, secondPhony, secondPhony+"\t@echo x\n"), "\t@echo x", errRecipeOutside),
+		// Frozen values: a value without "$" is enough to divert go or make (D8 (iii)).
+		at("gowork_changed", mustReplace(t, valid, exportLine, exportLine+"export GOWORK := /tmp/go.work\n"), // G34
+			"GOWORK := /tmp/go.work", errFormNotAllowed("GOWORK")),
+		at("goflags_changed", mustReplace(t, valid, exportLine, exportLine+"override GOFLAGS := -mod=mod\n"), // G35
+			"GOFLAGS := -mod=mod", errFormNotAllowed("GOFLAGS")),
+		at("default_goal_changed", mustReplace(t, valid, ".DEFAULT_GOAL := verify-quick\n", ".DEFAULT_GOAL := demo\n"), // G36
+			".DEFAULT_GOAL := demo", errFormNotAllowed(".DEFAULT_GOAL")), // G33
+	}
+	positives := []testCase{
+		{name: "valid_template", src: valid}, // GP1
+		{name: "go_env_lines", src: mustReplace(t, valid, exportLine, // GP2
+			exportLine+"export GOWORK := off\noverride GOFLAGS := -mod=readonly\nexport GOFLAGS\n")},
+		{name: "comments_with_syntax", src: mustReplace(t, valid, ".DEFAULT_GOAL := verify-quick\n", // GP3
+			".DEFAULT_GOAL := verify-quick\n# "+evilInclude+" # :\n  # include evil.mk\n")},
+		{name: "reference_dev_makefile", src: referenceDevMakefile(t)}, // GP4
+	}
+
+	run := func(t *testing.T, cases []testCase) {
+		t.Helper()
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := parseMakefile(tc.src)
+				if tc.wantErr == "" {
+					if err != nil {
+						t.Fatalf("parseMakefile refused a conforming input: %v", err)
+					}
+					return
+				}
+				expectError(t, err, tc.wantErr)
+			})
+		}
+	}
+	t.Run("negative_controls", func(t *testing.T) { run(t, negatives) })
+	t.Run("positive_controls", func(t *testing.T) { run(t, positives) })
+
+	t.Run("repository", func(t *testing.T) {
+		_, fsys := repoRoot(t)
+		src, err := readRepoFile(fsys, "Makefile", "created by M0-T01")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parseMakefile(src); err != nil {
+			t.Fatalf("Makefile: %v", err)
+		}
+	})
+}
+
 // TestMakefileSubMakeCalls (M0-T04b, threat T32, obligation (bp)): GNU make does
 // not pass -f through MAKEFLAGS, so a sub-make without "-f Makefile" reads the
 // default file of the directory (a GNUmakefile or makefile would shadow it).
 // Every line mentioning make must be exactly a canonical sub-make recipe line
-// naming a defined target (docs/plans/M0-make-subcalls.md sections 2 and 5).
+// naming a defined target, and no other recipe line may expand make syntax
+// (V1, D7: $(MAKE_COMMAND), computed names, $(eval ...), automatic variables)
+// (docs/plans/M0-make-subcalls.md sections 2 and 5).
 func TestMakefileSubMakeCalls(t *testing.T) {
 	valid := targetMakefile
 	const (
-		archCall   = "\t" + subMakePrefix + "arch-test\n"
-		opaCall    = "\t" + subMakePrefix + "opa-test\n"
-		exportLine = "export SCENARIO EVAL POLICIES_DIR OPA\n"
-		mustBe     = `sub-make must be exactly "$(MAKE) -f Makefile --no-print-directory <target>" on its own recipe line (T32)`
+		archCall = "\t" + subMakePrefix + "arch-test\n"
+		opaCall  = "\t" + subMakePrefix + "opa-test\n"
+		mustBe   = `sub-make must be exactly "$(MAKE) -f Makefile --no-print-directory <target>" on its own recipe line (T32)`
 	)
 	// replaceArch replaces the arch-test sub-make of verify-quick by lines.
 	replaceArch := func(lines string) string { return mustReplace(t, valid, archCall, lines) }
@@ -1302,8 +1530,11 @@ func TestMakefileSubMakeCalls(t *testing.T) {
 	negative := func(name, src, fragment string) testCase {
 		return testCase{name: name, src: src, want: []string{fmt.Sprintf("Makefile line %d: %s", physicalLine(t, src, fragment), mustBe)}}
 	}
+	// expands builds a case whose line, holding fragment, is refused by D7.
+	expands := func(name, src, fragment string) testCase {
+		return testCase{name: name, src: src, want: []string{fmt.Sprintf("Makefile line %d: %s", physicalLine(t, src, fragment), errD7)}}
+	}
 
-	indirect := mustReplace(t, replaceArch("\t$(SUB) -f Makefile --no-print-directory dev\n"), "OPA ?= opa\n", "OPA ?= opa\nSUB := $(MAKE)\n")
 	undefined := replaceArch("\t" + subMakePrefix + "nope\n")
 	negatives := []testCase{
 		negative("without_file", mustReplace(t, valid, opaCall, "\t$(MAKE) --no-print-directory opa-test\n"), "$(MAKE) --no-print-directory opa-test"),
@@ -1318,7 +1549,6 @@ func TestMakefileSubMakeCalls(t *testing.T) {
 		negative("long_directory", replaceArch("\t$(MAKE) -f Makefile --directory=sub --no-print-directory arch-test\n"), "--directory=sub"),
 		negative("include_dir", replaceArch("\t$(MAKE) -f Makefile -I inc --no-print-directory arch-test\n"), "-I inc"),
 		negative("makefiles_env", replaceArch("\tMAKEFILES=evil.mk "+subMakePrefix+"arch-test\n"), "MAKEFILES=evil.mk"),
-		negative("makefiles_assignment", mustReplace(t, valid, exportLine, exportLine+"export MAKEFILES := evil.mk\n"), "MAKEFILES := evil.mk"),
 		negative("braces", replaceArch("\t${MAKE} -f Makefile --no-print-directory arch-test\n"), "${MAKE}"),
 		negative("literal_make", replaceArch("\tmake -f Makefile --no-print-directory arch-test\n"), "\tmake -f Makefile"),
 		negative("gmake_path", replaceArch("\t/usr/bin/gmake -f Makefile --no-print-directory arch-test\n"), "/usr/bin/gmake"),
@@ -1326,10 +1556,6 @@ func TestMakefileSubMakeCalls(t *testing.T) {
 		negative("second_call", replaceArch("\t"+subMakePrefix+"arch-test && $(MAKE) --no-print-directory dev\n"), "arch-test && $(MAKE)"),
 		negative("trailing_make", replaceArch("\t"+subMakePrefix+"arch-test; make dev\n"), "arch-test; make dev"),
 		negative("extra_variable", replaceArch("\t"+subMakePrefix+"arch-test EVAL=x\n"), "arch-test EVAL=x"),
-		negative("indirect_variable", indirect, "SUB := $(MAKE)"),
-		negative("redefine_make", mustReplace(t, valid, "override OPA := $(value OPA)\n",
-			"override OPA := $(value OPA)\noverride MAKE := make -f GNUmakefile\n"), "override MAKE"),
-		negative("inline_recipe", setRuleLine(t, valid, "arch-test", "arch-test: ; "+subMakePrefix+"opa-test"), "arch-test: ;"),
 		{
 			name: "undefined_target",
 			src:  undefined,
@@ -1338,6 +1564,21 @@ func TestMakefileSubMakeCalls(t *testing.T) {
 		negative("hidden_in_continuation", replaceArch("\t$(MAKE) -f Makefile \\\n\t\t--no-print-directory -f evil.mk dev\n"),
 			"\t$(MAKE) -f Makefile \\"),
 		negative("shell_comment_in_recipe", addRecipeLine("verify", "\t# $(MAKE) --no-print-directory dev"), "# $(MAKE)"),
+		// V1, D7: make expansions in a recipe outside the canonical prefix (BLOCK finding 2).
+		expands("make_command", replaceArch("\t$(MAKE_COMMAND) -f evil.mk arch-test\n"), "$(MAKE_COMMAND)"),
+		expands("computed_name", replaceArch("\t$(MA$(NOTHING)KE) -f evil.mk arch-test\n"), "$(MA$(NOTHING)KE)"),
+		expands("dollar_in_recipe_other", addRecipeLine("dev", "\t$(shell id)"), "\t$(shell id)"),
+		expands("automatic_var_in_recipe", addRecipeLine("dev", "\techo $@"), "echo $@"),
+		expands("makeflags_in_recipe", addRecipeLine("dev", "\t@echo \"$(MAKEFLAGS)\""), "$(MAKEFLAGS)"),
+		expands("triple_dollar", addRecipeLine("dev", "\techo $$$(shell id)"), "$$$(shell id)"),
+		expands("eval_in_recipe", addRecipeLine("dev", "\t$(eval include evil.mk)"), "$(eval include evil.mk)"),
+		// SUB := $(MAKE) is refused by D8 (TestMakefileGrammar G15); the reference alone by D7.
+		expands("indirect_reference", replaceArch("\t$(SUB) -f Makefile --no-print-directory dev\n"), "$(SUB)"),
+		expands("shell_comment_expansion", addRecipeLine("verify", "\t# $(shell id)"), "# $(shell id)"),
+		expands("expansion_in_continuation", addRecipeLine("dev", "\techo ok \\\n\t$(shell id)"), "echo ok \\"),
+		// V1, D2 kept (D9): make named in shell text.
+		negative("shell_make_variable", addRecipeLine("dev", "\tMAKE=/tmp/x true"), "MAKE=/tmp/x"),
+		negative("makefiles_shell_env", addRecipeLine("dev", "\tMAKEFILES=evil.mk go test ./..."), "MAKEFILES=evil.mk"),
 	}
 	positives := []testCase{
 		{name: "valid_template", src: valid},
@@ -1346,7 +1587,7 @@ func TestMakefileSubMakeCalls(t *testing.T) {
 		{name: "silenced_to_stderr", src: replaceArch("\t@" + subMakePrefix + "arch-test >&2\n")},
 		{name: "canonical_continuation", src: replaceArch("\t$(MAKE) -f Makefile \\\n\t\t--no-print-directory arch-test\n")},
 		{name: "echo_makefile_word", src: addRecipeLine("dev", "\t@echo \"voir Makefile\"")},
-		{name: "makeflags_in_echo", src: addRecipeLine("dev", "\t@echo \"$(MAKEFLAGS)\"")},
+		{name: "shell_dollar", src: addRecipeLine("dev", "\t@echo \"$$HOME $${USER:-x} $$(id -u)\"")},
 	}
 
 	run := func(t *testing.T, cases []testCase) {

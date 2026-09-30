@@ -982,7 +982,6 @@ var (
 	composeSubcommands = []string{"up", "down"}
 	composeVolumesFlag = regexp.MustCompile(`^(-v|--volumes(=.*)?)$`)
 	dockerVolumeRmRe   = regexp.MustCompile(`\bdocker\s+volume\s+(rm|prune)\b`)
-	makeIncludeRe      = regexp.MustCompile(`^\s*-?s?include\s`)
 	shellSourceRe      = regexp.MustCompile(`\bsource\s`)
 	shellDotSourceRe   = regexp.MustCompile(`(^|[;&|{(]\s*|\bthen\s+|\belse\s+|\bdo\s+)\.\s+\S`)
 	catEnvRe           = regexp.MustCompile(`\bcat\b[^;&|]*\.env`)
@@ -1108,7 +1107,6 @@ func checkDevTargets(mf parsedMakefile) []string {
 			re   *regexp.Regexp
 			what string
 		}{
-			{makeIncludeRe, "include directive"},
 			{shellSourceRe, "source"},
 			{shellDotSourceRe, "dot-sourcing (. file)"},
 			{catEnvRe, "cat .env"},
@@ -1194,6 +1192,9 @@ func referenceDevMakefile(t *testing.T) string {
 func TestMakeDevUsesWait(t *testing.T) {
 	t.Run("negative_controls", func(t *testing.T) {
 		valid := referenceDevMakefile(t)
+		// D8 of docs/plans/M0-make-subcalls.md: parseMakefile refuses the include
+		// directive itself, before checkDevTargets.
+		includeEnv := mustReplace(t, valid, "OPA ?= opa\n", "OPA ?= opa\n-include .env.dev\n")
 		const (
 			upLine     = "\tbash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull\n"
 			ensureLine = "\tbash scripts/dev-env.sh ensure\n"
@@ -1205,9 +1206,10 @@ func TestMakeDevUsesWait(t *testing.T) {
 			stepUp     = "target dev: step \"bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait\" missing or out of order"
 		)
 		cases := []struct {
-			name string
-			src  string
-			want []string
+			name    string
+			src     string
+			wantErr string
+			want    []string
 		}{
 			{name: "valid", src: valid},
 			{
@@ -1368,9 +1370,9 @@ func TestMakeDevUsesWait(t *testing.T) {
 				want: []string{"cat .env not allowed"},
 			},
 			{
-				name: "include_env",
-				src:  mustReplace(t, valid, "OPA ?= opa\n", "OPA ?= opa\n-include .env.dev\n"),
-				want: []string{"include directive not allowed"},
+				name:    "include_env",
+				src:     includeEnv,
+				wantErr: fmt.Sprintf("line %d: %s", physicalLine(t, includeEnv, "-include .env.dev"), errOutsideGrammar),
 			},
 			{
 				name: "volume_rm",
@@ -1396,6 +1398,10 @@ func TestMakeDevUsesWait(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				mf, err := parseMakefile(tc.src)
+				if tc.wantErr != "" {
+					expectError(t, err, tc.wantErr)
+					return
+				}
 				if err != nil {
 					t.Fatalf("parseMakefile: %v", err)
 				}
