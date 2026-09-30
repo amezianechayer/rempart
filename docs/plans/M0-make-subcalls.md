@@ -1,6 +1,20 @@
 # M0-T04b `make-subcalls` : chaque sous-make porte `-f Makefile`
 
-2026-09-30, `architect`, proposé ; amendement V1 le même jour après le BLOCK de `security-reviewer` ; amendement V2 après le second BLOCK (commit `74bd92a`). Sources : `Makefile`, `docs/STATUS.md` obligation (bp), `docs/02-THREAT-MODEL.md` T31 et T32, `docs/plans/M0-ci.md`, `internal/archtest/makefile_test.go`, `internal/archtest/compose_test.go`, `internal/archtest/ci_test.go` (`TestNoShadowMakefile`), `internal/archtest/devharden_test.go` (`runInEnv`), `.claude/hooks/guard_bash.py` (ligne 52), `.github/CODEOWNERS`, propositions 0003, 0007, 0008.
+2026-09-30, `architect`, proposé ; amendement V1 le même jour après le BLOCK de `security-reviewer` ; amendement V2 après le second BLOCK (commit `74bd92a`). Sources : `Makefile`, `docs/STATUS.md` obligation (bp), `docs/02-THREAT-MODEL.md` T31 et T32, `docs/plans/M0-ci.md`, `internal/archtest/makefile_test.go`, `internal/archtest/compose_test.go`, `internal/archtest/ci_test.go` (`TestNoShadowMakefile`), `internal/archtest/devharden_test.go` (`runInEnv`), `.claude/hooks/guard_bash.py` (ligne 52), `.github/CODEOWNERS`, propositions 0003, 0007, 0008. Amendement V3 après le troisième BLOCK (commit `967576a`), rédigé par l'agent principal.
+
+## Amendement V3 (après le troisième BLOCK de la revue sécurité)
+
+Constats : [haute] GNU make refait le `Makefile` par une règle implicite intégrée (`%: %.sh`, RCS, SCCS) à partir d'un fichier voisin plus récent (`Makefile.sh`), avant toute recette et même sous `-n` ; l'oracle ne le voit pas (il tourne avec `-r`) ; [moyenne] `joinShellLines` (`devharden_test.go`) prolonge un commentaire bash par `\` et traite un nombre pair de `\` comme une continuation, alors que bash ne le fait jamais, ce qui cache un appel compose à la règle (an) ; [moyenne] la proposition 0009 refuse des options de make par liste noire, que les formes longues abrégées (`--fil=`, `--dir=`, `--makef=`) contournent ; [basse] portée de l'oracle à préciser.
+
+Décisions :
+- D16 Le `Makefile` porte la ligne exacte `Makefile: ;` (règle explicite sans recette : make ne cherche plus de règle implicite pour le refaire). La grammaire D8 l'admet sous cette seule forme, une seule fois ; `TestMakefileGrammar` l'exige sur le dépôt (erreur si absente) ; l'oracle l'attend dans la base (cible `Makefile`, sans prérequis ni recette). Mutation : retirer l'exigence.
+- D17 `TestNoShadowMakefile` refuse aussi, à la racine : tout `Makefile.*`, `Makefile,v`, `s.Makefile`, les répertoires `RCS/` et `SCCS/`.
+- D18 `joinShellLines` : une ligne de commentaire bash ne se prolonge jamais ; seul un nombre impair de `\` final est une continuation. Cas négatifs sur un script sans test de comportement (`scripts/check-tools.sh` en copie de fixture) : `# compose \` suivi de `docker compose -p other up -d` doit être signalé ; `echo a \\` suivi d'un appel compose aussi.
+- D19 `-r` n'est pas ajouté à la commande de la CI : D16 suffit à empêcher la refabrication du `Makefile`, et les sous-make ne lisent que lui. Le hook Stop reçoit `-r` par la proposition 0009 (défense en profondeur, sans coût de test). Décision réversible, prise sur délégation.
+- D20 Proposition 0009 : liste blanche d'options de make dans `guard_bash` (`-s`, `-n`, `-j<n>`, `-k`, `-r`, `-R`, `--no-print-directory`, `-f Makefile`), tout autre `-x` ou `--x` refusé, cas pour les formes abrégées ; le hook Stop lance `make -r -f Makefile verify-quick`.
+- Section 6 : l'oracle prouve seulement que le parseur et make lisent le même fichier de la même façon ; il ne dit rien de l'exécution réelle (règles intégrées masquées par `-r`), couverte par D16 et D17.
+
+Critères V3 (en plus de la section 7) : `grep -c '^Makefile: ;$' Makefile` vaut `1` ; sur une copie, `Makefile.sh` plus récent que `Makefile` contenant une fausse `verify-quick`, `make -f Makefile -n verify-quick` n'affiche pas la fausse recette et ne modifie pas le `Makefile` ; avant D16, `TestMakefileGrammar/repository` échoue sur l'absence de la ligne ; les nouveaux cas de `TestNoShadowMakefile` et de `joinShellLines` échouent avant correction ; `make -f Makefile verify-quick` vert.
 
 ## Amendement V2 (après le second BLOCK de la revue sécurité)
 
