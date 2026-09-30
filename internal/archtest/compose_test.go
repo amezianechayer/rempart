@@ -987,7 +987,7 @@ var (
 	shellDotSourceRe   = regexp.MustCompile(`(^|[;&|{(]\s*|\bthen\s+|\belse\s+|\bdo\s+)\.\s+\S`)
 	catEnvRe           = regexp.MustCompile(`\bcat\b[^;&|]*\.env`)
 	devVolumeGuardRe   = regexp.MustCompile(`test -f \.env\.dev .*docker volume inspect rempart-dev_pgdata`)
-	verifyDevCallRe    = regexp.MustCompile(`^\$\(MAKE\)(\s+--no-print-directory)?\s+dev$`)
+	verifyDevCallRe    = regexp.MustCompile(`^` + regexp.QuoteMeta(subMakePrefix+"dev") + `$`)
 	integrationTagsRe  = regexp.MustCompile(`-tags[= ]integration\b`)
 )
 
@@ -1128,7 +1128,7 @@ func checkVerifyIntegration(mf parsedMakefile, problems *problemList) {
 	verify := mf.Rules["verify"].Recipe
 	devCall := slices.IndexFunc(verify, verifyDevCallRe.MatchString)
 	if devCall < 0 {
-		problems.addf("Makefile: target verify must start the stack with \"$(MAKE) --no-print-directory dev\"")
+		problems.addf("Makefile: target verify must start the stack with %q", subMakePrefix+"dev")
 	}
 	for _, want := range []string{verifyPlainLine, verifySecretLine} {
 		switch i := slices.Index(verify, want); {
@@ -1171,7 +1171,7 @@ const (
 		"\telif [ -z \"$$(docker ps -aq --filter label=com.docker.compose.project=rempart-dev)\" ]; then echo \"dev-down : aucune pile à arrêter.\"; \\\n" +
 		"\telse echo \"dev-down : conteneurs rempart-dev sans .env.dev (voir docs/SETUP.md).\" >&2; exit 2; fi"
 	referenceVerifyRule = "verify: verify-quick\n" +
-		"\t$(MAKE) --no-print-directory dev\n" +
+		"\t" + subMakePrefix + "dev\n" +
 		"\tgo test -tags=integration $$(go list ./... | grep -v '/internal/archtest$$')\n" +
 		"\tbash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest\n" +
 		"\tgo tool govulncheck ./..."
@@ -1200,7 +1200,7 @@ func TestMakeDevUsesWait(t *testing.T) {
 			bootLine   = "\tbash scripts/dev-bootstrap.sh"
 			plainLine  = "\t" + verifyPlainLine + "\n"
 			secretLine = "\t" + verifySecretLine + "\n"
-			devCall    = "\t$(MAKE) --no-print-directory dev\n"
+			devCall    = "\t" + subMakePrefix + "dev\n"
 			flagsD9    = "docker compose without -p rempart-dev --env-file .env.dev -f docker-compose.yml (D9)"
 			stepUp     = "target dev: step \"bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait\" missing or out of order"
 		)
@@ -1248,6 +1248,12 @@ func TestMakeDevUsesWait(t *testing.T) {
 			{
 				name: "verify_without_dev",
 				src:  mustReplace(t, valid, devCall, ""),
+				want: []string{"target verify must start the stack"},
+			},
+			{
+				// M0-make-subcalls: the pre-T32 form, without -f Makefile, does not start the stack.
+				name: "verify_dev_without_file",
+				src:  mustReplace(t, valid, devCall, "\t$(MAKE) --no-print-directory dev\n"),
 				want: []string{"target verify must start the stack"},
 			},
 			{

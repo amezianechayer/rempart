@@ -213,10 +213,44 @@ var (
 		{"go build ./...", regexp.MustCompile(`^go build \./\.\.\.$`)},
 		{"golangci-lint run", regexp.MustCompile(`^golangci-lint run\b`)},
 		{"go test -short ./...", regexp.MustCompile(`^go test\b.*-short.*\./\.\.\.`)},
-		{"$(MAKE) opa-test", regexp.MustCompile(`\$\(MAKE\).*(^|\s)opa-test(\s|$)`)},
-		{"$(MAKE) arch-test", regexp.MustCompile(`\$\(MAKE\).*(^|\s)arch-test(\s|$)`)},
+		{subMakePrefix + "opa-test", regexp.MustCompile(`^` + regexp.QuoteMeta(subMakePrefix+"opa-test") + `$`)},
+		{subMakePrefix + "arch-test", regexp.MustCompile(`^` + regexp.QuoteMeta(subMakePrefix+"arch-test") + `$`)},
 	}
 )
+
+// T32, obligation (bp): GNU make does not pass -f to sub-makes through MAKEFLAGS.
+const subMakePrefix = "$(MAKE) -f Makefile --no-print-directory "
+
+var (
+	subMakeRefRe       = regexp.MustCompile(`\bMAKE\b|\bg?make\b|\bMAKEFILES\b`)
+	canonicalSubMakeRe = regexp.MustCompile(`^\t@?\$\(MAKE\) -f Makefile --no-print-directory ([a-z][a-z0-9-]*)( >&2)?$`)
+)
+
+// checkSubMakeCalls reports every non-comment logical line of the Makefile that
+// mentions make (D2) and is not exactly a canonical sub-make recipe line naming
+// a defined target (D1, D3, D4, D5). See docs/plans/M0-make-subcalls.md.
+func checkSubMakeCalls(mf parsedMakefile) []string {
+	var problems problemList
+	for _, l := range mf.Lines {
+		recipe := strings.HasPrefix(l.Text, "\t")
+		if !recipe && strings.HasPrefix(strings.TrimSpace(l.Text), "#") {
+			continue // make comment (D3); a recipe line starting with # is shell text
+		}
+		if !subMakeRefRe.MatchString(l.Text) {
+			continue
+		}
+		m := canonicalSubMakeRe.FindStringSubmatch(l.Text)
+		if m == nil {
+			problems.addf("Makefile line %d: sub-make must be exactly \"$(MAKE) -f Makefile --no-print-directory <target>\" "+
+				"on its own recipe line (T32): %q", l.Num, l.Text)
+			continue
+		}
+		if _, ok := mf.Rules[m[1]]; !ok {
+			problems.addf("Makefile line %d: sub-make target %q is not defined", l.Num, m[1])
+		}
+	}
+	return problems
+}
 
 // checkMakefile applies rules 1 to 15 of docs/plans/M0-squelette.md section 8.4.
 func checkMakefile(mf parsedMakefile) []string {
@@ -440,8 +474,8 @@ func checkVerifyTargets(mf parsedMakefile, problems *problemList) {
 	}
 	if next < len(verifyQuickSteps) {
 		problems.addf("Makefile: target verify-quick: step %q missing or out of order "+
-			"(want go build ./..., golangci-lint run, go test -short ./..., $(MAKE) opa-test, $(MAKE) arch-test)",
-			verifyQuickSteps[next].desc)
+			"(want go build ./..., golangci-lint run, go test -short ./..., %sopa-test, %sarch-test)",
+			verifyQuickSteps[next].desc, subMakePrefix, subMakePrefix)
 	}
 
 	reachable := reachableTargets(mf, "verify-quick")
@@ -532,7 +566,9 @@ func checkOpaTest(mf parsedMakefile, problems *problemList) {
 }
 
 // targetMakefile is the Makefile of docs/plans/M0-squelette.md section 6.1,
-// verbatim (recipe lines start with a tab): the conforming negative control.
+// amended by docs/plans/M0-make-subcalls.md (sub-makes in the canonical form
+// "$(MAKE) -f Makefile --no-print-directory <target>"), recipe lines starting
+// with a tab: the conforming negative control.
 const targetMakefile = `# Rempart : vérification et outillage. Issu de Makefile.template (M0-T01).
 # Le hook Stop exige ` + "`make verify-quick`" + ` : cette cible ne demande ni réseau ni Docker
 # (hors premier téléchargement des modules Go et de la chaîne d'outils).
@@ -560,8 +596,8 @@ verify-quick:
 	go build ./...
 	golangci-lint run ./...
 	go test -short ./...
-	$(MAKE) --no-print-directory opa-test
-	$(MAKE) --no-print-directory arch-test
+	$(MAKE) -f Makefile --no-print-directory opa-test
+	$(MAKE) -f Makefile --no-print-directory arch-test
 
 verify: verify-quick
 	go test -tags=integration ./...
@@ -787,7 +823,7 @@ func TestMakefileTargets(t *testing.T) {
 				name: "docker_reachable_from_verify_quick",
 				src: setRecipe(t,
 					editRule(t, valid, "verify-quick", func(rule string, recipe []string) []string {
-						return append(append([]string{rule}, recipe...), "\t$(MAKE) --no-print-directory dev")
+						return append(append([]string{rule}, recipe...), "\t"+subMakePrefix+"dev")
 					}),
 					"dev", "docker compose up -d temporal postgres openbao"),
 				want: []string{"target dev (reachable from verify-quick)", "docker compose up"},
@@ -821,8 +857,14 @@ func TestMakefileTargets(t *testing.T) {
 			},
 			{
 				name: "verify_quick_without_arch_test",
-				src:  mustReplace(t, valid, "\t$(MAKE) --no-print-directory arch-test\n", ""),
-				want: []string{`step "$(MAKE) arch-test" missing or out of order`},
+				src:  mustReplace(t, valid, "\t"+subMakePrefix+"arch-test\n", ""),
+				want: []string{`step "` + subMakePrefix + `arch-test" missing or out of order`},
+			},
+			{
+				// M0-make-subcalls: the pre-T32 form, without -f Makefile, is not the step.
+				name: "verify_quick_sub_make_without_file",
+				src:  mustReplace(t, valid, "\t"+subMakePrefix+"opa-test\n", "\t$(MAKE) --no-print-directory opa-test\n"),
+				want: []string{`step "` + subMakePrefix + `opa-test" missing or out of order`},
 			},
 			{
 				name: "bare_govulncheck",
@@ -1119,8 +1161,8 @@ func checkDemoTarget(mf parsedMakefile) []string {
 		problems.addf("Makefile: demo recipe has %d lines, want 2 (dev, then go run)", len(r.Recipe))
 		return problems
 	}
-	if r.Recipe[0] != "$(MAKE) --no-print-directory dev >&2" {
-		problems.addf("Makefile: first demo recipe line %q, want \"$(MAKE) --no-print-directory dev >&2\"", r.Recipe[0])
+	if want := subMakePrefix + "dev >&2"; r.Recipe[0] != want {
+		problems.addf("Makefile: first demo recipe line %q, want %q", r.Recipe[0], want)
 	}
 	fields := strings.Fields(r.Recipe[1])
 	if len(fields) < 3 || !slices.Equal(fields[:3], []string{"go", "run", "./cmd/rempart-worker"}) {
@@ -1141,7 +1183,7 @@ func checkDemoTarget(mf parsedMakefile) []string {
 // repository, and negative controls of its checker.
 func TestMakefileDemoTarget(t *testing.T) {
 	const (
-		devLine = "\t@$(MAKE) --no-print-directory dev >&2\n"
+		devLine = "\t@" + subMakePrefix + "dev >&2\n"
 		runHead = "\t@go run ./cmd/rempart-worker -dev -demo-once -llm=fake -tenant=0d3e0000-0000-4000-8000-000000000001 \\\n"
 		runTail = "\t\t-temporal-address=127.0.0.1:7233 -namespace=rempart \\\n" +
 			"\t\t-fake-script=internal/loops/demo/testdata/scripts/converge.json\n"
@@ -1157,6 +1199,11 @@ func TestMakefileDemoTarget(t *testing.T) {
 		{name: "not_phony", src: mustReplace(t, valid, ".PHONY: dev demo\n", ".PHONY: dev\n"), want: []string{"not declared .PHONY"}},
 		{name: "dev_prerequisite", src: mustReplace(t, valid, "demo:\n"+devLine, "demo: dev\n"), want: []string{"has prerequisites"}},
 		{name: "dev_on_stdout", src: mustReplace(t, valid, " dev >&2\n", " dev\n"), want: []string{"first demo recipe line"}},
+		{
+			// M0-make-subcalls: the pre-T32 form, without -f Makefile.
+			name: "dev_without_file", src: mustReplace(t, valid, devLine, "\t@$(MAKE) --no-print-directory dev >&2\n"),
+			want: []string{"first demo recipe line"},
+		},
 		{name: "echoed_line", src: mustReplace(t, valid, "\t@go run", "\tgo run"), want: []string{"not silenced by @"}},
 		{name: "anthropic", src: mustReplace(t, valid, "-llm=fake", "-llm=anthropic"), want: []string{"demo runs the worker with"}},
 		{name: "without_dev", src: mustReplace(t, valid, " -dev -demo-once", " -demo-once"), want: []string{"demo runs the worker with"}},
@@ -1201,5 +1248,137 @@ func TestMakefileDemoTarget(t *testing.T) {
 		if slices.Contains(reachableTargets(mf, "verify-quick"), "demo") {
 			t.Error("target demo is reachable from verify-quick (it needs the dev stack)")
 		}
+	})
+}
+
+// physicalLine returns the 1-based number of the single physical line of src
+// containing fragment. A fragment found zero or several times stops the test:
+// the wanted line number would not designate the mutated line.
+func physicalLine(t *testing.T, src, fragment string) int {
+	t.Helper()
+	num := 0
+	for i, l := range strings.Split(src, "\n") {
+		if strings.Contains(l, fragment) {
+			if num != 0 {
+				t.Fatalf("fragment %q found on lines %d and %d, want exactly one line", fragment, num, i+1)
+			}
+			num = i + 1
+		}
+	}
+	if num == 0 {
+		t.Fatalf("fragment %q not found", fragment)
+	}
+	return num
+}
+
+// TestMakefileSubMakeCalls (M0-T04b, threat T32, obligation (bp)): GNU make does
+// not pass -f through MAKEFLAGS, so a sub-make without "-f Makefile" reads the
+// default file of the directory (a GNUmakefile or makefile would shadow it).
+// Every line mentioning make must be exactly a canonical sub-make recipe line
+// naming a defined target (docs/plans/M0-make-subcalls.md sections 2 and 5).
+func TestMakefileSubMakeCalls(t *testing.T) {
+	valid := targetMakefile
+	const (
+		archCall   = "\t" + subMakePrefix + "arch-test\n"
+		opaCall    = "\t" + subMakePrefix + "opa-test\n"
+		exportLine = "export SCENARIO EVAL POLICIES_DIR OPA\n"
+		mustBe     = `sub-make must be exactly "$(MAKE) -f Makefile --no-print-directory <target>" on its own recipe line (T32)`
+	)
+	// replaceArch replaces the arch-test sub-make of verify-quick by lines.
+	replaceArch := func(lines string) string { return mustReplace(t, valid, archCall, lines) }
+	// addRecipeLine appends a recipe line (tab included) to the rule of target.
+	addRecipeLine := func(target, line string) string {
+		return editRule(t, valid, target, func(rule string, recipe []string) []string {
+			return append(append([]string{rule}, recipe...), line)
+		})
+	}
+
+	type testCase struct {
+		name string
+		src  string
+		want []string // nil: conforming input
+	}
+	// negative builds a case whose refused line is the physical line holding fragment.
+	negative := func(name, src, fragment string) testCase {
+		return testCase{name: name, src: src, want: []string{fmt.Sprintf("Makefile line %d: %s", physicalLine(t, src, fragment), mustBe)}}
+	}
+
+	indirect := mustReplace(t, replaceArch("\t$(SUB) -f Makefile --no-print-directory dev\n"), "OPA ?= opa\n", "OPA ?= opa\nSUB := $(MAKE)\n")
+	undefined := replaceArch("\t" + subMakePrefix + "nope\n")
+	negatives := []testCase{
+		negative("without_file", mustReplace(t, valid, opaCall, "\t$(MAKE) --no-print-directory opa-test\n"), "$(MAKE) --no-print-directory opa-test"),
+		negative("file_after_option", replaceArch("\t$(MAKE) --no-print-directory -f Makefile dev\n"), "--no-print-directory -f Makefile dev"),
+		negative("other_file", replaceArch("\t$(MAKE) -f GNUmakefile --no-print-directory arch-test\n"), "-f GNUmakefile"),
+		negative("dot_slash_file", replaceArch("\t$(MAKE) -f ./Makefile --no-print-directory arch-test\n"), "-f ./Makefile"),
+		negative("glued_file", replaceArch("\t$(MAKE) -fMakefile --no-print-directory arch-test\n"), "-fMakefile"),
+		negative("second_file", replaceArch("\t$(MAKE) -f Makefile -f evil.mk --no-print-directory arch-test\n"), "-f evil.mk"),
+		negative("long_file", replaceArch("\t$(MAKE) --file=Makefile --no-print-directory arch-test\n"), "--file=Makefile"),
+		negative("long_makefile", replaceArch("\t$(MAKE) --makefile Makefile --no-print-directory arch-test\n"), "--makefile Makefile"),
+		negative("change_directory", replaceArch("\t$(MAKE) -f Makefile -C sub --no-print-directory arch-test\n"), "-C sub"),
+		negative("long_directory", replaceArch("\t$(MAKE) -f Makefile --directory=sub --no-print-directory arch-test\n"), "--directory=sub"),
+		negative("include_dir", replaceArch("\t$(MAKE) -f Makefile -I inc --no-print-directory arch-test\n"), "-I inc"),
+		negative("makefiles_env", replaceArch("\tMAKEFILES=evil.mk "+subMakePrefix+"arch-test\n"), "MAKEFILES=evil.mk"),
+		negative("makefiles_assignment", mustReplace(t, valid, exportLine, exportLine+"export MAKEFILES := evil.mk\n"), "MAKEFILES := evil.mk"),
+		negative("braces", replaceArch("\t${MAKE} -f Makefile --no-print-directory arch-test\n"), "${MAKE}"),
+		negative("literal_make", replaceArch("\tmake -f Makefile --no-print-directory arch-test\n"), "\tmake -f Makefile"),
+		negative("gmake_path", replaceArch("\t/usr/bin/gmake -f Makefile --no-print-directory arch-test\n"), "/usr/bin/gmake"),
+		negative("ignore_errors_prefix", replaceArch("\t-"+subMakePrefix+"arch-test\n"), "\t-$(MAKE)"),
+		negative("second_call", replaceArch("\t"+subMakePrefix+"arch-test && $(MAKE) --no-print-directory dev\n"), "arch-test && $(MAKE)"),
+		negative("trailing_make", replaceArch("\t"+subMakePrefix+"arch-test; make dev\n"), "arch-test; make dev"),
+		negative("extra_variable", replaceArch("\t"+subMakePrefix+"arch-test EVAL=x\n"), "arch-test EVAL=x"),
+		negative("indirect_variable", indirect, "SUB := $(MAKE)"),
+		negative("redefine_make", mustReplace(t, valid, "override OPA := $(value OPA)\n",
+			"override OPA := $(value OPA)\noverride MAKE := make -f GNUmakefile\n"), "override MAKE"),
+		negative("inline_recipe", setRuleLine(t, valid, "arch-test", "arch-test: ; "+subMakePrefix+"opa-test"), "arch-test: ;"),
+		{
+			name: "undefined_target",
+			src:  undefined,
+			want: []string{fmt.Sprintf(`Makefile line %d: sub-make target "nope" is not defined`, physicalLine(t, undefined, "directory nope"))},
+		},
+		negative("hidden_in_continuation", replaceArch("\t$(MAKE) -f Makefile \\\n\t\t--no-print-directory -f evil.mk dev\n"),
+			"\t$(MAKE) -f Makefile \\"),
+		negative("shell_comment_in_recipe", addRecipeLine("verify", "\t# $(MAKE) --no-print-directory dev"), "# $(MAKE)"),
+	}
+	positives := []testCase{
+		{name: "valid_template", src: valid},
+		{name: "make_comment", src: mustReplace(t, valid, ".DEFAULT_GOAL := verify-quick\n",
+			".DEFAULT_GOAL := verify-quick\n# Le hook Stop exige make verify-quick\n  # Le hook Stop exige $(MAKE) -C ailleurs\n")},
+		{name: "silenced_to_stderr", src: replaceArch("\t@" + subMakePrefix + "arch-test >&2\n")},
+		{name: "canonical_continuation", src: replaceArch("\t$(MAKE) -f Makefile \\\n\t\t--no-print-directory arch-test\n")},
+		{name: "echo_makefile_word", src: addRecipeLine("dev", "\t@echo \"voir Makefile\"")},
+		{name: "makeflags_in_echo", src: addRecipeLine("dev", "\t@echo \"$(MAKEFLAGS)\"")},
+	}
+
+	run := func(t *testing.T, cases []testCase) {
+		t.Helper()
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				mf, err := parseMakefile(tc.src)
+				if err != nil {
+					t.Fatalf("parseMakefile: %v", err)
+				}
+				problems := checkSubMakeCalls(mf)
+				expectProblems(t, problems, tc.want)
+				// Each mutation changes one logical line: exactly one problem, on that line.
+				if tc.want != nil && len(problems) != 1 {
+					t.Errorf("%d problems, want exactly 1 (the mutated line):\n%s", len(problems), strings.Join(problems, "\n"))
+				}
+			})
+		}
+	}
+	t.Run("negative_controls", func(t *testing.T) { run(t, negatives) })
+	t.Run("positive_controls", func(t *testing.T) { run(t, positives) })
+
+	t.Run("repository", func(t *testing.T) {
+		_, fsys := repoRoot(t)
+		src, err := readRepoFile(fsys, "Makefile", "created by M0-T01")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mf, err := parseMakefile(src)
+		if err != nil {
+			t.Fatalf("Makefile: %v", err)
+		}
+		reportProblems(t, checkSubMakeCalls(mf))
 	})
 }
