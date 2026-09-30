@@ -1,8 +1,10 @@
 package domain
 
 import (
+	"maps"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,6 +19,7 @@ const (
 	codeBlockingAssumed   = "INTENT-BLOCKING-ASSUMED"
 	codeExposureSensitive = "INTENT-EXPOSURE-SENSITIVE"
 	codeExposureUnrequest = "INTENT-EXPOSURE-UNREQUESTED"
+	codeDataOmitted       = "INTENT-DATA-OMITTED"
 )
 
 // Fixed messages, per code, never quoting a value (plan P6).
@@ -28,6 +31,7 @@ var messages = map[string]string{
 	codeBlockingAssumed:   "blocking field cannot be assumed; ask a question",
 	codeExposureSensitive: "sensitive workload exposed; remove the entry and capture the request in explicit_overrides",
 	codeExposureUnrequest: "exposure not requested by the user; remove the entry",
+	codeDataOmitted:       "sensitive data written by the user is not declared in data",
 }
 
 var severities = map[string]loopsdomain.Severity{
@@ -51,6 +55,7 @@ func Check(text string, d Draft, c TenantContext) []loopsdomain.Finding {
 	out = append(out, checkTechnical(text, d)...)
 	out = append(out, checkProvenance(ix, d, c)...)
 	out = append(out, checkExposure(ix, d)...)
+	out = append(out, checkCompleteness(ix, d)...)
 	return loopsdomain.Sort(out)
 }
 
@@ -187,4 +192,21 @@ func checkTechnical(text string, d Draft) []loopsdomain.Finding {
 		}
 	}
 	return out
+}
+
+// checkCompleteness (T85c): a classification (confidential, regulated) or a
+// regulation written in the text needs a data entry that declares it. It rests
+// on the user's text, so omitting the data set does not escape decision 4.
+func checkCompleteness(ix tokenIndex, d Draft) []loopsdomain.Finding {
+	for _, c := range []string{"confidential", "regulated"} {
+		if ix.anchoredIn(lexClass, c) && !slices.ContainsFunc(d.Data, func(x DraftData) bool { return x.Classification == c }) {
+			return []loopsdomain.Finding{finding(codeDataOmitted, "data")}
+		}
+	}
+	for _, r := range slices.Sorted(maps.Keys(lexRegulation)) {
+		if ix.anchoredIn(lexRegulation, r) && !slices.ContainsFunc(d.Data, func(x DraftData) bool { return slices.Contains(x.Regulation, r) }) {
+			return []loopsdomain.Finding{finding(codeDataOmitted, "data")}
+		}
+	}
+	return nil
 }

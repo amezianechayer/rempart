@@ -566,3 +566,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-30 20:37 [harnais] RETOUR EN PHASE TESTS depuis impl : second BLOCK M1-T03 : regle par phrase contournable, regle de completude des donnees (T85c)
 
 - 2026-09-30 20:37 [harnais] phase : impl -> tests
+
+- 2026-09-30 20:38 [harnais] phase : tests -> impl
