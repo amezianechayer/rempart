@@ -551,3 +551,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-30 14:27 [harnais] phase : tests -> free
 
 - 2026-09-30 15:06 [harnais] jalon courant : M1
+
+- 2026-09-30 19:51 [harnais] phase : free -> tests

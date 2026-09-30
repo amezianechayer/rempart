@@ -1,0 +1,44 @@
+{
+  "summary": "Base PostgreSQL managée sur Scaleway pour des données clients confidentielles, en production.",
+  "environment": "prod",
+  "workloads": [
+    {
+      "id": "db",
+      "kind": "managed_db",
+      "cloud": "scaleway",
+      "region": "fr-par",
+      "criticality": "high",
+      "size": null,
+      "runs_on": null,
+      "notes": null
+    }
+  ],
+  "connectivity": [],
+  "exposure": [],
+  "data": [
+    {
+      "id": "customer-data",
+      "classification": "confidential",
+      "regulation": [],
+      "stored_in": [
+        "db"
+      ],
+      "residency": null
+    }
+  ],
+  "observability": null,
+  "compliance": [],
+  "constraints": {
+    "monthly_budget_eur": null,
+    "allowed_regions": [],
+    "forbidden_clouds": []
+  },
+  "explicit_overrides": [
+    {
+      "statement": "exposer la base sur Internet",
+      "affects": "exposure"
+    }
+  ],
+  "assumptions": [],
+  "open_questions": []
+}
