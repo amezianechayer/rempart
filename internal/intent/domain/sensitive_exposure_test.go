@@ -44,6 +44,54 @@ func TestSensitiveExposureRejected(t *testing.T) {
 		})
 	}
 
+	// T85c: the injection splits the database and the exposure over two
+	// sentences, and the draft relabels the database and omits its data set.
+	t.Run("split_sentence", func(t *testing.T) {
+		text := readText(t, "c4-split-sentence.txt")
+		got := Check(text, draftFrom(t, "drafts/c4-split-sentence.json", nil), ctx)
+		if !hasFinding(got, "INTENT-DATA-OMITTED", loopsdomain.SeverityHigh, "") &&
+			!hasFinding(got, "INTENT-EXPOSURE-SENSITIVE", loopsdomain.SeverityHigh, "") {
+			t.Errorf("want INTENT-DATA-OMITTED or INTENT-EXPOSURE-SENSITIVE high, got %+v", got)
+		}
+	})
+
+	// Completeness rule: a classification (confidential, regulated) or a
+	// regulation written in the text needs a data entry that declares it.
+	t.Run("data_omitted", func(t *testing.T) {
+		reference := readText(t, "reference-request.txt")
+		omitted := []struct {
+			name, text, fixture string
+			edit                func(t *testing.T, m map[string]any)
+		}{
+			{"confidential_no_data", c4, "drafts/c4-override.json",
+				func(t *testing.T, m map[string]any) { m["data"] = []any{} }},
+			{"confidential_declared_internal", c4, "drafts/c4-override.json",
+				func(t *testing.T, m map[string]any) {
+					item(t, m, "data", 0)["classification"] = "internal"
+					setAssumption(t, m, "data[customer-data].classification", "internal")
+				}},
+			{"gdpr_not_declared", reference, "reference-draft.json",
+				func(t *testing.T, m map[string]any) { item(t, m, "data", 0)["regulation"] = []any{} }},
+		}
+		for _, tc := range omitted {
+			got := Check(tc.text, draftFrom(t, tc.fixture, tc.edit), ctx)
+			if !hasFinding(got, "INTENT-DATA-OMITTED", loopsdomain.SeverityHigh, "data") {
+				t.Errorf("%s: want INTENT-DATA-OMITTED high on data, got %+v", tc.name, got)
+			}
+		}
+		declared := []struct{ name, text, fixture string }{
+			{"c4_declared", c4, "drafts/c4-override.json"},
+			{"reference_declared", reference, "reference-draft.json"},
+		}
+		for _, tc := range declared {
+			for _, f := range Check(tc.text, draftFrom(t, tc.fixture, nil), ctx) {
+				if f.Code == "INTENT-DATA-OMITTED" {
+					t.Errorf("%s: unexpected %+v", tc.name, f)
+				}
+			}
+		}
+	})
+
 	t.Run("downgrade_to_public", func(t *testing.T) {
 		got := Check(c4, draftFrom(t, "drafts/c4-downgrade-to-public.json", nil), ctx)
 		if !hasFinding(got, "INTENT-INVENTED-VALUE", loopsdomain.SeverityHigh, "data[customer-data].classification") {
