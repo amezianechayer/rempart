@@ -1,0 +1,5 @@
+name: demo
+loop: L0-demo
+target: stub
+watch:
+  - internal/loops/**

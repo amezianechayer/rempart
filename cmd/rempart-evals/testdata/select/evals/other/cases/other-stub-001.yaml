@@ -1,0 +1,7 @@
+id: other-stub-001
+loop: L9-other
+tags: [nominal]
+input: {}
+expect:
+  status: converged
+runs: 1

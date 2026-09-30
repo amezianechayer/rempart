@@ -6,6 +6,8 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -415,25 +417,126 @@ func TestCodeownersProtectsBaselines(t *testing.T) {
 	reportProblems(t, p)
 }
 
+// checkNoShadowMakefile reports every entry of the root of fsys that would
+// replace the Makefile (another default makefile name) or, V3 D17, feed a
+// built-in implicit rule of GNU make remaking it: Makefile.<suffix> (%: %.sh,
+// %: %.c...), Makefile,v and RCS (RCS), s.Makefile and SCCS (SCCS). Names are
+// compared case-insensitively (case-insensitive file systems), whatever the
+// entry type.
 func checkNoShadowMakefile(fsys fs.FS) (p problemList) {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		p.addf("repository root: %v", err)
 	}
 	for _, e := range entries {
-		if n := e.Name(); n != "Makefile" && (strings.EqualFold(n, "makefile") || strings.EqualFold(n, "gnumakefile")) {
+		n := e.Name()
+		switch {
+		case n == "Makefile":
+		case strings.EqualFold(n, "makefile") || strings.EqualFold(n, "gnumakefile"):
 			p.addf("%s at the repository root would replace Makefile (T32)", n)
+		case remakesMakefile(n):
+			p.addf("%s at the repository root lets GNU make remake Makefile by a built-in implicit rule (D17, T32)", n)
 		}
 	}
 	return p
 }
 
+// remakesMakefile: D17, a root entry name some built-in implicit rule of GNU
+// make would use to remake the Makefile.
+func remakesMakefile(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "makefile.") || slices.Contains([]string{"makefile,v", "s.makefile", "rcs", "sccs"}, lower)
+}
+
+// TestNoShadowMakefile (T32): nothing at the repository root may replace the
+// Makefile (a default makefile name) or, V3 D17, let GNU make remake it by a
+// built-in implicit rule before any recipe, even under -n: Makefile.<suffix>
+// (%: %.sh, %: %.c...), Makefile,v and RCS/ (RCS), s.Makefile and SCCS/ (SCCS).
+// Subtests: map/<name> on a synthetic tree, dir/<name> on a real temporary
+// directory, repository.
 func TestNoShadowMakefile(t *testing.T) {
-	for file, want := range map[string]string{"go.mod": "", "GNUmakefile": "GNUmakefile at", "makefile": "makefile at", "GNUMakefile": "GNUMakefile at"} {
-		expectProblems(t, checkNoShadowMakefile(fstest.MapFS{"Makefile": {}, file: {}}), wants(want))
+	const remade = "at the repository root lets GNU make remake Makefile by a built-in implicit rule (D17, T32)"
+	type fsCase struct {
+		name  string
+		files fstest.MapFS // besides Makefile
+		want  []string     // nil: conforming
 	}
-	_, fsys := repoRoot(t)
-	reportProblems(t, checkNoShadowMakefile(fsys))
+	file := func(name string) fstest.MapFS { return fstest.MapFS{name: {}} }
+	dir := func(name string) fstest.MapFS { return fstest.MapFS{name: {Mode: fs.ModeDir | 0o755}} }
+	cases := []fsCase{
+		{name: "go_mod", files: file("go.mod")},
+		{name: "scripts_dir", files: fstest.MapFS{"scripts/check-tools.sh": {}}},
+		{name: "nested_makefile_sh", files: fstest.MapFS{"docs/Makefile.sh": {}, "scripts/RCS/Makefile,v": {}}},
+		{name: "makefile_prefix_word", files: file("Makefiles")},
+		{name: "GNUmakefile", files: file("GNUmakefile"), want: []string{"GNUmakefile at"}},
+		{name: "makefile", files: file("makefile"), want: []string{"makefile at"}},
+		{name: "GNUMakefile", files: file("GNUMakefile"), want: []string{"GNUMakefile at"}},
+		// V3, D17 (third BLOCK): sources of a built-in rule remaking the Makefile.
+		{name: "makefile_sh", files: file("Makefile.sh"), want: []string{"Makefile.sh " + remade}},
+		{name: "makefile_c", files: file("Makefile.c"), want: []string{"Makefile.c " + remade}},
+		{name: "makefile_o", files: file("Makefile.o"), want: []string{"Makefile.o " + remade}},
+		{name: "makefile_bak", files: file("Makefile.bak"), want: []string{"Makefile.bak " + remade}},
+		{name: "makefile_dot", files: file("Makefile."), want: []string{"Makefile. " + remade}},
+		{name: "makefile_sh_dir", files: dir("Makefile.sh"), want: []string{"Makefile.sh " + remade}},
+		{name: "makefile_sh_lower", files: file("makefile.sh"), want: []string{"makefile.sh " + remade}},
+		{name: "rcs_file", files: file("Makefile,v"), want: []string{"Makefile,v " + remade}},
+		{name: "sccs_file", files: file("s.Makefile"), want: []string{"s.Makefile " + remade}},
+		{name: "rcs_dir", files: fstest.MapFS{"RCS/Makefile,v": {}}, want: []string{"RCS " + remade}},
+		{name: "rcs_dir_empty", files: dir("RCS"), want: []string{"RCS " + remade}},
+		{name: "sccs_dir", files: fstest.MapFS{"SCCS/s.Makefile": {}}, want: []string{"SCCS " + remade}},
+		{name: "sccs_dir_empty", files: dir("SCCS"), want: []string{"SCCS " + remade}},
+		{
+			name: "all_at_once", files: fstest.MapFS{"Makefile.sh": {}, "Makefile,v": {}, "s.Makefile": {}, "RCS/x": {}, "SCCS/x": {}},
+			want: []string{"Makefile.sh " + remade, "Makefile,v " + remade, "s.Makefile " + remade, "RCS " + remade, "SCCS " + remade},
+		},
+	}
+	for _, c := range cases {
+		t.Run("map/"+c.name, func(t *testing.T) {
+			fsys := fstest.MapFS{"Makefile": {}}
+			maps.Copy(fsys, c.files)
+			problems := checkNoShadowMakefile(fsys)
+			expectProblems(t, problems, c.want)
+			if c.want != nil && len(problems) != len(c.want) {
+				t.Errorf("%d problems, want %d (one per refused entry):\n%s", len(problems), len(c.want), strings.Join(problems, "\n"))
+			}
+		})
+	}
+	// The same check on a real directory (os.DirFS), as the repository is read:
+	// the attack of the third BLOCK, then each RCS and SCCS form.
+	for _, c := range []struct {
+		name  string
+		files []string // "d/" creates a directory
+		want  []string
+	}{
+		{name: "conforming", files: []string{"go.mod", "scripts/"}},
+		{name: "makefile_sh", files: []string{"Makefile.sh"}, want: []string{"Makefile.sh " + remade}},
+		{name: "rcs", files: []string{"RCS/", "Makefile,v"}, want: []string{"RCS " + remade, "Makefile,v " + remade}},
+		{name: "sccs", files: []string{"SCCS/", "s.Makefile"}, want: []string{"SCCS " + remade, "s.Makefile " + remade}},
+	} {
+		t.Run("dir/"+c.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, name := range append([]string{"Makefile"}, c.files...) {
+				var err error
+				if d, ok := strings.CutSuffix(name, "/"); ok {
+					err = os.Mkdir(filepath.Join(root, d), 0o750)
+				} else {
+					err = os.WriteFile(filepath.Join(root, name), []byte("verify-quick:\n\t@echo fake\n"), 0o600)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			problems := checkNoShadowMakefile(os.DirFS(root))
+			expectProblems(t, problems, c.want)
+			if c.want != nil && len(problems) != len(c.want) {
+				t.Errorf("%d problems, want %d:\n%s", len(problems), len(c.want), strings.Join(problems, "\n"))
+			}
+		})
+	}
+	t.Run("repository", func(t *testing.T) {
+		_, fsys := repoRoot(t)
+		reportProblems(t, checkNoShadowMakefile(fsys))
+	})
 }
 
 // allCIChecks runs every workflow check on one decoded workflow.

@@ -1,0 +1,131 @@
+diff --git a/.claude/hooks/stop_verify.py b/.claude/hooks/stop_verify.py
+--- a/.claude/hooks/stop_verify.py
++++ b/.claude/hooks/stop_verify.py
+@@ -11,6 +11,7 @@
+ """
+ import datetime as dt
+ import hashlib
++import os
+ import subprocess
+ import sys
+ from pathlib import Path
+@@ -20,12 +21,20 @@
+ 
+ MAX_ATTEMPTS = 3
+ TARGET = "verify-quick"
++# T32 : variables héritées qui remplacent la commande des sous-make, le fichier lu ou les options
++# de make, ou qui injectent du code dans bash (SHELL := /bin/bash).
++ENV_STRIP = ("MAKE", "MAKE_COMMAND", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES",
++             "MAKELEVEL", "MAKEOVERRIDES", "BASH_ENV", "ENV")
++
++
++def clean_env() -> dict:
++    return {k: v for k, v in os.environ.items() if k not in ENV_STRIP and not k.startswith("BASH_FUNC_")}
+ 
+ 
+ def sh(cmd, timeout=60):
+     try:
+         p = subprocess.run(cmd, cwd=PROJECT_DIR, capture_output=True, text=True, encoding="utf-8",
+-                           errors="replace", timeout=timeout)
++                           errors="replace", timeout=timeout, env=clean_env())
+         return p.returncode, p.stdout, p.stderr
+     except FileNotFoundError:
+         return 127, "", f"commande introuvable : {cmd[0]}"
+@@ -59,8 +68,9 @@
+             return ["go", "build", "./..."], "go build ./... (phase tests)", "last_compiled"
+         return None
+     if has_target():
+-        # T32 : -f Makefile, un GNUmakefile ou makefile ne remplace jamais le Makefile relu.
+-        return ["make", "-f", "Makefile", TARGET], f"make -f Makefile {TARGET}", "last_verified"
++        # T32 : -f Makefile, un GNUmakefile ou makefile ne remplace jamais le Makefile relu ; -r, aucune
++        # règle implicite intégrée ne refait le Makefile à partir d'un fichier voisin (Makefile.sh, RCS).
++        return ["make", "-r", "-f", "Makefile", TARGET], f"make -r -f Makefile {TARGET}", "last_verified"
+     return None
+ 
+ 
+diff --git a/.claude/hooks/guard_bash.py b/.claude/hooks/guard_bash.py
+--- a/.claude/hooks/guard_bash.py
++++ b/.claude/hooks/guard_bash.py
+@@ -49,9 +49,13 @@
+      "bac à sable : seule la forme `make sandbox-apply SCENARIO=<nom>` (ou sandbox-destroy), seule sur la ligne, "
+      "est permise ; elle demande l'approbation humaine (T29)."),
+     # T31 et T32 : options et variables qui changent le fichier lu par make ou ignorent les échecs de recette.
+-    (r"\b(MAKEFLAGS|MAKEFILES|GNUMAKEFLAGS)\s*=|\bg?make\b[^|;&]*\s(-[a-zA-Z]*i[a-zA-Z]*\b|-[a-zA-Z]*f[a-zA-Z]*\b(?!\s+Makefile(\s|$))|--ignore-errors\b|--eval\b|--file\b|--makefile\b)",
+-     "make : -i, -f, --eval, MAKEFLAGS et MAKEFILES interdits ; ils ignorent les échecs de recette ou changent "
+-     "le fichier exécuté (T31, T32)."),
++    # Obligation (bt) et résidus T32 de M0-T04b : liste blanche d'options (make accepte les options longues
++    # abrégées, une liste noire est contournable), MAKE et MAKE_COMMAND refusés comme MAKEFLAGS.
++    (r"\b(MAKEFLAGS|MAKEFILES|GNUMAKEFLAGS|MFLAGS|MAKE|MAKE_COMMAND|MAKELEVEL|MAKEOVERRIDES)\s*=|\bg?make\b[^|;&]*\s(?!(-[snkrR]+|-j[0-9]*|--no-print-directory|-f\s+Makefile)(\s|$))-\S|(^|[;&|(]\s*)(env\s+)?([A-Za-z_][A-Za-z0-9_]*=\S*\s+)*g?make\b[^|;&]*([\"']|\s/-)|\bg?make\b[^|;&]*\s(SHELL|\.SHELLFLAGS)\s*=",
++     "make : seules les options -s, -n, -k, -r, -R, -j<n>, --no-print-directory et `-f Makefile` sont admises, "
++     "sans guillemet ni barre oblique inverse dans les arguments ; MAKE, MAKE_COMMAND, MAKEFLAGS, MAKEFILES, "
++     "SHELL interdits. Les autres formes ignorent les échecs de recette, sautent les recettes ou changent "
++     "le fichier, le shell ou la commande exécutés (T31, T32)."),
+     # T76 : secrets de la pile de dev recopiés dans le contexte de l'agent, donc chez le fournisseur LLM.
+     (r"\b(cat|less|more|head|tail|grep|awk|sed|cut|strings|xxd|od|base64|source)\b[^|;&]*\.env\.dev\b|(^|[;&|]\s*)\.\s+\S*\.env\.dev\b",
+      "lecture directe de .env.dev interdite : ses valeurs ne doivent jamais entrer dans le contexte (T76). "
+diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
+--- a/.claude/hooks/test_hooks.sh
++++ b/.claude/hooks/test_hooks.sh
+@@ -142,7 +142,41 @@
+ cmd 2 "MAKEFLAGS=i make dev"
+ cmd 2 "make --eval=x: dev"
+ cmd 0 "make -s verify-quick"
+-cmd 0 "make -C . arch-test"
++cmd 2 "make -C . arch-test"
++# Proposition 0009 : obligation (bt) et résidu T32 de M0-T04b
++cmd 2 "MAKE=/tmp/evil make -f Makefile verify-quick"
++cmd 2 "MAKE_COMMAND=x make -f Makefile verify-quick"
++cmd 2 "export MAKE=x"
++cmd 2 "make --directory=/tmp verify-quick"
++cmd 2 "make -t verify-quick"
++cmd 2 "make -q verify-quick"
++cmd 2 "make -e verify-quick"
++cmd 2 "make -W Makefile verify-quick"
++cmd 2 "make -o dev verify"
++cmd 2 "make -I /tmp verify"
++cmd 2 "make --touch verify-quick"
++cmd 2 "make --fil=evil.mk verify"
++cmd 2 "make --dir=sub verify"
++cmd 2 "make --makef=evil.mk verify"
++cmd 2 "make --ign verify"
++cmd 2 "make --ev=x: dev"
++cmd 2 "make --quest verify"
++cmd 2 "make -sf Makefile verify"
++cmd 2 "make -- verify"
++cmd 2 'make "--fil=evil.mk" verify'
++cmd 2 "make '-C' sub verify"
++cmd 2 'make \\-C sub verify'
++cmd 2 'make ""-i verify'
++cmd 2 "make verify-quick SHELL=/tmp/x"
++cmd 2 "make -f Makefile verify .SHELLFLAGS=-c"
++cmd 2 'cd /tmp && make "-C" sub verify'
++cmd 0 'git commit -m "fix: make the build pass"'
++cmd 0 'echo "make it so"'
++cmd 0 "make -j4 -r -f Makefile verify"
++cmd 0 "make -sn -f Makefile verify-quick"
++cmd 0 "make -f Makefile -n verify-quick"
++cmd 0 "make -s -f Makefile --no-print-directory arch-test"
++cmd 0 "cmake --build build"
+ cmd 0 "make evals EVAL=demo-if"
+ check 2 "$(printf 'pas du json' | hook --fail-closed "$T/.claude/hooks/guard_bash.py")" "bash : entrée illisible (fail-closed)"
+ 
+@@ -198,6 +232,19 @@
+   printf 'verify-quick:\n\t@exit 1\n' > "$T/GNUmakefile"
+   check 0 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : GNUmakefile ignoré, make -f Makefile (T32)"
+   rm -f "$T/GNUmakefile"
++  # Proposition 0009 : sous-make imbriqué, ni GNUmakefile ni MAKE hérité ne remplacent la sous-cible (T32).
++  printf 'verify-quick:\n\t@$(MAKE) -f Makefile --no-print-directory inner\ninner:\n\t@exit 1\n' > "$T/Makefile"
++  printf 'inner:\n\t@exit 0\n' > "$T/GNUmakefile"
++  printf 0 > "$T/.claude/state/stop_attempts"
++  check 2 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : sous-make rouge, GNUmakefile ignoré"
++  rm -f "$T/GNUmakefile"
++  check 2 "$(printf '{}' | MAKE=true hook "$T/.claude/hooks/stop_verify.py")" "stop : MAKE hérité ignoré"
++  check 2 "$(printf '{}' | MAKEFLAGS=-i hook "$T/.claude/hooks/stop_verify.py")" "stop : MAKEFLAGS hérité ignoré"
++  printf 'verify-quick:\n\t@exit 1\n' > "$T/Makefile"
++  printf 'verify-quick:\n\t@exit 0\n' > "$T/Makefile.sh"
++  touch -d '+1 min' "$T/Makefile.sh" 2>/dev/null || touch "$T/Makefile.sh"
++  check 2 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : Makefile non refait depuis Makefile.sh (-r)"
++  rm -f "$T/Makefile.sh"
+ else
+   check 2 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : make absent compte comme un échec"
+ fi

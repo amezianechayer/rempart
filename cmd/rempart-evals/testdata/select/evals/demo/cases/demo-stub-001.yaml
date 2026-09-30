@@ -1,0 +1,7 @@
+id: demo-stub-001
+loop: L0-demo
+tags: [nominal]
+input: {}
+expect:
+  status: converged
+runs: 1

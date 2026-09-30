@@ -1,0 +1,10 @@
+diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS
+--- a/.github/CODEOWNERS
++++ b/.github/CODEOWNERS
+@@ -16,3 +16,6 @@
+ /go.mod @amezianechayer
+ /go.sum @amezianechayer
+ /policies/ @amezianechayer
++# M0-T23 (T83) : un grader, une cible ou une sélection affaiblis masquent une régression sans toucher evals/.
++/cmd/rempart-evals/ @amezianechayer
++/internal/evals/ @amezianechayer

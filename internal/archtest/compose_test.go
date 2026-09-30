@@ -982,12 +982,11 @@ var (
 	composeSubcommands = []string{"up", "down"}
 	composeVolumesFlag = regexp.MustCompile(`^(-v|--volumes(=.*)?)$`)
 	dockerVolumeRmRe   = regexp.MustCompile(`\bdocker\s+volume\s+(rm|prune)\b`)
-	makeIncludeRe      = regexp.MustCompile(`^\s*-?s?include\s`)
 	shellSourceRe      = regexp.MustCompile(`\bsource\s`)
 	shellDotSourceRe   = regexp.MustCompile(`(^|[;&|{(]\s*|\bthen\s+|\belse\s+|\bdo\s+)\.\s+\S`)
 	catEnvRe           = regexp.MustCompile(`\bcat\b[^;&|]*\.env`)
 	devVolumeGuardRe   = regexp.MustCompile(`test -f \.env\.dev .*docker volume inspect rempart-dev_pgdata`)
-	verifyDevCallRe    = regexp.MustCompile(`^\$\(MAKE\)(\s+--no-print-directory)?\s+dev$`)
+	verifyDevCallRe    = regexp.MustCompile(`^` + regexp.QuoteMeta(subMakePrefix+"dev") + `$`)
 	integrationTagsRe  = regexp.MustCompile(`-tags[= ]integration\b`)
 )
 
@@ -1015,7 +1014,7 @@ func findComposeCalls(mf parsedMakefile, problems *problemList) []composeCall {
 	var calls []composeCall
 	for _, l := range mf.Lines {
 		text := l.Text
-		if strings.HasPrefix(strings.TrimSpace(text), "#") {
+		if isMakeComment(l) {
 			continue
 		}
 		for _, loc := range composeCallRe.FindAllStringIndex(text, -1) {
@@ -1092,7 +1091,7 @@ func checkDevTargets(mf parsedMakefile) []string {
 
 	for _, l := range mf.Lines {
 		text := l.Text
-		if strings.HasPrefix(strings.TrimSpace(text), "#") {
+		if isMakeComment(l) {
 			continue
 		}
 		cmd := strings.TrimLeft(text, "\t@-+ ")
@@ -1108,7 +1107,6 @@ func checkDevTargets(mf parsedMakefile) []string {
 			re   *regexp.Regexp
 			what string
 		}{
-			{makeIncludeRe, "include directive"},
 			{shellSourceRe, "source"},
 			{shellDotSourceRe, "dot-sourcing (. file)"},
 			{catEnvRe, "cat .env"},
@@ -1128,7 +1126,7 @@ func checkVerifyIntegration(mf parsedMakefile, problems *problemList) {
 	verify := mf.Rules["verify"].Recipe
 	devCall := slices.IndexFunc(verify, verifyDevCallRe.MatchString)
 	if devCall < 0 {
-		problems.addf("Makefile: target verify must start the stack with \"$(MAKE) --no-print-directory dev\"")
+		problems.addf("Makefile: target verify must start the stack with %q", subMakePrefix+"dev")
 	}
 	for _, want := range []string{verifyPlainLine, verifySecretLine} {
 		switch i := slices.Index(verify, want); {
@@ -1171,7 +1169,7 @@ const (
 		"\telif [ -z \"$$(docker ps -aq --filter label=com.docker.compose.project=rempart-dev)\" ]; then echo \"dev-down : aucune pile à arrêter.\"; \\\n" +
 		"\telse echo \"dev-down : conteneurs rempart-dev sans .env.dev (voir docs/SETUP.md).\" >&2; exit 2; fi"
 	referenceVerifyRule = "verify: verify-quick\n" +
-		"\t$(MAKE) --no-print-directory dev\n" +
+		"\t" + subMakePrefix + "dev\n" +
 		"\tgo test -tags=integration $$(go list ./... | grep -v '/internal/archtest$$')\n" +
 		"\tbash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest\n" +
 		"\tgo tool govulncheck ./..."
@@ -1194,20 +1192,24 @@ func referenceDevMakefile(t *testing.T) string {
 func TestMakeDevUsesWait(t *testing.T) {
 	t.Run("negative_controls", func(t *testing.T) {
 		valid := referenceDevMakefile(t)
+		// D8 of docs/plans/M0-make-subcalls.md: parseMakefile refuses the include
+		// directive itself, before checkDevTargets.
+		includeEnv := mustReplace(t, valid, "OPA ?= opa\n", "OPA ?= opa\n-include .env.dev\n")
 		const (
 			upLine     = "\tbash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull\n"
 			ensureLine = "\tbash scripts/dev-env.sh ensure\n"
 			bootLine   = "\tbash scripts/dev-bootstrap.sh"
 			plainLine  = "\t" + verifyPlainLine + "\n"
 			secretLine = "\t" + verifySecretLine + "\n"
-			devCall    = "\t$(MAKE) --no-print-directory dev\n"
+			devCall    = "\t" + subMakePrefix + "dev\n"
 			flagsD9    = "docker compose without -p rempart-dev --env-file .env.dev -f docker-compose.yml (D9)"
 			stepUp     = "target dev: step \"bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait\" missing or out of order"
 		)
 		cases := []struct {
-			name string
-			src  string
-			want []string
+			name    string
+			src     string
+			wantErr string
+			want    []string
 		}{
 			{name: "valid", src: valid},
 			{
@@ -1248,6 +1250,12 @@ func TestMakeDevUsesWait(t *testing.T) {
 			{
 				name: "verify_without_dev",
 				src:  mustReplace(t, valid, devCall, ""),
+				want: []string{"target verify must start the stack"},
+			},
+			{
+				// M0-make-subcalls: the pre-T32 form, without -f Makefile, does not start the stack.
+				name: "verify_dev_without_file",
+				src:  mustReplace(t, valid, devCall, "\t$(MAKE) --no-print-directory dev\n"),
 				want: []string{"target verify must start the stack"},
 			},
 			{
@@ -1362,9 +1370,9 @@ func TestMakeDevUsesWait(t *testing.T) {
 				want: []string{"cat .env not allowed"},
 			},
 			{
-				name: "include_env",
-				src:  mustReplace(t, valid, "OPA ?= opa\n", "OPA ?= opa\n-include .env.dev\n"),
-				want: []string{"include directive not allowed"},
+				name:    "include_env",
+				src:     includeEnv,
+				wantErr: fmt.Sprintf("line %d: %s", physicalLine(t, includeEnv, "-include .env.dev"), errOutsideGrammar),
 			},
 			{
 				name: "volume_rm",
@@ -1390,6 +1398,10 @@ func TestMakeDevUsesWait(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				mf, err := parseMakefile(tc.src)
+				if tc.wantErr != "" {
+					expectError(t, err, tc.wantErr)
+					return
+				}
 				if err != nil {
 					t.Fatalf("parseMakefile: %v", err)
 				}

@@ -142,7 +142,41 @@ cmd 2 "make -f other.mk verify-quick"
 cmd 2 "MAKEFLAGS=i make dev"
 cmd 2 "make --eval=x: dev"
 cmd 0 "make -s verify-quick"
-cmd 0 "make -C . arch-test"
+cmd 2 "make -C . arch-test"
+# Proposition 0009 : obligation (bt) et résidu T32 de M0-T04b
+cmd 2 "MAKE=/tmp/evil make -f Makefile verify-quick"
+cmd 2 "MAKE_COMMAND=x make -f Makefile verify-quick"
+cmd 2 "export MAKE=x"
+cmd 2 "make --directory=/tmp verify-quick"
+cmd 2 "make -t verify-quick"
+cmd 2 "make -q verify-quick"
+cmd 2 "make -e verify-quick"
+cmd 2 "make -W Makefile verify-quick"
+cmd 2 "make -o dev verify"
+cmd 2 "make -I /tmp verify"
+cmd 2 "make --touch verify-quick"
+cmd 2 "make --fil=evil.mk verify"
+cmd 2 "make --dir=sub verify"
+cmd 2 "make --makef=evil.mk verify"
+cmd 2 "make --ign verify"
+cmd 2 "make --ev=x: dev"
+cmd 2 "make --quest verify"
+cmd 2 "make -sf Makefile verify"
+cmd 2 "make -- verify"
+cmd 2 'make "--fil=evil.mk" verify'
+cmd 2 "make '-C' sub verify"
+cmd 2 'make \\-C sub verify'
+cmd 2 'make ""-i verify'
+cmd 2 "make verify-quick SHELL=/tmp/x"
+cmd 2 "make -f Makefile verify .SHELLFLAGS=-c"
+cmd 2 'cd /tmp && make "-C" sub verify'
+cmd 0 'git commit -m "fix: make the build pass"'
+cmd 0 'echo "make it so"'
+cmd 0 "make -j4 -r -f Makefile verify"
+cmd 0 "make -sn -f Makefile verify-quick"
+cmd 0 "make -f Makefile -n verify-quick"
+cmd 0 "make -s -f Makefile --no-print-directory arch-test"
+cmd 0 "cmake --build build"
 cmd 0 "make evals EVAL=demo-if"
 check 2 "$(printf 'pas du json' | hook --fail-closed "$T/.claude/hooks/guard_bash.py")" "bash : entrée illisible (fail-closed)"
 
@@ -198,6 +232,19 @@ if command -v make >/dev/null 2>&1; then
   printf 'verify-quick:\n\t@exit 1\n' > "$T/GNUmakefile"
   check 0 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : GNUmakefile ignoré, make -f Makefile (T32)"
   rm -f "$T/GNUmakefile"
+  # Proposition 0009 : sous-make imbriqué, ni GNUmakefile ni MAKE hérité ne remplacent la sous-cible (T32).
+  printf 'verify-quick:\n\t@$(MAKE) -f Makefile --no-print-directory inner\ninner:\n\t@exit 1\n' > "$T/Makefile"
+  printf 'inner:\n\t@exit 0\n' > "$T/GNUmakefile"
+  printf 0 > "$T/.claude/state/stop_attempts"
+  check 2 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : sous-make rouge, GNUmakefile ignoré"
+  rm -f "$T/GNUmakefile"
+  check 2 "$(printf '{}' | MAKE=true hook "$T/.claude/hooks/stop_verify.py")" "stop : MAKE hérité ignoré"
+  check 2 "$(printf '{}' | MAKEFLAGS=-i hook "$T/.claude/hooks/stop_verify.py")" "stop : MAKEFLAGS hérité ignoré"
+  printf 'verify-quick:\n\t@exit 1\n' > "$T/Makefile"
+  printf 'verify-quick:\n\t@exit 0\n' > "$T/Makefile.sh"
+  touch -d '+1 min' "$T/Makefile.sh" 2>/dev/null || touch "$T/Makefile.sh"
+  check 2 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : Makefile non refait depuis Makefile.sh (-r)"
+  rm -f "$T/Makefile.sh"
 else
   check 2 "$(printf '{}' | hook "$T/.claude/hooks/stop_verify.py")" "stop : make absent compte comme un échec"
 fi
