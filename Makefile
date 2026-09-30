@@ -14,9 +14,10 @@ OPA ?= opa
 # par make. Les recettes les lisent par le shell ("$$VAR"), jamais par make.
 override SCENARIO := $(value SCENARIO)
 override EVAL := $(value EVAL)
+override EVAL_BASE := $(value EVAL_BASE)
 override POLICIES_DIR := $(value POLICIES_DIR)
 override OPA := $(value OPA)
-export SCENARIO EVAL POLICIES_DIR OPA
+export SCENARIO EVAL EVAL_BASE POLICIES_DIR OPA
 export GOWORK := off
 override GOFLAGS := -mod=readonly
 export GOFLAGS
@@ -37,6 +38,7 @@ verify-quick:
 	$(MAKE) -f Makefile --no-print-directory arch-test
 
 verify: verify-quick
+	go run ./cmd/rempart-evals --suite changed --base "$${EVAL_BASE:-}"
 	$(MAKE) -f Makefile --no-print-directory dev
 	go test -tags=integration $$(go list ./... | grep -v '/internal/archtest$$')
 	bash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest
@@ -59,11 +61,11 @@ arch-test:
 	go test -count=1 ./internal/archtest/...
 	go tool workflowcheck ./internal/loops/...
 
-# Evals : livrées par M0-T23 (cmd/rempart-evals). Avant : code 2, aucune action.
+# Evals (M0-T23) : EVAL=<suite>, all ou changed ; changed lit EVAL_BASE (SHA de base, sinon toutes les suites).
 evals:
 	@test -d cmd/rempart-evals || { echo "evals : indisponible avant M0-T23 (cmd/rempart-evals absent) ; aucune action." >&2; exit 2; }
 	@[[ "$${EVAL:-}" =~ ^[a-z0-9][a-z0-9/_-]{0,126}$$ ]] || { echo "EVAL requis, au format [a-z0-9/_-] (ex. EVAL=demo)." >&2; exit 2; }
-	go run ./cmd/rempart-evals --suite "$$EVAL"
+	@if [ "$$EVAL" = changed ]; then go run ./cmd/rempart-evals --suite changed --base "$${EVAL_BASE:-}"; else go run ./cmd/rempart-evals --suite "$$EVAL"; fi
 
 # Réservé aux humains (bloqué pour l'agent par le hook guard_bash). Fonctionnel à partir de M0-T23.
 update-baseline:
