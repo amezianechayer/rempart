@@ -59,7 +59,10 @@ type parsedMakefile struct {
 //  9. a rule is one target of that form, ":", then zero or more prerequisites
 //     of that form separated by one space; a target named by two rule lines is
 //     an error (E7);
-//  10. any other line is an error (E6): include, -include, sinclude, vpath,
+//  10. V3, D16: the physical line "Makefile: ;", exactly, at most once (a
+//     second one is E7), sets SelfRule; any other rule line naming Makefile is
+//     an error (E15); a recipe line after it is E8;
+//  11. any other line is an error (E6): include, -include, sinclude, vpath,
 //     unexport, special targets, inline recipes, target-specific variables,
 //     double-colon and pattern rules, expansions outside recipes.
 var (
@@ -70,7 +73,15 @@ var (
 	makeExportRe      = regexp.MustCompile(`^export((?: [A-Z_]+)+)$`)
 	makePhonyRe       = regexp.MustCompile(`^\.PHONY:((?: [a-z][a-z0-9-]*)+)$`)
 	makeRuleRe        = regexp.MustCompile(`^([a-z][a-z0-9-]*):((?: [a-z][a-z0-9-]*)*)$`)
+	// V3, D16: any rule line naming the Makefile as its target, to be refused
+	// unless it is exactly makeSelfRule.
+	makeSelfRuleShapeRe = regexp.MustCompile(`^Makefile\s*:`)
 )
+
+// makeSelfRule is the only rule naming the Makefile (V3, D16): an explicit rule
+// with neither prerequisite nor recipe, so GNU make never looks for a built-in
+// implicit rule remaking the Makefile (Makefile.sh, RCS, SCCS; threat T32).
+const makeSelfRule = "Makefile: ;"
 
 // makeVariables: the only variables the Makefile may assign (D8 step 3).
 func makeVariables() []string {
@@ -260,6 +271,9 @@ func (p *makeParser) parseLine(ln makeLine) error {
 		}
 		return nil
 	}
+	if makeSelfRuleShapeRe.MatchString(text) {
+		return p.parseSelfRule(ln)
+	}
 	m := makeRuleRe.FindStringSubmatch(text)
 	if m == nil {
 		return fmt.Errorf("line %d: line outside the Makefile grammar of the tests (D8): %q", ln.Num, text)
@@ -270,6 +284,19 @@ func (p *makeParser) parseLine(ln makeLine) error {
 	}
 	p.mf.Rules[target] = makeRule{Prereqs: strings.Fields(m[2]), Line: ln.Num}
 	p.current = target
+	return nil
+}
+
+// parseSelfRule: D8 step 10 (V3, D16). The whole line, blanks included, must
+// be makeSelfRule; p.current stays "" so a recipe line after it is refused.
+func (p *makeParser) parseSelfRule(ln makeLine) error {
+	if ln.Text != makeSelfRule {
+		return fmt.Errorf("line %d: rule naming Makefile must be exactly %q (D16): %q", ln.Num, makeSelfRule, ln.Text)
+	}
+	if p.mf.SelfRule != 0 {
+		return fmt.Errorf("line %d: target %q already named by the rule of line %d (D8)", ln.Num, "Makefile", p.mf.SelfRule)
+	}
+	p.mf.SelfRule = ln.Num
 	return nil
 }
 
@@ -320,7 +347,12 @@ func (p *makeParser) addRecipe(text string, num int) {
 // checkMakefileSelfRule (M0-T04b V3, D16, T32): the Makefile holds the rule
 // "Makefile: ;" (parseMakefile admits it once, in that form only).
 func checkMakefileSelfRule(mf parsedMakefile) []string {
-	return nil
+	var problems problemList
+	if mf.SelfRule == 0 {
+		problems.addf("Makefile: rule %q missing: GNU make would remake the Makefile from Makefile.sh, Makefile,v, RCS/ or SCCS/ "+
+			"by a built-in implicit rule, before any recipe and even under -n (D16, T32)", makeSelfRule)
+	}
+	return problems
 }
 
 // requiredMakeTargets must each be defined once and declared .PHONY.
@@ -1695,8 +1727,7 @@ func TestMakefileGrammar(t *testing.T) {
 					t.Error("Rules holds Makefile: the rule \"Makefile: ;\" is no target of the checks")
 				}
 			}},
-		{name: "self_rule_first_line", src: selfRule + valid[:strings.Index(valid, selfRule)] + // GP7
-			valid[strings.Index(valid, selfRule)+len(selfRule):],
+		{name: "self_rule_first_line", src: selfRule + withSelf(""), // GP7
 			check: func(t *testing.T, mf parsedMakefile) {
 				if mf.SelfRule != 1 {
 					t.Errorf("SelfRule = %d, want 1", mf.SelfRule)

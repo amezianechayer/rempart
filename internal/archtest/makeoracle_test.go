@@ -150,7 +150,13 @@ func parseMakeDatabase(out string) (makeDatabase, error) {
 		switch {
 		case line == "# Not a target:":
 			notTarget = true
-		case line == "" || strings.HasPrefix(line, "\t"):
+		case strings.HasPrefix(line, "\t"):
+			if current != "" && strings.TrimSpace(line) != "" {
+				tg := db.Targets[current]
+				tg.Commands++
+				db.Targets[current] = tg
+			}
+		case line == "":
 		case strings.HasPrefix(line, "#"):
 			if m := makeDBRecipeRe.FindStringSubmatch(line); m != nil && current != "" {
 				n, _ := strconv.Atoi(m[2])
@@ -195,7 +201,9 @@ func parseMakeDatabase(out string) (makeDatabase, error) {
 // compareMakeDatabase compares what parseMakefile read (mf) with what make
 // read (db); base is the database of an empty Makefile read the same way,
 // whose targets and implicit rules are subtracted (built-ins, oracle goal).
-// Problems in the order O1 (then stop), O2, O3, O4 by name, O5 by name, O6.
+// Problems in the order O1 (then stop), O2, O3, O4 by name, O5 by name (V3,
+// D16: target Makefile included when the parser read "Makefile: ;"), then a
+// command make read under target Makefile (D16), O6.
 func compareMakeDatabase(mf parsedMakefile, db, base makeDatabase) []string {
 	var problems problemList
 	if db.Code != 0 {
@@ -244,6 +252,9 @@ func compareMakeDatabase(mf parsedMakefile, db, base makeDatabase) []string {
 		slices.Sort(prereqs)
 		want[name] = makeDBTarget{Prereqs: prereqs, RecipeLine: r.RecipeLine}
 	}
+	if mf.SelfRule != 0 { // V3, D16: "Makefile: ;", an empty recipe at its line
+		want["Makefile"] = makeDBTarget{RecipeLine: mf.SelfRule}
+	}
 	phony := slices.Sorted(maps.Keys(mf.Phony))
 	want[".PHONY"] = makeDBTarget{Prereqs: phony}
 	targets := slices.Collect(maps.Keys(got))
@@ -259,6 +270,10 @@ func compareMakeDatabase(mf parsedMakefile, db, base makeDatabase) []string {
 		if gok != wok || !slices.Equal(g.Prereqs, w.Prereqs) || g.RecipeLine != w.RecipeLine {
 			problems.addf("target %s: make read %s, the test parser %s (oracle)", name, describeDBTarget(g, gok), describeDBTarget(w, wok))
 		}
+	}
+
+	if tg, ok := got["Makefile"]; ok && tg.Commands != 0 {
+		problems.addf("target Makefile: make read %d recipe commands, want none (D16, oracle)", tg.Commands)
 	}
 
 	if n := db.ImplicitRules - base.ImplicitRules; n != 0 {

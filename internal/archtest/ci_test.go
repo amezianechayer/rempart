@@ -417,17 +417,35 @@ func TestCodeownersProtectsBaselines(t *testing.T) {
 	reportProblems(t, p)
 }
 
+// checkNoShadowMakefile reports every entry of the root of fsys that would
+// replace the Makefile (another default makefile name) or, V3 D17, feed a
+// built-in implicit rule of GNU make remaking it: Makefile.<suffix> (%: %.sh,
+// %: %.c...), Makefile,v and RCS (RCS), s.Makefile and SCCS (SCCS). Names are
+// compared case-insensitively (case-insensitive file systems), whatever the
+// entry type.
 func checkNoShadowMakefile(fsys fs.FS) (p problemList) {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		p.addf("repository root: %v", err)
 	}
 	for _, e := range entries {
-		if n := e.Name(); n != "Makefile" && (strings.EqualFold(n, "makefile") || strings.EqualFold(n, "gnumakefile")) {
+		n := e.Name()
+		switch {
+		case n == "Makefile":
+		case strings.EqualFold(n, "makefile") || strings.EqualFold(n, "gnumakefile"):
 			p.addf("%s at the repository root would replace Makefile (T32)", n)
+		case remakesMakefile(n):
+			p.addf("%s at the repository root lets GNU make remake Makefile by a built-in implicit rule (D17, T32)", n)
 		}
 	}
 	return p
+}
+
+// remakesMakefile: D17, a root entry name some built-in implicit rule of GNU
+// make would use to remake the Makefile.
+func remakesMakefile(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "makefile.") || slices.Contains([]string{"makefile,v", "s.makefile", "rcs", "sccs"}, lower)
 }
 
 // TestNoShadowMakefile (T32): nothing at the repository root may replace the
@@ -467,8 +485,10 @@ func TestNoShadowMakefile(t *testing.T) {
 		{name: "rcs_dir_empty", files: dir("RCS"), want: []string{"RCS " + remade}},
 		{name: "sccs_dir", files: fstest.MapFS{"SCCS/s.Makefile": {}}, want: []string{"SCCS " + remade}},
 		{name: "sccs_dir_empty", files: dir("SCCS"), want: []string{"SCCS " + remade}},
-		{name: "all_at_once", files: fstest.MapFS{"Makefile.sh": {}, "Makefile,v": {}, "s.Makefile": {}, "RCS/x": {}, "SCCS/x": {}},
-			want: []string{"Makefile.sh " + remade, "Makefile,v " + remade, "s.Makefile " + remade, "RCS " + remade, "SCCS " + remade}},
+		{
+			name: "all_at_once", files: fstest.MapFS{"Makefile.sh": {}, "Makefile,v": {}, "s.Makefile": {}, "RCS/x": {}, "SCCS/x": {}},
+			want: []string{"Makefile.sh " + remade, "Makefile,v " + remade, "s.Makefile " + remade, "RCS " + remade, "SCCS " + remade},
+		},
 	}
 	for _, c := range cases {
 		t.Run("map/"+c.name, func(t *testing.T) {
@@ -498,7 +518,7 @@ func TestNoShadowMakefile(t *testing.T) {
 			for _, name := range append([]string{"Makefile"}, c.files...) {
 				var err error
 				if d, ok := strings.CutSuffix(name, "/"); ok {
-					err = os.Mkdir(filepath.Join(root, d), 0o755)
+					err = os.Mkdir(filepath.Join(root, d), 0o750)
 				} else {
 					err = os.WriteFile(filepath.Join(root, name), []byte("verify-quick:\n\t@echo fake\n"), 0o600)
 				}

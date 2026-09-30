@@ -489,11 +489,16 @@ func checkComposeInvocations(name, src string) []string {
 }
 
 // joinShellLines splits a shell script (or the Makefile, already accepted by
-// lexMakefile) into logical lines for checkComposeInvocations: a physical line
-// ending with a backslash is joined with the next one (one space, leading
-// blanks of the next line removed). It is not the Makefile lexer: parseMakefile
-// uses lexMakefile (M0-T04b V2, D11 to D14), stricter; on a Makefile accepted
-// by lexMakefile both give the same logical lines (a final empty line aside).
+// lexMakefile) into the logical lines bash reads, for checkComposeInvocations
+// (M0-T04b V3, D18): a physical line ending with an odd number of backslashes
+// is joined with the next one (final backslash and spaces before it removed,
+// one space, leading blanks of the next line removed), unless the logical line
+// built so far holds a shell comment (shellComment): bash never continues a
+// comment. An even number of backslashes ends the line. It is not the Makefile
+// lexer: parseMakefile uses lexMakefile (M0-T04b V2, D11 to D14), stricter,
+// which refuses a make comment ending with a backslash; make itself joins a
+// recipe line ending with a backslash, but the shell it runs does not continue
+// a comment, so the next physical line runs on its own.
 func joinShellLines(src string) []makeLine {
 	var lines []makeLine
 	pending := false
@@ -505,12 +510,54 @@ func joinShellLines(src string) []makeLine {
 			lines = append(lines, makeLine{Num: i + 1, Text: raw})
 		}
 		last := &lines[len(lines)-1]
-		pending = strings.HasSuffix(last.Text, `\`)
+		pending = trailingBackslashes(last.Text)%2 == 1 && !shellComment(last.Text)
 		if pending {
 			last.Text = strings.TrimRight(strings.TrimSuffix(last.Text, `\`), " ")
 		}
 	}
 	return lines
+}
+
+// shellComment reports whether the logical line text holds a bash comment: a
+// "#" outside quotes, not escaped by a backslash, at the start of a word (line
+// start, or after a blank or one of ; & | ( ) < >). A line starting with a tab
+// may be a Makefile recipe line: its @ - + prefixes, which make removes before
+// running the shell, are skipped first. Approximation on the safe side for
+// D18: a line wrongly seen as a comment is not joined, so its next physical
+// line is checked on its own.
+func shellComment(text string) bool {
+	i := 0
+	if strings.HasPrefix(text, "\t") {
+		for i < len(text) && strings.IndexByte(" \t@-+", text[i]) >= 0 {
+			i++
+		}
+	}
+	wordStart := true
+	var quote byte
+	for ; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case quote == '"':
+			switch c {
+			case '\\':
+				i++
+			case '"':
+				quote = 0
+			}
+		case c == '\\':
+			i++
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '#' && wordStart:
+			return true
+		}
+		wordStart = quote == 0 && strings.IndexByte(" \t;&|()<>", c) >= 0
+	}
+	return false
 }
 
 // TestJoinShellLines (M0-T04b V3, D18): the logical lines bash reads. A
@@ -541,6 +588,10 @@ func TestJoinShellLines(t *testing.T) {
 		{"escaped_hash", "echo \\# x \\\nb", []line{{1, `echo \# x b`}}},
 		{"hash_inside_word", "echo a#b $# ${#x} ${v#*.} \\\nb", []line{{1, "echo a#b $# ${#x} ${v#*.} b"}}},
 		{"escaped_quote_then_hash", "echo \"a\\\"\" # c \\\nb", []line{{1, `echo "a\"" # c \`}, {2, "b"}}},
+		{"double_quoted_blank_hash", "echo \"a # x\" \\\nb", []line{{1, `echo "a # x" b`}}},
+		{"single_quoted_blank_hash", "echo 'a # x' \\\nb", []line{{1, `echo 'a # x' b`}}},
+		{"escaped_blank_hash", "echo a\\ #b \\\nc", []line{{1, `echo a\ #b c`}}},
+		{"escaped_quote_in_double_quotes", "echo \"a\\\" # x\" \\\nb", []line{{1, `echo "a\" # x" b`}}},
 		{"backslash_in_single_quotes", "echo 'a\\' # c \\\nb", []line{{1, `echo 'a\' # c \`}, {2, "b"}}},
 		{"crlf", "a \\\r\nb\r\n", []line{{1, "a b"}, {3, ""}}},
 	} {
@@ -691,8 +742,10 @@ func TestComposeOnlyThroughDevEnv(t *testing.T) {
 			{name: "runner_in_trailing_comment", file: file, src: tools + "true # " + runner + "\\\n" + fullUp + "\n", want: []string{at(next + 1)}},        // D18 a, trailing comment
 			{name: "runner_after_even_backslashes", file: file, src: tools + "echo " + runner + "\\\\\n" + fullUp + "\n", want: []string{at(next + 1)}},     // D18 b
 			{name: "comment_inside_continuation", file: file, src: tools + "true \\\n  # " + runner + "\\\n" + fullUp + "\n", want: []string{at(next + 2)}}, // bash: the comment ends the joined line
-			{name: "recipe_comment_then_call", file: "Makefile", src: recipeComment,
-				want: []string{fmt.Sprintf("Makefile line %d: %s", exactLine(t, recipeComment, "\t"+other), outside)}},
+			{
+				name: "recipe_comment_then_call", file: "Makefile", src: recipeComment,
+				want: []string{fmt.Sprintf("Makefile line %d: %s", exactLine(t, recipeComment, "\t"+other), outside)},
+			},
 			// Continuations bash does make: the joined line is the one checked.
 			{name: "odd_backslashes_join", file: file, src: tools + "true && \\\\\\\n  " + other + "\n", want: []string{at(next)}},
 			{name: "runner_then_form", file: file, src: tools + "true && " + runner + "\\\n  " + fullUp + "\n"},
