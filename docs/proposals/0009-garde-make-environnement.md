@@ -1,0 +1,41 @@
+# Proposition 0009 : make sans environnement hérité dans le hook Stop, options de make restreintes
+
+- Date : 2026-09-30
+- Statut : proposé, **à appliquer par l'humain** (l'agent n'a pas le droit de modifier le harnais), avant `/close-milestone M0`
+- Patch : `docs/proposals/0009-garde-make-environnement.patch`
+- Origine : obligations (bp) (cas de sous-make imbriqué) et (bt) de M0-T04, résidu T32 de la revue sécurité de M0-T04b
+
+## Pourquoi
+
+1. **T32, environnement.** `MAKE` et `MAKE_COMMAND` hérités de l'environnement remplacent la commande de chaque sous-make, même sous la forme canonique `$(MAKE) -f Makefile --no-print-directory <cible>` : `MAKE=true` rend vert un `verify-quick` dont une sous-cible échoue. `MAKEFLAGS=-i` fait ignorer les échecs de recette. `BASH_ENV`, `ENV` et les fonctions exportées (`BASH_FUNC_*`) injectent du code dans le `SHELL := /bin/bash` des recettes. Le hook Stop transmet aujourd'hui tout son environnement à make.
+2. **(bt).** `guard_bash` admet encore des options qui changent ce que make exécute : `-C`/`--directory` (autre répertoire, donc autre `Makefile`), `-t`/`--touch` et `-q`/`--question` (recettes non exécutées), `-e` (l'environnement l'emporte sur `SHELL`, `GOFLAGS` du `Makefile`), `-W`, `-o` (cibles forcées ou ignorées), `-I` (répertoires d'inclusion). Il admet aussi `MAKE=` et `MAKE_COMMAND=` en tête de commande.
+3. **(bp).** Le hook Stop n'avait pas de cas de test avec un sous-make imbriqué.
+
+## Ce qui change
+
+| Fichier | Changement |
+|---|---|
+| `.claude/hooks/stop_verify.py` | Toutes les commandes du hook sont lancées sans `MAKE`, `MAKE_COMMAND`, `MAKEFLAGS`, `MFLAGS`, `GNUMAKEFLAGS`, `MAKEFILES`, `MAKELEVEL`, `MAKEOVERRIDES`, `BASH_ENV`, `ENV` ni `BASH_FUNC_*`. |
+| `.claude/hooks/guard_bash.py` | Règle T31/T32 étendue : options `-C`, `-t`, `-q`, `-e`, `-W`, `-o`, `-I` (seules ou groupées) et leurs formes longues refusées ; affectations `MAKE=`, `MAKE_COMMAND=`, `MFLAGS=`, `MAKELEVEL=`, `MAKEOVERRIDES=` refusées comme `MAKEFLAGS=`. |
+| `.claude/hooks/test_hooks.sh` | `make -C . arch-test` passe de admis à refusé ; 14 cas de commande ; 3 cas du hook Stop (sous-make imbriqué avec `GNUmakefile` d'ombre, `MAKE=true` et `MAKEFLAGS=-i` hérités). |
+
+## Décision prise sur délégation
+
+`-n` (`--dry-run`) reste **admis**, contrairement à la liste initiale de (bt) : il n'exécute que les lignes `$(MAKE)` et sert de preuve de comportement dans les critères des plans (M0-T04b, fichier d'ombre). Il ne peut pas faire passer le hook Stop, qui lance sa propre commande. Réversible : ajouter `n` à la classe d'options.
+
+## Vérification faite par l'agent
+
+- Copie du harnais à jour dans le scratchpad, modifications appliquées : `bash .claude/hooks/test_hooks.sh` sur la copie, **137 réussis, 0 échoués**.
+- Contre-épreuve : même copie avec l'ancien `stop_verify.py`, **2 échecs** attendus (`MAKE` hérité, `MAKEFLAGS` hérité) ; le cas du `GNUmakefile` d'ombre passait déjà grâce à `-f Makefile` (proposition 0007) et aux sous-make canoniques (M0-T04b).
+- `git apply --check` du patch sur le dépôt : rc=0.
+
+Limite : `guard_bash` reste un filtre, pas un bac à sable ; une commande déguisée (nom de variable ou option construits par le shell, `eval`) n'est pas couverte. Le hook Stop, lui, nettoie l'environnement quelle que soit la façon dont il a été construit.
+
+## Appliquer
+
+```bash
+git apply docs/proposals/0009-garde-make-environnement.patch
+bash .claude/hooks/test_hooks.sh
+git add .claude && git commit -m "fix(harness): apply proposal 0009"
+git push
+```
