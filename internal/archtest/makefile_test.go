@@ -6,13 +6,16 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 )
 
 // makeRule is a parsed Makefile rule.
 type makeRule struct {
-	Prereqs []string
-	Recipe  []string // logical lines, continuations joined, @ - + prefixes removed
-	Line    int      // line of the rule naming the target (a single one, D8)
+	Prereqs    []string
+	Recipe     []string // logical lines, continuations joined, @ - + prefixes removed
+	Line       int      // line of the rule naming the target (a single one, D8)
+	RecipeLine int      // V2: first physical line of the first recipe line (empty ones included), 0 if none
 }
 
 // makeLine is a logical Makefile line (continuations joined) and the number of
@@ -25,14 +28,21 @@ type makeLine struct {
 type parsedMakefile struct {
 	Rules map[string]makeRule
 	Phony map[string]bool
-	Lines []makeLine // every logical line, comments included, for whole-file rules
+	Lines []makeLine     // every logical line, comments included, for whole-file rules
+	Vars  map[string]int // V2: variable name -> line of its last assignment (D8 step 3), for the oracle
 }
 
 // Grammar of parseMakefile: the closed subset of GNU make of
 // docs/plans/M0-make-subcalls.md D8 (M0-T04b V1, threat T32). Whatever it does
 // not recognize is an error, never ignored:
-//  1. lines ending with a backslash are joined with the next one (separated by
-//     one space, leading blanks of the next line removed) before classification;
+//  1. lexMakefile (V2, D11 to D14) does not imitate make, it refuses every form
+//     on which its split and the one of make could disagree: control bytes (CR
+//     included), an even number of trailing backslashes, a continuation outside
+//     a recipe line or open at the end of the file, non-ASCII text outside a
+//     column-0 comment and a recipe line, invisible, bidirectional or Unicode
+//     blank characters; only a recipe line ending with an odd number of
+//     backslashes is joined with the next physical line (one space, leading
+//     blanks of the next line removed); blanks are spaces and tabs only;
 //  2. a line starting with a tab is a recipe line of the current rule (@ - +
 //     prefixes removed); outside a rule, or after a .PHONY line, it is an error;
 //     a blank line or a make comment does not end the recipe;
@@ -82,12 +92,17 @@ var makeAssignForms = []*regexp.Regexp{
 	regexp.MustCompile(`^override GOFLAGS := -mod=readonly$`),
 }
 
-// parseMakefile parses the closed grammar of docs/plans/M0-make-subcalls.md D8.
-// Errors start with "line <n>: ", n being the first physical line of the
-// refused logical line.
+// parseMakefile lexes src with lexMakefile (D11 to D14), then parses the closed
+// grammar of docs/plans/M0-make-subcalls.md D8. Errors start with "line <n>: ",
+// n being the first physical line of the refused logical line (E1 to E8) or
+// the physical line at fault (lexer, E9 to E14).
 func parseMakefile(src string) (parsedMakefile, error) {
+	lines, err := lexMakefile(src)
+	if err != nil {
+		return parsedMakefile{Rules: map[string]makeRule{}, Phony: map[string]bool{}, Vars: map[string]int{}}, err
+	}
 	p := makeParser{
-		mf: parsedMakefile{Rules: map[string]makeRule{}, Phony: map[string]bool{}, Lines: joinMakeLines(src)},
+		mf: parsedMakefile{Rules: map[string]makeRule{}, Phony: map[string]bool{}, Vars: map[string]int{}, Lines: lines},
 	}
 	for _, ln := range p.mf.Lines {
 		if err := p.parseLine(ln); err != nil {
@@ -97,23 +112,109 @@ func parseMakefile(src string) (parsedMakefile, error) {
 	return p.mf, nil
 }
 
-func joinMakeLines(src string) []makeLine {
+// lexMakefile splits src into logical lines (M0-T04b V2, D11 to D13). A
+// physical line joins the next one only if it belongs to a recipe line and
+// ends with an odd number of backslashes; every form on which this lexer and
+// GNU make could disagree is an error naming the physical line at fault.
+// Checks, in this order, for each physical line: E9 (control byte), E10 (even
+// number of trailing backslashes), E11 (a line starting a non-recipe logical
+// line ends with a backslash), E12 or E13 (non-ASCII text); then E14 if a
+// continuation is still open at the end of src. A logical line is a recipe
+// line if its first physical line starts with a tab, a column-0 comment if its
+// first physical line starts with "#". Joining keeps the V1 text: the final
+// backslash and the spaces before it removed, one space, the next physical
+// line with leading spaces and tabs removed.
+func lexMakefile(src string) ([]makeLine, error) {
+	physical := strings.Split(src, "\n")
+	if strings.HasSuffix(src, "\n") {
+		physical = physical[:len(physical)-1] // the final newline ends the last line, it opens none
+	}
 	var lines []makeLine
-	pending := false
-	for i, raw := range strings.Split(src, "\n") {
-		raw = strings.TrimSuffix(raw, "\r")
+	pending, recipe := false, false
+	for i, raw := range physical {
+		num := i + 1
+		if !pending {
+			recipe = strings.HasPrefix(raw, "\t")
+		}
+		comment := !pending && strings.HasPrefix(raw, "#")
+		if err := lexPhysicalLine(raw, num, recipe, comment); err != nil {
+			return nil, err
+		}
 		if pending {
 			lines[len(lines)-1].Text += " " + strings.TrimLeft(raw, " \t")
 		} else {
-			lines = append(lines, makeLine{Num: i + 1, Text: raw})
+			lines = append(lines, makeLine{Num: num, Text: raw})
 		}
 		last := &lines[len(lines)-1]
-		pending = strings.HasSuffix(last.Text, `\`)
+		pending = trailingBackslashes(raw)%2 == 1
 		if pending {
 			last.Text = strings.TrimRight(strings.TrimSuffix(last.Text, `\`), " ")
 		}
 	}
-	return lines
+	if pending {
+		return nil, fmt.Errorf("line %d: continuation at end of file (D11)", len(physical))
+	}
+	return lines, nil
+}
+
+// lexPhysicalLine applies E9 to E13 to the physical line raw, number num, part
+// of a recipe line or first line of a column-0 comment.
+func lexPhysicalLine(raw string, num int, recipe, comment bool) error {
+	for i := range len(raw) {
+		if b := raw[i]; (b < 0x20 && b != '\t') || b == 0x7f {
+			return fmt.Errorf("line %d: control byte 0x%02x not allowed (D13): %q", num, b, raw)
+		}
+	}
+	n := trailingBackslashes(raw)
+	switch {
+	case n > 0 && n%2 == 0:
+		return fmt.Errorf("line %d: line ends with an even number of backslashes (D11): %q", num, raw)
+	case n > 0 && !recipe:
+		return fmt.Errorf("line %d: continuation outside a recipe line not allowed (D12): %q", num, raw)
+	}
+	ascii := true
+	for i := range len(raw) {
+		if raw[i] >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return nil
+	}
+	if !recipe && !comment {
+		return fmt.Errorf("line %d: non-ASCII byte outside a column-0 comment or a recipe line (D13): %q", num, raw)
+	}
+	for _, r := range raw {
+		if r >= utf8.RuneSelf && !allowedMakeRune(r) {
+			return fmt.Errorf("line %d: character %U not allowed in a comment or recipe line (D13): %q", num, r, raw)
+		}
+	}
+	return nil
+}
+
+// trailingBackslashes counts the backslashes ending s.
+func trailingBackslashes(s string) int {
+	return len(s) - len(strings.TrimRight(s, `\`))
+}
+
+// allowedMakeRune reports whether a non-ASCII rune may appear in a column-0
+// comment or a recipe line (D13 (iv)): categories L, M, N, P, S, U+FFFD
+// excluded (it also stands for invalid UTF-8). Spaces, separators, C1 controls
+// and format characters (invisible or bidirectional) are refused.
+func allowedMakeRune(r rune) bool {
+	return r != utf8.RuneError && unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S)
+}
+
+// makeTrim removes leading and trailing spaces and tabs only (D14): GNU make
+// does not treat NBSP, NEL or U+2028 as blanks.
+func makeTrim(s string) string { return strings.Trim(s, " \t") }
+
+// isMakeComment reports whether l is a make comment (D3): its text does not
+// start with a tab and, makeTrim applied, starts with "#". It is the only
+// predicate classifying a line of parsedMakefile.Lines as a comment.
+func isMakeComment(l makeLine) bool {
+	return !strings.HasPrefix(l.Text, "\t") && strings.HasPrefix(makeTrim(l.Text), "#")
 }
 
 type makeParser struct {
@@ -126,11 +227,11 @@ func (p *makeParser) parseLine(ln makeLine) error {
 		if p.current == "" {
 			return fmt.Errorf("line %d: recipe line outside a rule", ln.Num)
 		}
-		p.addRecipe(ln.Text[1:])
+		p.addRecipe(ln.Text[1:], ln.Num)
 		return nil
 	}
-	text := strings.TrimSpace(ln.Text)
-	if text == "" || strings.HasPrefix(text, "#") {
+	text := makeTrim(ln.Text)
+	if text == "" || isMakeComment(ln) {
 		return nil
 	}
 	p.current = ""
@@ -141,7 +242,11 @@ func (p *makeParser) parseLine(ln makeLine) error {
 		return fmt.Errorf("line %d: unsupported directive %q: update the test parser before using it", ln.Num, text)
 	}
 	if m := makeAssignShapeRe.FindStringSubmatch(text); m != nil {
-		return checkMakeAssignment(text, m[1], ln.Num)
+		if err := checkMakeAssignment(text, m[1], ln.Num); err != nil {
+			return err
+		}
+		p.mf.Vars[m[1]] = ln.Num
+		return nil
 	}
 	if makeExportWordRe.MatchString(text) {
 		return checkMakeExport(text, ln.Num)
@@ -195,13 +300,17 @@ func checkMakeExport(text string, num int) error {
 	return nil
 }
 
-func (p *makeParser) addRecipe(text string) {
-	cmd := strings.TrimSpace(strings.TrimLeft(text, "@-+ \t"))
-	if cmd == "" {
-		return
-	}
+// addRecipe adds the recipe line text (tab removed), first physical line num,
+// to the current rule. An empty recipe line is a recipe for make: it sets
+// RecipeLine, it adds nothing to Recipe.
+func (p *makeParser) addRecipe(text string, num int) {
 	r := p.mf.Rules[p.current]
-	r.Recipe = append(r.Recipe, cmd)
+	if r.RecipeLine == 0 {
+		r.RecipeLine = num
+	}
+	if cmd := makeTrim(strings.TrimLeft(text, "@-+ \t")); cmd != "" {
+		r.Recipe = append(r.Recipe, cmd)
+	}
 	p.mf.Rules[p.current] = r
 }
 
@@ -261,7 +370,7 @@ func checkSubMakeCalls(mf parsedMakefile) []string {
 	var problems problemList
 	for _, l := range mf.Lines {
 		recipe := strings.HasPrefix(l.Text, "\t")
-		if !recipe && strings.HasPrefix(strings.TrimSpace(l.Text), "#") {
+		if isMakeComment(l) {
 			continue // make comment (D3); a recipe line starting with # is shell text
 		}
 		if m := canonicalSubMakeRe.FindStringSubmatch(l.Text); m != nil {
@@ -407,10 +516,10 @@ func checkCallerVariables(mf parsedMakefile, problems *problemList) {
 	frozen := map[string]int{}   // variable -> line of its first override := $(value ...)
 	exported := map[string]int{} // variable -> line of its first export
 	for _, l := range mf.Lines {
-		if strings.HasPrefix(l.Text, "\t") {
-			continue // recipe line: shell, not make
+		if strings.HasPrefix(l.Text, "\t") || isMakeComment(l) {
+			continue // recipe line (shell, not make) or make comment
 		}
-		text := strings.TrimSpace(l.Text)
+		text := makeTrim(l.Text)
 		if m := overrideValueRe.FindStringSubmatch(text); m != nil && m[1] == m[2] {
 			if _, seen := frozen[m[1]]; !seen {
 				frozen[m[1]] = l.Num
@@ -1164,13 +1273,12 @@ func demoRecipeLines(mf parsedMakefile) []string {
 	var out []string
 	in := false
 	for _, l := range mf.Lines {
-		text := strings.TrimSpace(l.Text)
 		switch {
 		case strings.HasPrefix(l.Text, "\t"):
 			if in {
 				out = append(out, l.Text)
 			}
-		case text == "" || strings.HasPrefix(text, "#"):
+		case makeTrim(l.Text) == "" || isMakeComment(l):
 		default:
 			in = strings.HasPrefix(l.Text, "demo:")
 		}
@@ -1349,6 +1457,25 @@ const (
 	errD7               = "recipe line expands make syntax outside the canonical sub-make (D7, T32)" // D7 problem
 )
 
+// Stable fragments of the lexer errors of parseMakefile (M0-T04b V2, codes E9 to
+// E14), preceded by "line <n>: ", n being the physical line at fault.
+const (
+	errEvenBackslashes   = "line ends with an even number of backslashes (D11)"               // E10
+	errContinuation      = "continuation outside a recipe line not allowed (D12)"             // E11
+	errNonASCII          = "non-ASCII byte outside a column-0 comment or a recipe line (D13)" // E12
+	errContinuationAtEOF = "continuation at end of file (D11)"                                // E14
+)
+
+// errControlByte is E9 for the byte b.
+func errControlByte(b byte) string {
+	return fmt.Sprintf("control byte 0x%02x not allowed (D13)", b)
+}
+
+// errCharacter is E13 for the rune r.
+func errCharacter(r rune) string {
+	return fmt.Sprintf("character %U not allowed in a comment or recipe line (D13)", r)
+}
+
 // errVariableNotAllowed is E3 for name.
 func errVariableNotAllowed(name string) string {
 	return fmt.Sprintf("variable %q not allowed in the Makefile (D8)", name)
@@ -1388,7 +1515,8 @@ func TestMakefileGrammar(t *testing.T) {
 	type testCase struct {
 		name    string
 		src     string
-		wantErr string // "": conforming input
+		wantErr string                                // "": conforming input
+		check   func(t *testing.T, mf parsedMakefile) // conforming input: what the parser must have read
 	}
 	// at builds a negative case whose error names the physical line holding fragment.
 	at := func(name, src, fragment, code string) testCase {
@@ -1409,6 +1537,22 @@ func TestMakefileGrammar(t *testing.T) {
 	if len(g32Lines) != 1 {
 		t.Fatalf("duplicate_rule_line: rule line arch-test: found on lines %d, want 1", g32Lines)
 	}
+	// addRecipeLines appends recipe or column-0 lines (tabs given) after the recipe of target.
+	addRecipeLines := func(target string, lines ...string) string {
+		return editRule(t, valid, target, func(rule string, recipe []string) []string {
+			return slices.Concat([]string{rule}, recipe, lines)
+		})
+	}
+	n1 := valid + "# fin \\\\\ninclude evil.mk\n"
+	n1b := afterOPA("  # x \\\\\n-include evil.mk\n")
+	n1c := valid + "# fin \\\\\nverify-quick:\n\t@echo SHADOW-dup\n"
+	n3 := addRecipeLines("dev", "\t@echo ok \\\\", "include evil.mk")
+	n4 := mustReplace(t, valid, "SHELL := /bin/bash\n", "SHELL := /bin/bash\r\n")
+	n7 := mustReplace(t, valid, "étape OPA sans objet.", "étape OPA\x1b[8m sans objet.")
+	n8 := addRecipeLines("dev", "\t@echo a \\\\\\\\", "\t@true")
+	n10 := mustReplace(t, valid, "EVAL ?= all\n", "EVAL ?= \\\nall\n")
+	n11 := addRecipeLines("dev", "\t@echo \"a\u202eb\"")
+	n14 := valid + "\t@echo x \\"
 	negatives := []testCase{
 		at("eval_include_comment_colon", g1, evilInclude, errTrailingComment),                                       // G1, BLOCK finding 1
 		at("eval_include_indirect", g2, "X := evil.mk", errVariableNotAllowed("X")),                                 // G2, BLOCK finding 1
@@ -1446,18 +1590,40 @@ func TestMakefileGrammar(t *testing.T) {
 			"verify: verify-quick $(eval", errOutsideGrammar),
 		at("phony_expansion", mustReplace(t, valid, ".PHONY: dev dev-preflight ", ".PHONY: "+evilInclude+" dev dev-preflight "), // G28
 			".PHONY: $(eval", errOutsideGrammar),
-		at("inline_recipe", setRuleLine(t, valid, "arch-test", "arch-test: ; "+subMakePrefix+"opa-test"), "arch-test: ;", errOutsideGrammar),        // G29
-		atExact("rule_trailing_comment", setRuleLine(t, valid, "dev-down", "dev-down: # arrêt"), "dev-down: # arrêt", errTrailingComment),           // G30
-		at("assign_trailing_comment", mustReplace(t, valid, "EVAL ?= all\n", "EVAL ?= all # défaut\n"), "EVAL ?= all # défaut", errTrailingComment), // G31
-		{name: "duplicate_rule_line", src: g32, wantErr: errAlreadyNamed(exactLine(t, g32, "arch-test: opa-test"), "arch-test", g32Lines[0])},       // G32
-		at("phony_with_recipe", mustReplace(t, valid, secondPhony, secondPhony+"\t@echo x\n"), "\t@echo x", errRecipeOutside),
+		at("inline_recipe", setRuleLine(t, valid, "arch-test", "arch-test: ; "+subMakePrefix+"opa-test"), "arch-test: ;", errOutsideGrammar), // G29
+		// G30, G31: ASCII (V2), a non-ASCII byte there would be refused first by E12.
+		atExact("rule_trailing_comment", setRuleLine(t, valid, "dev-down", "dev-down: # stop"), "dev-down: # stop", errTrailingComment),               // G30
+		at("assign_trailing_comment", mustReplace(t, valid, "EVAL ?= all\n", "EVAL ?= all # default\n"), "EVAL ?= all # default", errTrailingComment), // G31
+		{name: "duplicate_rule_line", src: g32, wantErr: errAlreadyNamed(exactLine(t, g32, "arch-test: opa-test"), "arch-test", g32Lines[0])},         // G32
+		at("phony_with_recipe", mustReplace(t, valid, secondPhony, secondPhony+"\t@echo x\n"), "\t@echo x", errRecipeOutside),                         // G33
 		// Frozen values: a value without "$" is enough to divert go or make (D8 (iii)).
 		at("gowork_changed", mustReplace(t, valid, exportLine, exportLine+"export GOWORK := /tmp/go.work\n"), // G34
 			"GOWORK := /tmp/go.work", errFormNotAllowed("GOWORK")),
 		at("goflags_changed", mustReplace(t, valid, exportLine, exportLine+"override GOFLAGS := -mod=mod\n"), // G35
 			"GOFLAGS := -mod=mod", errFormNotAllowed("GOFLAGS")),
 		at("default_goal_changed", mustReplace(t, valid, ".DEFAULT_GOAL := verify-quick\n", ".DEFAULT_GOAL := demo\n"), // G36
-			".DEFAULT_GOAL := demo", errFormNotAllowed(".DEFAULT_GOAL")), // G33
+			".DEFAULT_GOAL := demo", errFormNotAllowed(".DEFAULT_GOAL")), // G36
+
+		// V2, D11 to D13: forms on which this lexer and GNU make could disagree
+		// are refused, the error naming the physical line at fault. N1 to N3:
+		// second BLOCK, an even number of trailing backslashes does not continue
+		// a line for make, the V1 parser swallowed the next line that make reads.
+		atExact("comment_even_backslash_include", n1, `# fin \\`, errEvenBackslashes),                    // N1
+		atExact("indented_comment_even_backslash", n1b, `  # x \\`, errEvenBackslashes),                  // N1b
+		atExact("comment_even_backslash_shadow_rule", n1c, `# fin \\`, errEvenBackslashes),               // N1c
+		atExact("recipe_even_backslash_include", n3, "\t@echo ok \\\\", errEvenBackslashes),              // N3
+		at("crlf_line", n4, "SHELL := /bin/bash", errControlByte(0x0d)),                                  // N4
+		at("nul_byte", afterOPA("# a\x00b\n"), "# a\x00b", errControlByte(0x00)),                         // N5
+		at("nbsp_before_comment", afterOPA("\u00a0# include evil.mk\n"), "\u00a0# include", errNonASCII), // N6
+		at("control_char", n7, "\x1b[8m", errControlByte(0x1b)),                                          // N7, continuation line
+		atExact("even_backslash_recipe", n8, "\t@echo a \\\\\\\\", errEvenBackslashes),                   // N8
+		atExact("comment_continuation", valid+"# fin \\\ninclude evil.mk\n", `# fin \`, errContinuation), // N9
+		at("assign_continuation", n10, "EVAL ?= \\", errContinuation),                                    // N10
+		at("bidi_in_recipe", n11, "a\u202eb", errCharacter('\u202e')),                                    // N11
+		at("invalid_utf8_comment", afterOPA("# a\xffb\n"), "# a\xffb", errCharacter('\ufffd')),           // N12
+		at("nonascii_indented_comment", afterOPA("  # arrêt\n"), "  # arrêt", errNonASCII),               // N13
+		{name: "continuation_at_eof", src: n14, wantErr: fmt.Sprintf("line %d: %s", // N14
+			exactLine(t, n14, "\t@echo x \\"), errContinuationAtEOF)},
 	}
 	positives := []testCase{
 		{name: "valid_template", src: valid}, // GP1
@@ -1466,16 +1632,34 @@ func TestMakefileGrammar(t *testing.T) {
 		{name: "comments_with_syntax", src: mustReplace(t, valid, ".DEFAULT_GOAL := verify-quick\n", // GP3
 			".DEFAULT_GOAL := verify-quick\n# "+evilInclude+" # :\n  # include evil.mk\n")},
 		{name: "reference_dev_makefile", src: referenceDevMakefile(t)}, // GP4
+		// V2, D13: French text in a column-0 comment and in a recipe line.
+		{name: "french_text", src: editRule(t, afterOPA("# Étape « démo » d’essai, arrêt : à revoir\n"), "dev-down", // GP5
+			func(rule string, recipe []string) []string {
+				return slices.Concat([]string{rule}, recipe, []string{"\t@echo \"arrêt : terminé, « rien » à faire\""})
+			})},
+		// V2, D11: an odd number of backslashes greater than one continues a recipe line.
+		// Joined like one backslash (make joins too): one logical recipe line, the
+		// final backslash removed, a line read alone would diverge from make.
+		{name: "odd_backslash_recipe", src: addRecipeLines("dev", "\t@echo a \\\\\\", "\t\tb"), // GP6
+			check: func(t *testing.T, mf parsedMakefile) {
+				recipe := mf.Rules["dev"].Recipe
+				if !slices.Contains(recipe, `echo a \\ b`) || slices.Contains(recipe, "b") {
+					t.Errorf("dev recipe = %q, want the logical line %q (three backslashes continue the line)", recipe, `echo a \\ b`)
+				}
+			}},
 	}
 
 	run := func(t *testing.T, cases []testCase) {
 		t.Helper()
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				_, err := parseMakefile(tc.src)
+				mf, err := parseMakefile(tc.src)
 				if tc.wantErr == "" {
 					if err != nil {
 						t.Fatalf("parseMakefile refused a conforming input: %v", err)
+					}
+					if tc.check != nil {
+						tc.check(t, mf)
 					}
 					return
 				}
@@ -1621,5 +1805,44 @@ func TestMakefileSubMakeCalls(t *testing.T) {
 			t.Fatalf("Makefile: %v", err)
 		}
 		reportProblems(t, checkSubMakeCalls(mf))
+	})
+}
+
+// TestMakeLexerHelpers (M0-T04b V2, D14, threat T32): GNU make only treats
+// spaces and tabs as blanks. NBSP, NEL and U+2028 are text for make, so a line
+// they start is not a comment and a sub-make behind them is checked. Tested
+// directly: D13 keeps these characters out of any input parseMakefile accepts.
+func TestMakeLexerHelpers(t *testing.T) {
+	t.Run("trim_ascii_blanks_only", func(t *testing.T) { // H1
+		if got, want := makeTrim(" \t\u00a0x\u0085\t "), "\u00a0x\u0085"; got != want {
+			t.Errorf("makeTrim removed Unicode blanks: got %q, want %q", got, want)
+		}
+		if got := makeTrim(" \tx\t "); got != "x" {
+			t.Errorf("makeTrim(%q) = %q, want %q", " \tx\t ", got, "x")
+		}
+	})
+	t.Run("comment_after_unicode_blank", func(t *testing.T) { // H2
+		for _, tc := range []struct {
+			text string
+			want bool
+		}{
+			{"\u00a0# x", false}, // NBSP is not a blank for make
+			{"  \t# x", true},    // spaces then a tab: make comment
+			{"\t# x", false},     // recipe line: shell text
+		} {
+			if got := isMakeComment(makeLine{Num: 1, Text: tc.text}); got != tc.want {
+				t.Errorf("isMakeComment(%q) = %t, want %t", tc.text, got, tc.want)
+			}
+		}
+	})
+	t.Run("submake_after_unicode_blank", func(t *testing.T) { // H3
+		const mustBe = `sub-make must be exactly "$(MAKE) -f Makefile --no-print-directory <target>" on its own recipe line (T32)`
+		problems := checkSubMakeCalls(parsedMakefile{
+			Rules: map[string]makeRule{},
+			Lines: []makeLine{{Num: 1, Text: "\u2028# $(MAKE) -C x"}},
+		})
+		if len(problems) != 1 || !strings.HasPrefix(problems[0], "Makefile line 1: "+mustBe) {
+			t.Errorf("problems = %q, want exactly one starting with %q", problems, "Makefile line 1: "+mustBe)
+		}
 	})
 }

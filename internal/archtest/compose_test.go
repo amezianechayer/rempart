@@ -1014,7 +1014,7 @@ func findComposeCalls(mf parsedMakefile, problems *problemList) []composeCall {
 	var calls []composeCall
 	for _, l := range mf.Lines {
 		text := l.Text
-		if strings.HasPrefix(strings.TrimSpace(text), "#") {
+		if isMakeComment(l) {
 			continue
 		}
 		for _, loc := range composeCallRe.FindAllStringIndex(text, -1) {
@@ -1091,7 +1091,7 @@ func checkDevTargets(mf parsedMakefile) []string {
 
 	for _, l := range mf.Lines {
 		text := l.Text
-		if strings.HasPrefix(strings.TrimSpace(text), "#") {
+		if isMakeComment(l) {
 			continue
 		}
 		cmd := strings.TrimLeft(text, "\t@-+ ")

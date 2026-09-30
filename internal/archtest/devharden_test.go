@@ -461,9 +461,9 @@ func runnerBoundary(s string) bool {
 // end of the line. The legacy docker-compose binary is refused.
 func checkComposeInvocations(name, src string) []string {
 	var problems problemList
-	for _, l := range joinMakeLines(src) {
+	for _, l := range joinShellLines(src) {
 		text := l.Text
-		if strings.HasPrefix(strings.TrimSpace(text), "#") {
+		if strings.HasPrefix(strings.TrimLeft(text, " \t"), "#") {
 			continue
 		}
 		for _, loc := range composeCallRe.FindAllStringIndex(text, -1) {
@@ -485,6 +485,31 @@ func checkComposeInvocations(name, src string) []string {
 		}
 	}
 	return problems
+}
+
+// joinShellLines splits a shell script (or the Makefile, already accepted by
+// lexMakefile) into logical lines for checkComposeInvocations: a physical line
+// ending with a backslash is joined with the next one (one space, leading
+// blanks of the next line removed). It is not the Makefile lexer: parseMakefile
+// uses lexMakefile (M0-T04b V2, D11 to D14), stricter; on a Makefile accepted
+// by lexMakefile both give the same logical lines (a final empty line aside).
+func joinShellLines(src string) []makeLine {
+	var lines []makeLine
+	pending := false
+	for i, raw := range strings.Split(src, "\n") {
+		raw = strings.TrimSuffix(raw, "\r")
+		if pending {
+			lines[len(lines)-1].Text += " " + strings.TrimLeft(raw, " \t")
+		} else {
+			lines = append(lines, makeLine{Num: i + 1, Text: raw})
+		}
+		last := &lines[len(lines)-1]
+		pending = strings.HasSuffix(last.Text, `\`)
+		if pending {
+			last.Text = strings.TrimRight(strings.TrimSuffix(last.Text, `\`), " ")
+		}
+	}
+	return lines
 }
 
 // bootstrapComposeLine is line 4 of scripts/dev-bootstrap.sh (section 3).
