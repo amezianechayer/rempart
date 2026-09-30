@@ -24,6 +24,11 @@ export GOFLAGS
 .PHONY: verify-quick verify opa-test arch-test evals update-baseline
 .PHONY: dev dev-preflight dev-down demo sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
 
+# Menace T32 : sans règle explicite pour lui, GNU make referait le Makefile par une règle
+# implicite intégrée (Makefile.sh, Makefile,v, RCS/, SCCS/) avant toute recette, même sous -n.
+# Cette règle sans prérequis ni recette l'en empêche (M0-make-subcalls D16).
+Makefile: ;
+
 verify-quick:
 	go build ./...
 	golangci-lint run ./...

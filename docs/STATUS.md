@@ -509,3 +509,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-30 01:48 [harnais] RETOUR EN PHASE TESTS depuis impl : BLOCK securite M0-T04b : parseur Makefile a durcir (eval, RECIPEPREFIX, MAKE_COMMAND)
 
 - 2026-09-30 01:48 [harnais] phase : impl -> tests
+
+- 2026-09-30 11:48 [harnais] phase : tests -> impl
