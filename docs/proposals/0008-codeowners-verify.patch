@@ -1,0 +1,18 @@
+diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS
+--- a/.github/CODEOWNERS
++++ b/.github/CODEOWNERS
+@@ -5,3 +5,14 @@
+ /evals/ @amezianechayer
+ /docs/decisions/ @amezianechayer
+ /Makefile @amezianechayer
++# M0-T04, revue sécurité (T32, T82) : ce qui définit ce que `verify` vérifie.
++/GNUmakefile @amezianechayer
++/makefile @amezianechayer
++/GNUMakefile @amezianechayer
++/internal/archtest/ @amezianechayer
++/.golangci.yml @amezianechayer
++/scripts/ @amezianechayer
++/docker-compose.yml @amezianechayer
++/go.mod @amezianechayer
++/go.sum @amezianechayer
++/policies/ @amezianechayer

@@ -12,8 +12,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
-	"strings"
 	"time"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -37,19 +37,31 @@ var (
 	ErrMaxTokens         = errors.New("anthropic: max tokens reached")
 	ErrUnexpectedStop    = errors.New("anthropic: unexpected stop reason")
 	ErrInvalidUsage      = errors.New("anthropic: invalid usage")
+	ErrTimeout           = errors.New("anthropic: timeout")
+	ErrResponseTooLarge  = errors.New("anthropic: response too large")
+	ErrInvalidMetadata   = errors.New("anthropic: invalid response metadata")
+	ErrReencoded         = errors.New("anthropic: schema reencoded")
 )
 
 var _ ports.ModelProvider = (*Provider)(nil)
 
-// models: constants of anthropic-sdk-go v1.75.0 (message.go), 2026-09-24.
-const models = "claude-opus-5-5 claude-opus-5 claude-sonnet-5 claude-haiku-4-5 claude-sonnet-4-5 claude-sonnet-4-5-20250929"
+const MaxResponseBytes = 1 << 20
+
+// sdkModels: the models of the SDK that CheckPolicy pins (T51, T80).
+var sdkModels = []string{
+	sdk.ModelClaudeFable5_1, sdk.ModelClaudeOpus5_5, sdk.ModelClaudeMythos5_1, sdk.ModelClaudeSonnet5,
+	sdk.ModelClaudeFable5, sdk.ModelClaudeMythos5, sdk.ModelClaudeOpus5, sdk.ModelClaudeOpus4_8,
+	sdk.ModelClaudeOpus4_7, sdk.ModelClaudeOpus4_6, sdk.ModelClaudeSonnet4_6,
+	sdk.ModelClaudeHaiku4_5_20251001, sdk.ModelClaudeOpus4_5_20251101, sdk.ModelClaudeSonnet4_5_20250929,
+}
+
+var metaPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type Config struct {
-	APIKey     secret.Value
-	BaseURL    string
-	Timeout    time.Duration
-	MaxRetries int
-	Transport  http.RoundTripper
+	APIKey    secret.Value
+	BaseURL   string
+	Timeout   time.Duration
+	Transport http.RoundTripper
 }
 
 // APIError keeps no body, no request, no key.
@@ -71,7 +83,7 @@ type Provider struct{ msgs sdk.MessageService }
 
 func New(cfg Config) (*Provider, error) {
 	u, err := url.Parse(cfg.BaseURL)
-	if err != nil || cfg.APIKey.IsZero() || cfg.Timeout <= 0 || cfg.Timeout > 10*time.Minute || cfg.MaxRetries < 0 || cfg.MaxRetries > 3 {
+	if err != nil || cfg.APIKey.IsZero() || cfg.Timeout <= 0 || cfg.Timeout > 10*time.Minute {
 		return nil, ErrInvalidConfig
 	}
 	ip := net.ParseIP(u.Hostname())
@@ -79,20 +91,70 @@ func New(cfg Config) (*Provider, error) {
 	if u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && (u.Scheme != "http" || !local)) {
 		return nil, ErrInvalidConfig
 	}
-	rt := cfg.Transport
-	if rt == nil {
-		rt = noProxy()
+	rt, ok := transport(cfg.Transport)
+	if !ok {
+		return nil, ErrInvalidConfig
 	}
 	c := sdk.NewClient(
 		option.WithoutEnvironmentDefaults(),
 		option.WithBaseURL(u.String()),
-		option.WithHTTPClient(&http.Client{Transport: rt, CheckRedirect: refuse, Timeout: cfg.Timeout}),
+		option.WithHTTPClient(&http.Client{Transport: capped{rt}, CheckRedirect: refuse, Timeout: cfg.Timeout}),
 		option.WithAPIKey(cfg.APIKey.Reveal()),
-		option.WithMaxRetries(cfg.MaxRetries),
+		option.WithMaxRetries(0),
 		option.WithRequestTimeout(cfg.Timeout),
 	)
 	return &Provider{msgs: c.Messages}, nil
 }
+
+func transport(rt http.RoundTripper) (http.RoundTripper, bool) { // T47
+	if rt == nil {
+		return noProxy(), true
+	}
+	t, ok := rt.(*http.Transport)
+	if !ok || t == nil || t.Proxy != nil {
+		return nil, false
+	}
+	return t.Clone(), true
+}
+
+type capped struct{ rt http.RoundTripper } // T49
+
+func (c capped) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := c.rt.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	if resp.ContentLength > MaxResponseBytes {
+		_ = resp.Body.Close()
+		return nil, ErrResponseTooLarge
+	}
+	resp.Body = &cappedBody{rc: resp.Body, left: MaxResponseBytes}
+	return resp, nil
+}
+
+type cappedBody struct {
+	rc   io.ReadCloser
+	left int64
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.left <= 0 {
+		var one [1]byte
+		n, err := b.rc.Read(one[:])
+		if n > 0 {
+			return 0, ErrResponseTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(p)) > b.left {
+		p = p[:b.left]
+	}
+	n, err := b.rc.Read(p)
+	b.left -= int64(n)
+	return n, err
+}
+
+func (b *cappedBody) Close() error { return b.rc.Close() }
 
 func noProxy() http.RoundTripper {
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
@@ -123,33 +185,57 @@ func (p *Provider) call(ctx context.Context, route domain.Route, req domain.Requ
 	if withTools && req.HasUntrusted() {
 		return domain.Response{}, domain.ErrUntrustedWithTools
 	}
-	params, err := buildParams(route, req, tools, withTools)
+	params, want, err := buildParams(route, req, tools, withTools)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	msg, err := p.msgs.New(ctx, params)
+	msg, err := p.msgs.New(ctx, params, option.WithMiddleware(verifiedBytes(want)))
 	var aerr *sdk.Error
 	switch {
 	case err == nil:
-		return convertMessage(msg, req.MaxTokens, withTools)
+		return convertMessage(msg, req.MaxTokens, tools, withTools)
 	case ctx.Err() != nil:
 		return domain.Response{}, ctx.Err()
 	case errors.Is(err, ErrRedirectRefused):
 		return domain.Response{}, ErrRedirectRefused
+	case errors.Is(err, ErrResponseTooLarge):
+		return domain.Response{}, ErrResponseTooLarge
+	case errors.Is(err, ErrReencoded):
+		return domain.Response{}, ErrReencoded
+	case isTimeout(err):
+		return domain.Response{}, ErrTimeout
 	case errors.As(err, &aerr):
-		return domain.Response{}, &APIError{StatusCode: aerr.StatusCode, RequestID: aerr.RequestID}
+		return domain.Response{}, &APIError{StatusCode: aerr.StatusCode, RequestID: meta(aerr.RequestID)}
 	default:
 		return domain.Response{}, ErrTransport
 	}
 }
 
-func buildParams(route domain.Route, req domain.Request, tools []domain.ToolSpec, withTools bool) (sdk.MessageNewParams, error) {
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout()
+}
+
+func meta(s string) string {
+	if metaPattern.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+type sent struct {
+	schema json.RawMessage
+	tools  [][]byte
+}
+
+func buildParams(route domain.Route, req domain.Request, tools []domain.ToolSpec, withTools bool) (sdk.MessageNewParams, sent, error) {
 	var out sdk.MessageNewParams
+	var want sent
 	if err := req.Validate(); err != nil {
-		return out, err
+		return out, sent{}, err
 	}
 	if req.MaxTokens < 1 || req.MaxTokens > 1<<16 || (!withTools && len(req.Schema) == 0) || (withTools && len(tools) == 0) {
-		return out, domain.ErrInvalidRequest
+		return out, sent{}, domain.ErrInvalidRequest
 	}
 	out.Model, out.MaxTokens = route.Model, int64(req.MaxTokens)
 	if req.System != "" {
@@ -167,24 +253,77 @@ func buildParams(route domain.Route, req domain.Request, tools []domain.ToolSpec
 		out.Messages = append(out.Messages, sdk.MessageParam{Role: sdk.MessageParamRole(m.Role), Content: blocks})
 	}
 	if len(req.Schema) > 0 {
-		schema, ok := decodeObject(req.Schema)
+		c, ok := compactObject(req.Schema)
 		if !ok {
-			return out, domain.ErrInvalidRequest
+			return out, sent{}, domain.ErrInvalidRequest
 		}
-		out.OutputConfig = sdk.OutputConfigParam{Format: sdk.JSONOutputFormatParam{Schema: schema}}
+		want.schema = c
+		out.OutputConfig = sdk.OutputConfigParam{Format: param.Override[sdk.JSONOutputFormatParam](
+			json.RawMessage(`{"type":"json_schema","schema":` + string(c) + `}`))}
 	}
 	for _, t := range tools {
-		if _, ok := decodeObject(t.InputSchema); !ok || t.Name == "" {
-			return out, domain.ErrInvalidRequest
+		c, ok := compactObject(t.InputSchema)
+		if !ok || t.Name == "" {
+			return out, sent{}, domain.ErrInvalidRequest
 		}
-		tp := sdk.ToolUnionParamOfTool(param.Override[sdk.ToolInputSchemaParam](json.RawMessage(bytes.Clone(t.InputSchema))), t.Name)
+		want.tools = append(want.tools, c)
+		tp := sdk.ToolUnionParamOfTool(param.Override[sdk.ToolInputSchemaParam](json.RawMessage(bytes.Clone(c))), t.Name)
 		tp.OfTool.Strict = sdk.Bool(true)
 		if t.Description != "" {
 			tp.OfTool.Description = sdk.String(t.Description)
 		}
 		out.Tools = append(out.Tools, tp)
 	}
-	return out, nil
+	return out, want, nil
+}
+
+func compactObject(raw json.RawMessage) (json.RawMessage, bool) {
+	if _, ok := decodeObject(raw); !ok {
+		return nil, false
+	}
+	var b bytes.Buffer
+	if json.Compact(&b, raw) != nil {
+		return nil, false
+	}
+	return b.Bytes(), true
+}
+
+type sentBody struct {
+	OutputConfig struct {
+		Format struct {
+			Schema json.RawMessage `json:"schema"`
+		} `json:"format"`
+	} `json:"output_config"`
+	Tools []struct {
+		InputSchema json.RawMessage `json:"input_schema"`
+	} `json:"tools"`
+}
+
+// verifiedBytes refuses, before any I/O, a body whose schemas are not the
+// compacted verified bytes (T70).
+func verifiedBytes(want sent) option.Middleware {
+	return func(r *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		if r.GetBody == nil {
+			return nil, ErrReencoded
+		}
+		rc, err := r.GetBody()
+		if err != nil {
+			return nil, ErrReencoded
+		}
+		body, err := io.ReadAll(rc)
+		_ = rc.Close()
+		var got sentBody
+		if err != nil || json.Unmarshal(body, &got) != nil ||
+			!bytes.Equal(got.OutputConfig.Format.Schema, want.schema) || len(got.Tools) != len(want.tools) {
+			return nil, ErrReencoded
+		}
+		for i, t := range want.tools {
+			if !bytes.Equal(got.Tools[i].InputSchema, t) {
+				return nil, ErrReencoded
+			}
+		}
+		return next(r)
+	}
 }
 
 func decodeObject(raw json.RawMessage) (map[string]any, bool) {
@@ -198,12 +337,19 @@ func decodeObject(raw json.RawMessage) (map[string]any, bool) {
 	return m, errors.Is(err, io.EOF)
 }
 
-func convertMessage(msg *sdk.Message, maxTokens int, withTools bool) (domain.Response, error) {
+func convertMessage(msg *sdk.Message, maxTokens int, tools []domain.ToolSpec, withTools bool) (domain.Response, error) {
 	if msg == nil {
 		return domain.Response{}, ErrEmptyResponse
 	}
+	if !metaPattern.MatchString(msg.ID) || !metaPattern.MatchString(msg.Model) {
+		return domain.Response{}, ErrInvalidMetadata
+	}
 	switch msg.StopReason {
-	case sdk.StopReasonEndTurn, sdk.StopReasonToolUse:
+	case sdk.StopReasonEndTurn:
+	case sdk.StopReasonToolUse:
+		if !withTools {
+			return domain.Response{}, ErrUnexpectedContent
+		}
 	case sdk.StopReasonRefusal:
 		return domain.Response{}, ErrRefusal
 	case sdk.StopReasonMaxTokens:
@@ -221,7 +367,7 @@ func convertMessage(msg *sdk.Message, maxTokens int, withTools bool) (domain.Res
 		switch {
 		case b.Type == "text":
 			resp.Output = append(resp.Output, b.Text...)
-		case b.Type == "tool_use" && withTools:
+		case b.Type == "tool_use" && withTools && slices.ContainsFunc(tools, func(t domain.ToolSpec) bool { return t.Name == b.Name }):
 			resp.ToolCalls = append(resp.ToolCalls, domain.ToolCall{Name: b.Name, Input: bytes.Clone(b.Input)})
 		default:
 			return domain.Response{}, ErrUnexpectedContent
@@ -234,6 +380,6 @@ func convertMessage(msg *sdk.Message, maxTokens int, withTools bool) (domain.Res
 }
 
 func (p *Provider) Capabilities(route domain.Route) domain.Capabilities {
-	known := route.Platform == domain.PlatformAnthropic && route.Region == "" && slices.Contains(strings.Fields(models), route.Model)
+	known := route.Platform == domain.PlatformAnthropic && route.Region == "" && slices.Contains(sdkModels, route.Model)
 	return domain.Capabilities{NativeStructuredOutput: known, StrictTools: known, RequiresRetention: true}
 }

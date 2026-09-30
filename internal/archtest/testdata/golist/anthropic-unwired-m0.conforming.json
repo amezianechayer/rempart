@@ -1,0 +1,16 @@
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/llm/adapters/anthropic",
+	"Imports": [
+		"context",
+		"github.com/amezianechayer/rempart/internal/llm/domain",
+		"github.com/amezianechayer/rempart/internal/llm/ports",
+		"github.com/anthropics/anthropic-sdk-go"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/cmd/rempart-worker",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/llm",
+		"github.com/amezianechayer/rempart/internal/llm/fake"
+	]
+}

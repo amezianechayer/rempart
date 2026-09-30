@@ -32,6 +32,7 @@ const (
 	MaxRequestTextBytes = 1 << 20
 	MaxCorrectionsLimit = 3
 	MaxTokensLimit      = 1 << 16
+	MaxReportedTokens   = 1 << 24
 )
 
 type Config struct {
@@ -148,8 +149,15 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 		Tenant: tenant, Platform: route.Platform, Region: route.Region, Model: route.Model,
 		PromptID: prompt.ID, PromptHash: prompt.Hash, Redactions: redactions,
 	}
+	bound := 0
+	spent := func(err error) (Result, []domain.ToolCall, error) {
+		return Result{}, nil, &UsageError{Err: err, Usage: tr.Usage, Bound: bound}
+	}
 	for attempt := 0; ; attempt++ {
 		if cerr := ctx.Err(); cerr != nil { // S13
+			if attempt > 0 { // after a call (av)
+				return spent(cerr)
+			}
 			return Result{}, nil, cerr
 		}
 		var resp domain.Response
@@ -160,12 +168,18 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 		}
 		tr.Attempts++
 		if err != nil {
-			return Result{}, nil, opaque(ErrProviderFailed, err)
+			bound += call.MaxTokens + RequestBytes(req)
+			return spent(opaque(ErrProviderFailed, err))
+		}
+		if !validUsage(resp.Usage) { // (be): a negative or oversized count would lower the bound
+			bound += call.MaxTokens + RequestBytes(req) // (be)
+			return spent(ErrProviderFailed)
 		}
 		tr.Usage.InputTokens += resp.Usage.InputTokens
 		tr.Usage.OutputTokens += resp.Usage.OutputTokens
+		bound += resp.Usage.InputTokens + resp.Usage.OutputTokens
 		if resp.Model != route.Model { // S14
-			return Result{}, nil, ErrModelMismatch
+			return spent(ErrModelMismatch)
 		}
 		out, calls, verr := checkOutput(prompt.Schema, toolSchemas, resp) // S15
 		if verr == nil {
@@ -173,10 +187,15 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 			return Result{Output: out, Trace: tr}, calls, nil
 		}
 		if !errors.Is(verr, schema.ErrOutOfSchema) || attempt >= c.cfg.MaxCorrections {
-			return Result{}, nil, verr
+			return spent(verr)
 		}
 		req.Messages = append(req.Messages, correction(verr))
 	}
+}
+
+// validUsage: each declared count is in [0, MaxReportedTokens] (be, T10).
+func validUsage(u domain.Usage) bool {
+	return u.InputTokens >= 0 && u.OutputTokens >= 0 && u.InputTokens <= MaxReportedTokens && u.OutputTokens <= MaxReportedTokens
 }
 
 // loadPrompt: a secret in a system prompt is refused, never masked (hash).

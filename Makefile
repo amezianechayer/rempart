@@ -17,9 +17,12 @@ override EVAL := $(value EVAL)
 override POLICIES_DIR := $(value POLICIES_DIR)
 override OPA := $(value OPA)
 export SCENARIO EVAL POLICIES_DIR OPA
+export GOWORK := off
+override GOFLAGS := -mod=readonly
+export GOFLAGS
 
 .PHONY: verify-quick verify opa-test arch-test evals update-baseline
-.PHONY: dev dev-preflight dev-down sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
+.PHONY: dev dev-preflight dev-down demo sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
 
 verify-quick:
 	go build ./...
@@ -29,7 +32,9 @@ verify-quick:
 	$(MAKE) --no-print-directory arch-test
 
 verify: verify-quick
-	go test -tags=integration ./...
+	$(MAKE) --no-print-directory dev
+	go test -tags=integration $$(go list ./... | grep -v '/internal/archtest$$')
+	bash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest
 	go tool govulncheck ./...
 
 # Étape OPA active seulement s'il existe au moins un fichier .rego sous POLICIES_DIR.
@@ -47,7 +52,7 @@ opa-test:
 
 arch-test:
 	go test -count=1 ./internal/archtest/...
-	go tool workflowcheck -config workflowcheck.config.yaml ./internal/loops/...
+	go tool workflowcheck ./internal/loops/...
 
 # Evals : livrées par M0-T23 (cmd/rempart-evals). Avant : code 2, aucune action.
 evals:
@@ -61,20 +66,30 @@ update-baseline:
 	@[[ "$${EVAL:-}" =~ ^[a-z0-9][a-z0-9/_-]{0,126}$$ ]] || { echo "EVAL requis, au format [a-z0-9/_-] (ex. EVAL=demo)." >&2; exit 2; }
 	go run ./cmd/rempart-evals --suite "$$EVAL" --write-baseline
 
-# Pile de développement : livrée par M0-T03 (docker-compose.yml, dev-preflight en prérequis).
-dev:
-	@echo "dev : pile de développement livrée par M0-T03 (docker-compose.yml absent) ; aucune action." >&2
-	@exit 2
+# Pile de développement (M0-T03) : dev-preflight, .env.dev, up --wait, bootstrap.
+dev: dev-preflight
+	@test -f .env.dev || ! docker volume inspect rempart-dev_pgdata >/dev/null 2>&1 || { echo "dev : .env.dev absent mais le volume rempart-dev_pgdata existe (voir docs/SETUP.md)." >&2; exit 2; }
+	bash scripts/dev-env.sh ensure
+	bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull
+	bash scripts/dev-bootstrap.sh
+
+# Démo de bout en bout (M0-T20) : faux LLM derrière -dev, vérificateur qui refuse tout,
+# tenant de démo fixe. Sortie standard : un seul document JSON.
+demo:
+	@$(MAKE) --no-print-directory dev >&2
+	@go run ./cmd/rempart-worker -dev -demo-once -llm=fake -tenant=0d3e0000-0000-4000-8000-000000000001 \
+		-temporal-address=127.0.0.1:7233 -namespace=rempart \
+		-fake-script=internal/loops/demo/testdata/scripts/converge.json
 
 # Vérifie Docker Engine, le plugin compose v2 et l'accès au démon, sans rien démarrer.
 dev-preflight:
-	@docker compose version >/dev/null 2>&1 || { echo "dev-preflight : Docker Engine et le plugin compose v2 sont requis (voir docs/SETUP.md)." >&2; exit 2; }
-	@docker info >/dev/null 2>&1 || { echo "dev-preflight : démon Docker injoignable (voir docs/SETUP.md)." >&2; exit 2; }
-	@echo "dev-preflight : Docker et compose v2 disponibles."
+	@bash scripts/dev-preflight.sh
 
-# Arrêt idempotent : rien à arrêter tant que M0-T03 n'a pas livré docker-compose.yml.
-dev-down:
-	@echo "dev-down : aucune pile à arrêter avant M0-T03 (docker-compose.yml absent)."
+# Arrêt idempotent ; volume conservé (réinitialisation : docs/SETUP.md).
+dev-down: dev-preflight
+	@if [ -f .env.dev ]; then bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml down --remove-orphans; \
+	elif [ -z "$$(docker ps -aq --filter label=com.docker.compose.project=rempart-dev)" ]; then echo "dev-down : aucune pile à arrêter."; \
+	else echo "dev-down : conteneurs rempart-dev sans .env.dev (voir docs/SETUP.md)." >&2; exit 2; fi
 
 # Garde des trois cibles de bac à sable (scripts/sandbox.sh arrive en M3).
 # Prérequis : s'exécute avant toute validation et toute question interactive.

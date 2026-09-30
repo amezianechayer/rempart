@@ -330,3 +330,29 @@ func TestStrictNameLengths(t *testing.T) {
 		wantNotStrict(t, s)
 	}
 }
+
+// TestSchemaRawEscapeDigits: a decoded backslash followed by a decimal digit
+// reads as an octal or backreference escape (\101 is A) and is refused, as is
+// a hexadecimal escape in upper case (Y4); a backslash before a letter that is
+// no escape, a blank or a dash stays admitted (D7, obligation (ab)).
+func TestSchemaRawEscapeDigits(t *testing.T) {
+	for _, s := range []string{
+		wrap(`{"type":"string","description":"a\\101b"}`),
+		wrap(`{"type":"string","description":"a\\0"}`),
+		wrap(`{"type":"string","description":"a\\9"}`),
+		wrap(`{"type":"string","description":"a\\xA1b"}`),
+		wrap(`{"type":"string","description":"a\\uABCD"}`),
+		wrap(`{"type":"string","pattern":"^\\101$"}`),
+	} {
+		wantNotStrict(t, s)
+	}
+	for _, s := range []string{
+		wrap(`{"type":"string","description":"a\\d"}`),
+		wrap(`{"type":"string","description":"a\\ b"}`),
+		wrap(`{"type":"string","description":"a\\-"}`),
+	} {
+		if _, err := CompileSchema([]byte(s)); err != nil {
+			t.Errorf("CompileSchema(%s) = %v, want nil", s, err)
+		}
+	}
+}

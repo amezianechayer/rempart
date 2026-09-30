@@ -1,6 +1,10 @@
 # Squelette Go/Temporal de RunLoop
 
-Point de départ pour `internal/loops`. À adapter, pas à copier aveuglément. Les types de domaine concrets restent dans leurs modules ; la boucle manipule des `json.RawMessage`.
+Référence : le moteur générique est implémenté dans `internal/loops` (M0-T14, T15, T19b, T19c). Ce fichier n'est plus un point de départ à copier : il résume les déclarations compilées et les règles qui les entourent. En cas d'écart, le code et ses tests font foi. Exemple complet de boucle : `internal/loops/demo` (M0-T19d, fiche `docs/loops/L0-demo.md`).
+
+## Déclarations (paquet `loops`, sans corps de fonction)
+
+Types, constantes et signatures exportés, extraits du code à M0-T19d. `domain.Finding` vient de `internal/loops/domain` (voir `normalized-findings.md`).
 
 ```go
 package loops
@@ -9,8 +13,192 @@ import (
 	"encoding/json"
 	"time"
 
-	"go.temporal.io/sdk/temporal"
+	"github.com/amezianechayer/rempart/internal/loops/domain"
 	"go.temporal.io/sdk/workflow"
+)
+
+const ApprovalSignal = "approval"
+
+const ErrTypeInvalidApprovalRequest = "InvalidApprovalRequest"
+
+const (
+	DefaultMaxIgnored      = 100
+	MaxIgnoredLimit        = 1000
+	MaxRequiredApprovals   = 5
+	MaxApprovalTimeout     = 7 * 24 * time.Hour
+	VerifyApprovalTimeout  = 30 * time.Second
+	MaxApprovalSignalBytes = 8 << 10
+	MaxIdentityBytes       = 128
+)
+
+type ApprovalRequest struct {
+	PlanHash          string // SHA-256 of the plan, 64 lower-case hex digits
+	Author            string // canonical identity; none of its signals counts
+	Required          int    // distinct approvers, 1 to MaxRequiredApprovals
+	NeedsSecurityRole bool   // one of them at least has the security role
+	VerifyActivity    string // registered verification activity
+	MaxIgnored        int    // 0 means DefaultMaxIgnored
+}
+
+type Approval struct {
+	Approved  bool   `json:"approved"`
+	PlanHash  string `json:"plan_hash"`
+	Approver  string `json:"approver"`
+	Signature string `json:"signature"`
+}
+
+type ApprovalCheck struct {
+	SignatureValid bool `json:"signature_valid"`
+	SecurityRole   bool `json:"security_role"`
+}
+
+type ApprovalOutcome string
+
+const (
+	OutcomeApproved    ApprovalOutcome = "approved"
+	OutcomeRejected    ApprovalOutcome = "rejected"
+	OutcomeTimedOut    ApprovalOutcome = "timed_out"
+	OutcomeSignalFlood ApprovalOutcome = "signal_flood"
+)
+
+type IgnoredReason string
+
+const (
+	IgnoredMalformed         IgnoredReason = "malformed"
+	IgnoredWrongHash         IgnoredReason = "wrong_hash"
+	IgnoredSelfApproval      IgnoredReason = "self_approval"
+	IgnoredDuplicate         IgnoredReason = "duplicate"
+	IgnoredVerifyError       IgnoredReason = "verify_error"
+	IgnoredInvalidSignature  IgnoredReason = "invalid_signature"
+	IgnoredNeedsSecurityRole IgnoredReason = "needs_security_role"
+)
+
+type IgnoredSignal struct {
+	DeclaredApprover string        `json:"declared_approver"`
+	Reason           IgnoredReason `json:"reason"`
+}
+
+type ApprovalResult struct {
+	Outcome   ApprovalOutcome `json:"outcome"`
+	Approvals []Approval      `json:"approvals,omitempty"`
+	Ignored   []IgnoredSignal `json:"ignored,omitempty"`
+}
+
+// Validate checks r once defaults are applied. The error is a non-retryable
+// application error of type ErrTypeInvalidApprovalRequest that never quotes r.
+func (r ApprovalRequest) Validate() error
+
+// AwaitApprovals waits until req.Required distinct approvers approve
+// req.PlanHash, one of them with the security role if required, or until one
+// authenticated refusal. An invalid signal is recorded and ignored without
+// ending the wait, unless more than req.MaxIgnored were. Timeout: nothing is
+// approved. The error is an invalid request or the cancellation of ctx,
+// never an outcome.
+func AwaitApprovals(ctx workflow.Context, req ApprovalRequest, timeout time.Duration) (ApprovalResult, error)
+
+type ProposeRequest struct {
+	Payload   json.RawMessage  `json:"payload"`
+	Strategy  string           `json:"strategy"`
+	Best      json.RawMessage  `json:"best,omitempty"`
+	Findings  []domain.Finding `json:"findings,omitempty"`
+	Iteration int              `json:"iteration"`
+}
+
+type ProposeResponse struct {
+	Candidate json.RawMessage `json:"candidate"`
+	Tokens    int             `json:"tokens"`
+}
+
+type ProposeFailure struct {
+	Tokens int `json:"tokens"`
+}
+
+type VerifyRequest struct {
+	Payload   json.RawMessage `json:"payload"`
+	Candidate json.RawMessage `json:"candidate"`
+	Iteration int             `json:"iteration"`
+}
+
+type VerifyResult struct {
+	OK       bool             `json:"ok"`
+	Findings []domain.Finding `json:"findings"`
+}
+
+type Status string
+
+const (
+	StatusConverged Status = "converged"
+	StatusEscalated Status = "escalated"
+)
+
+type Reason string
+
+const (
+	ReasonBudgetIterations    Reason = "budget_iterations"
+	ReasonBudgetTokens        Reason = "budget_tokens"
+	ReasonBudgetTime          Reason = "budget_time"
+	ReasonStagnation          Reason = "stagnation"
+	ReasonStrategiesExhausted Reason = "strategies_exhausted"
+	ReasonActivityFailed      Reason = "activity_failed"
+	ReasonInvalidResponse     Reason = "invalid_response"
+)
+
+type IterationTrace struct {
+	Iteration   int    `json:"iteration"`
+	Strategy    string `json:"strategy"`
+	Failed      bool   `json:"failed"`
+	Verified    bool   `json:"verified"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Score       int    `json:"score"`
+	Findings    int    `json:"findings"`
+	Tokens      int    `json:"tokens"`
+}
+
+type LoopResult struct {
+	Status     Status           `json:"status"`
+	Reason     Reason           `json:"reason,omitempty"`
+	Best       json.RawMessage  `json:"best,omitempty"`
+	Remaining  []domain.Finding `json:"remaining,omitempty"`
+	Iterations int              `json:"iterations"`
+	Tokens     int              `json:"tokens"`
+	Trace      []IterationTrace `json:"trace"`
+}
+
+// RunLoop proposes and verifies until the verifier accepts a candidate, or a
+// budget, a stagnation, a failed activity or an invalid response escalates. An
+// escalation is a result, not an error: only an invalid spec or payload or a
+// cancellation ends in error.
+func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (LoopResult, error)
+
+const (
+	ErrTypeInvalidLoopSpec = "InvalidLoopSpec"
+	ErrTypeValidation      = "ValidationError"
+	ErrTypePolicyViolation = "PolicyViolation"
+	ErrTypeBudgetExceeded  = "BudgetExceeded"
+)
+
+const (
+	DefaultSwitchAfter     = 2
+	DefaultEscalateAfter   = 3
+	DefaultActivityTimeout = 5 * time.Minute
+
+	MaxIterationsLimit   = 100
+	MaxTokensLimit       = 10_000_000
+	MaxWallTimeLimit     = 24 * time.Hour
+	MinActivityTimeout   = time.Second
+	MaxActivityTimeout   = 30 * time.Minute
+	MaxStrategies        = 10
+	MaxFindingsToPropose = 20
+	MaxActivityAttempts  = 3
+	MaxEscalateAfter     = 10
+)
+
+const (
+	MaxPayloadBytes   = 64 << 10
+	MaxCandidateBytes = 64 << 10
+	MaxFindings       = 100
+	MaxFindingBytes   = 1 << 10
+	MaxNameBytes      = 64
 )
 
 type Budget struct {
@@ -19,215 +207,37 @@ type Budget struct {
 	MaxWallTime   time.Duration
 }
 
-type Finding struct {
-	Code     string `json:"code"`
-	Source   string `json:"source"`
-	Severity string `json:"severity"`
-	Resource string `json:"resource"`
-	File     string `json:"file"`
-	Line     int    `json:"line"`
-	Message  string `json:"message"`
-}
-
-type VerifyResult struct {
-	OK          bool      `json:"ok"`
-	Findings    []Finding `json:"findings"`
-	Fingerprint string    `json:"fingerprint"`
-	Score       int       `json:"score"` // plus bas = meilleur (somme pondérée des gravités)
-}
-
 type LoopSpec struct {
 	ID              string
 	ProposeActivity string
 	VerifyActivity  string
 	Strategies      []string
 	Budget          Budget
-	SwitchAfter     int // empreinte identique N fois : stratégie suivante (défaut 2)
-	EscalateAfter   int // empreinte identique N fois : escalade (défaut 3)
+	SwitchAfter     int
+	EscalateAfter   int
+	ActivityTimeout time.Duration
 }
 
-type ProposeRequest struct {
-	Payload   json.RawMessage `json:"payload"`
-	Strategy  string          `json:"strategy"`
-	Best      json.RawMessage `json:"best,omitempty"`
-	Findings  []Finding       `json:"findings,omitempty"`
-	Iteration int             `json:"iteration"`
-}
+// NonRetryableErrorTypes returns the activity error types never retried.
+func NonRetryableErrorTypes() []string
 
-type ProposeResponse struct {
-	Candidate json.RawMessage `json:"candidate"`
-	Tokens    int             `json:"tokens"`
-}
-
-type IterationTrace struct {
-	Iteration   int
-	Strategy    string
-	Fingerprint string
-	Findings    int
-	Tokens      int
-}
-
-type LoopResult struct {
-	Status     string // "converged" | "escalated"
-	Reason     string
-	Best       json.RawMessage
-	Remaining  []Finding
-	Iterations int
-	Tokens     int
-	Trace      []IterationTrace
-}
-
-func RunLoop(ctx workflow.Context, spec LoopSpec, payload json.RawMessage) (LoopResult, error) {
-	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
-		RetryPolicy: &temporal.RetryPolicy{
-			MaximumAttempts: 3,
-			// Une erreur de validation n'est pas transitoire : pas de retry automatique.
-			NonRetryableErrorTypes: []string{"ValidationError", "PolicyViolation", "BudgetExceeded"},
-		},
-	})
-	if spec.SwitchAfter == 0 {
-		spec.SwitchAfter = 2
-	}
-	if spec.EscalateAfter == 0 {
-		spec.EscalateAfter = 3
-	}
-
-	start := workflow.Now(ctx)
-	res := LoopResult{}
-	var best json.RawMessage
-	bestScore := int(^uint(0) >> 1)
-	var lastFindings []Finding
-	lastFP, sameFP, strat := "", 0, 0
-
-	escalate := func(reason string) (LoopResult, error) {
-		res.Status, res.Reason, res.Best, res.Remaining = "escalated", reason, best, lastFindings
-		return res, nil
-	}
-
-	for it := 1; it <= spec.Budget.MaxIterations; it++ {
-		if workflow.Now(ctx).Sub(start) > spec.Budget.MaxWallTime {
-			return escalate("budget temps dépassé")
-		}
-		req := ProposeRequest{Payload: payload, Strategy: spec.Strategies[strat], Best: best, Findings: top(lastFindings, 20), Iteration: it}
-		var prop ProposeResponse
-		if err := workflow.ExecuteActivity(ctx, spec.ProposeActivity, req).Get(ctx, &prop); err != nil {
-			return res, err
-		}
-		res.Tokens += prop.Tokens
-		if res.Tokens > spec.Budget.MaxTokens {
-			return escalate("budget tokens dépassé")
-		}
-
-		var vr VerifyResult
-		if err := workflow.ExecuteActivity(ctx, spec.VerifyActivity, prop.Candidate).Get(ctx, &vr); err != nil {
-			return res, err
-		}
-		res.Iterations = it
-		res.Trace = append(res.Trace, IterationTrace{it, spec.Strategies[strat], vr.Fingerprint, len(vr.Findings), prop.Tokens})
-
-		if vr.Score < bestScore {
-			best, bestScore = prop.Candidate, vr.Score
-		}
-		lastFindings = vr.Findings
-		if vr.OK {
-			res.Status, res.Best = "converged", prop.Candidate
-			return res, nil
-		}
-
-		// Empreintes identiques comptées sur des itérations consécutives, toutes stratégies confondues
-		// (le compteur n'est pas remis à zéro au changement de stratégie). Avec les défauts 2 et 3 :
-		// la stratégie suivante n'a qu'un essai pour faire changer l'erreur, et une troisième stratégie
-		// n'est atteinte que si l'empreinte a changé entre-temps. Conforme au critère 2 de prompts/M0.md.
-		if vr.Fingerprint == lastFP {
-			sameFP++
-		} else {
-			lastFP, sameFP = vr.Fingerprint, 1
-		}
-		switch {
-		case sameFP >= spec.EscalateAfter:
-			return escalate("stagnation : même empreinte d'erreur répétée")
-		case sameFP >= spec.SwitchAfter:
-			if strat+1 >= len(spec.Strategies) {
-				return escalate("stagnation : stratégies épuisées")
-			}
-			strat++
-		}
-	}
-	return escalate("budget itérations épuisé")
-}
-
-// ApprovalRequest : ce qu'il faut réunir avant d'appliquer un plan précis (règles du skill safe-autonomy).
-type ApprovalRequest struct {
-	PlanHash          string
-	Author            string // l'auteur du changement ne peut pas l'approuver
-	Required          int    // 1 ; 2 approbateurs distincts pour un risque critique
-	NeedsSecurityRole bool   // risque critique : au moins un approbateur de rôle sécurité
-}
-
-// Approval : décision humaine sur un hash de plan précis, signée par la clé de l'approbateur
-// (clé du client, ex. WebAuthn). Un signal Temporal n'est pas authentifié : seule la signature fait foi.
-type Approval struct {
-	Approved  bool   `json:"approved"`
-	PlanHash  string `json:"plan_hash"`
-	Approver  string `json:"approver"`
-	Signature string `json:"signature"`
-}
-
-// ApprovalCheck : résultat de l'activité déterministe VerifyApproval (signature, identité, rôle).
-type ApprovalCheck struct {
-	SignatureValid bool `json:"signature_valid"`
-	SecurityRole   bool `json:"security_role"`
-}
-
-// AwaitApprovals attend le quorum jusqu'au timeout. Un signal invalide (mauvais hash, auto-approbation,
-// signature invalide, doublon) est ignoré : il n'interrompt pas l'attente, sinon n'importe qui pourrait
-// bloquer une approbation. Un refus authentifié arrête l'attente. Timeout : ok=false, ne rien faire.
-// ctx doit porter des ActivityOptions (VerifyApproval est une activité).
-func AwaitApprovals(ctx workflow.Context, req ApprovalRequest, timeout time.Duration) ([]Approval, bool) {
-	ch := workflow.GetSignalChannel(ctx, "approval")
-	timer := workflow.NewTimer(ctx, timeout)
-	var approvals []Approval  // slice et non map : l'ordre d'itération d'une map n'est pas déterministe
-	seen := map[string]bool{} // lookups seulement, jamais d'itération
-	hasSecurity := false
-	for {
-		var got Approval
-		timedOut := false
-		sel := workflow.NewSelector(ctx)
-		sel.AddReceive(ch, func(c workflow.ReceiveChannel, _ bool) { c.Receive(ctx, &got) })
-		sel.AddFuture(timer, func(workflow.Future) { timedOut = true })
-		sel.Select(ctx)
-		if timedOut {
-			return nil, false
-		}
-		if got.PlanHash != req.PlanHash || got.Approver == req.Author || seen[got.Approver] {
-			continue
-		}
-		var check ApprovalCheck
-		if err := workflow.ExecuteActivity(ctx, "VerifyApproval", got).Get(ctx, &check); err != nil || !check.SignatureValid {
-			continue // l'activité journalise le rejet
-		}
-		if !got.Approved {
-			return nil, false
-		}
-		seen[got.Approver] = true
-		approvals = append(approvals, got)
-		hasSecurity = hasSecurity || check.SecurityRole
-		if len(approvals) >= req.Required && (!req.NeedsSecurityRole || hasSecurity) {
-			return approvals, true
-		}
-	}
-}
-
-func top(f []Finding, n int) []Finding {
-	if len(f) <= n {
-		return f
-	}
-	return f[:n] // les findings arrivent déjà triés par gravité depuis le vérificateur
-}
+// Validate checks s once defaults are applied. The error is a non-retryable
+// application error of type ErrTypeInvalidLoopSpec that never quotes s.
+func (s LoopSpec) Validate() error
 ```
 
+## Règles de conception retenues (écarts au squelette initial)
+
+- D10 à D12 de M0-T14 : l'empreinte et le score sont calculés dans le workflow à partir des findings (jamais fournis par le vérificateur : pas de champ `fingerprint` dans `VerifyResult`) ; les compteurs d'empreinte identique courent sur des itérations consécutives, toutes stratégies confondues ; une escalade est un résultat (`StatusEscalated` avec une `Reason` codée), jamais une erreur. V2 de M0-T14 : une itération dont l'activité échoue est tracée (`Failed`) et escalade en `activity_failed`.
+- Proposeur (T19b) : reprise seulement si la cause directe de l'échec est une `ApplicationError` rejouable portant un `ProposeFailure` canonique (`{"tokens":N}`), dont les tokens sont comptés ; sans cette déclaration, pas de reprise. Un adaptateur LLM renvoie toujours un `ProposeFailure` après un appel facturé (la démo compte 1024 tokens par échec facturable).
+- Bornes (T19b) : charge et candidat 64 Kio en UTF-8 valide, 100 findings de 1 Kio, noms de 64 octets ; tout dépassement est une `InvalidLoopSpec` ou une réponse invalide, avant ou pendant la boucle.
+- Approbation : `AwaitApprovals` renvoie un `ApprovalResult` (issue, approbations retenues, signaux ignorés avec raison codée) ; signal admis seulement sous forme canonique ; `DeclaredApprover` est une identité déclarée, jamais authentifiée avant M4 ; une seule attente d'approbation par workflow (obligation (o)) ; `ctx.Err()` contrôlé entre l'approbation et tout effet (obligation (m)).
+- Règles d'architecture (T19c, T19d, `internal/archtest/loopsrc.go`) : `RunLoop` et `AwaitApprovals` jamais enregistrés comme workflows ; `LoopSpec` et `ApprovalRequest` écrits en littéraux constants dans le code ; aucun décodage dans un paquet de workflow (cibles limitées à `converter.RawValue`, `Get` seulement sur un appel direct `ExecuteActivity`, `ExecuteLocalActivity` ou `ExecuteChildWorkflow`) ; méthode de décodage prise comme valeur et `Validator` hors appel refusés (aj) ; méthode ou fermeture prenant un `LoopSpec` refusée (ak) ; `internal/loops/fake` réservé aux tests ; `go.mod` imbriqué, `go.work` et liens symboliques refusés.
+- Activités d'une boucle concrète dans un paquet distinct sans `sdk/workflow` (ex. `internal/loops/demo/activities`) : le décodage y est permis, mais le code de workflow ne passe jamais une valeur du SDK (canal, future, erreur, `RawValue`) à une fonction de ce paquet ; les règles de décodage s'appliquent à tout paquet sous `internal/loops` hors `fake` (M0-T20, D13).
+- Règles ajoutées en M0-T20 (`internal/archtest`) : littéraux composites à clés nommées dans le code de workflow, sans clé seulement pour un tableau, une tranche ou une table de type explicite (D12) ; `reflect`, `unsafe`, `C`, `//go:linkname` et sources non Go refusés sous `internal/loops` (D14) ; attributs de recherche et mémo interdits dans le code de workflow, `GOFLAGS` neutralisé par le `Makefile` (D15) ; adaptateur Anthropic non câblé en M0 (`anthropic-unwired-m0`).
+- Échec du proposeur après un appel (M0-T20, D10, D11) : `llm.UsageError` porte l'usage déclaré et une borne haute (`Bound`) ; l'activité rend `ProposeFailure{Tokens: Bound}` ; seule une réponse hors schéma est rejouable, un 429 ou une autre panne escalade en `activity_failed` (l'attente bornée relève de l'adaptateur).
+
 ## Points d'attention
-- Le code de workflow doit rester déterministe : pas de `time.Now()`, pas d'aléatoire, pas d'appel réseau ; tout passe par `workflow.Now`, activités, `workflow.SideEffect`.
-- Au-delà de quelques centaines d'itérations cumulées, utiliser `ContinueAsNew` pour borner l'historique.
+- Le code de workflow reste déterministe : pas de `time.Now()`, pas d'aléatoire, pas d'appel réseau ; tout passe par `workflow.Now`, les activités, `workflow.SideEffect`. Vérifié par `go tool workflowcheck ./internal/loops/...`.
+- `ContinueAsNew` avant l'attente d'approbation et au-delà de quelques centaines d'itérations cumulées : reporté en M1 (amendement A1, tâches de l'ADR 0001), avec `workflow.GetVersion` pour les constantes de `spec.go`.
 - Une approbation doit aussi être revérifiée côté runner (hash et signature) : le workflow n'est pas la seule barrière.

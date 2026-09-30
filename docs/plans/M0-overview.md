@@ -35,6 +35,12 @@ Proposé par `architect` (`docs/plans/M0-demo-prep.md`, section 2) et retenu par
 - **M0-T19c `loops-archtest`** : obligations (d), (p), (l), (k) par tests `go/ast`.
 - **M0-T19d `demo-workflow`** : fiche M0-T19 selon A1 (7 tests, `ContinueAsNew` reporté en M1, `Input` sans `Phase` ni `Loop`), plus (m) côté démo, (o), (g) ; faux fournisseur seulement.
 
+### Amendement A4 (2026-09-27, plan `docs/plans/M0-worker-demo.md`)
+
+Retenu par l'agent sur délégation explicite de l'humain, réversible, à relire. Deux tâches ajoutées, M0 passe à 24 tâches :
+- **M0-T20b `llm-adapter-harden`** : conditions de la revue M0-T12 et obligations (aa) à (ad), terminée avant l'étape B de M0-T20.
+- **M0-T03b `pile-dev-harden`** : obligations (an) à (as) de M0-T03, après M0-T20 et avant `/close-milestone M0`.
+
 ## 1. Objectif
 
 Un squelette Go qui compile, se teste et s'exécute en CI, et qui fait tourner de bout en bout une boucle Temporal générique conforme au skill `loop-engineering` (proposer, vérifier, diagnostiquer, budget, stagnation, escalade, approbation), contre un faux LLM déterministe, **sans aucune logique métier**. Les cinq critères de `prompts/M0.md` sont prouvés par des commandes (section 8).

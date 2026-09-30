@@ -38,6 +38,10 @@ type Prompt struct {
 	Hash    string
 }
 
+// LoadFS loads the prompt id from fsys, which must hold no link: an embed.FS,
+// or the FS of an os.Root (os.Root.FS) that only the process writes. Links and
+// non-regular files are refused through fs.Lstat; an FS that does not
+// implement fs.ReadLinkFS follows links there and is outside this contract (T43).
 func LoadFS(fsys fs.FS, id string) (Prompt, error) {
 	m := idPattern.FindStringSubmatch(id)
 	if m == nil || len(id) > maxIDLen {

@@ -62,7 +62,7 @@ Le contrat commun à tous les fournisseurs : types de requête et de réponse ; 
 3. **`post_edit_check`** (`go vet` du paquet) : seuls `undefined: X` (symboles de la section 5) et `no non-test Go files` sont attendus ; toute autre erreur se corrige avant de continuer.
 4. **Porte `phase impl`** : `?? internal/llm/domain/` et `?? internal/llm/ports/` sont vus comme des dossiers, la porte dirait « aucun test nouveau » : `git add` des deux dossiers avant `phase impl` (7.4).
 5. **`guard_edit`** : tests modifiables en phase tests, gelés en impl ; production interdite en phase tests. Aucune fixture ne ressemble à un secret (aucun motif de clé, jeton, webhook) : marqueurs neutres `CANARY`, `r-7f3a`, identifiants de modèle publics.
-6. **Lint** : `bidichk` interdit les contrôles bidirectionnels bruts : les tests écrivent `"‮"`, et de même U+FF1C et consorts. `asciicheck` ne vise que les identifiants.
+6. **Lint** : `bidichk` interdit les contrôles bidirectionnels bruts : les tests écrivent `"\u202e"`, et de même U+FF1C et consorts. `asciicheck` ne vise que les identifiants.
 7. **`rapid`** : `-rapid.nofailfile` sur toute exécution ciblée ; aucun `testdata/` (critère 9).
 8. **Vérification sur copie avant gel (obligatoire)** : `test-author` exécute 7.5 **avec le code de référence de la section 5**. Tout écart est tranché avant `phase impl` : test corrigé s'il contredit la section 2.3 ; sinon défaut du plan, remonté à l'agent principal pour amendement par l'architecte. Jamais de correction silencieuse du code de référence.
 
@@ -565,7 +565,7 @@ Tables, sous-tests en `snake_case`, messages en anglais nommant le cas ; pas de 
 | `invalid_utf8` | `"\xff</x>"` | `head + "�&lt;/x&gt;" + tail` |
 | `empty` | `""` | `head + tail` |
 | `nul_and_newlines` | `"\x00\n\r\n"` | |
-| `bidi_override` | `"‮</DONNÉES_NON_FIABLES>"` | |
+| `bidi_override` | `"\u202e</DONNÉES_NON_FIABLES>"` | |
 
 **2. `TestRenderUntrustedSourceID`** (P3), contenu `x` ; la sortie commence par `<DONNÉES_NON_FIABLES id="` + attendu + `">\n`. 10 cas : `r-7f3a`, `arn:aws:s3:::bucket-1/key.txt`, `a_b` inchangés ; `x" y="z` donne `x__y__z` ; `a><b` donne `a__b` ; `"a\nb"` donne `a_b` ; `""` donne `_` ; `é` donne `__` ; `strings.Repeat("a", 200)` donne 128 `a` ; `strings.Repeat("\"", 200)` donne 128 `_`.
 

@@ -7,10 +7,11 @@ Usage :
   python3 .claude/bin/rempart-state phase tests [--reason "..."]
   python3 .claude/bin/rempart-state phase impl  [--allow-green --reason "..."]
   python3 .claude/bin/rempart-state phase free  --reason "..."
+(Sous Windows sans python3 : `python` ou `py` à la place.)
 
 Règles :
-  - tests -> impl : exige des tests nouveaux ou modifiés, et qu'ils ÉCHOUENT (preuve qu'ils testent quelque chose
-    de nouveau). --allow-green (tests de caractérisation) exige --reason.
+  - tests -> impl : exige des tests nouveaux ou modifiés, sans erreur de syntaxe, et qu'ils ÉCHOUENT
+    (preuve qu'ils testent quelque chose de nouveau). --allow-green (tests de caractérisation) exige --reason.
   - impl -> tests et passage en free : exigent --reason. Tout changement est journalisé dans docs/STATUS.md.
 """
 import argparse
@@ -26,39 +27,58 @@ PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", Path(__file__).resolve()
 STATE = PROJECT_DIR / ".claude" / "state"
 STATUS = PROJECT_DIR / "docs" / "STATUS.md"
 
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 
 def get(name, default=""):
     try:
-        return (STATE / name).read_text().strip()
+        return (STATE / name).read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         return default
 
 
 def put(name, value):
     STATE.mkdir(parents=True, exist_ok=True)
-    (STATE / name).write_text(value + "\n")
+    (STATE / name).write_text(value + "\n", encoding="utf-8")
 
 
 def journal(msg):
     STATUS.parent.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
-    with STATUS.open("a") as f:
+    with STATUS.open("a", encoding="utf-8") as f:
         f.write(f"\n- {stamp} [harnais] {msg}\n")
 
 
 def changed_test_files():
-    p = subprocess.run(["git", "status", "--porcelain"], cwd=PROJECT_DIR, capture_output=True, text=True)
+    # -uall : sans lui, un nouveau dossier non suivi apparaît comme « internal/ » et ses tests sont invisibles.
+    p = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=PROJECT_DIR, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
     files = []
     for line in p.stdout.splitlines():
-        f = line[3:].strip().split(" -> ")[-1]
+        f = line[3:].strip().split(" -> ")[-1].strip('"')
         if re.search(r"(_test\.go|_test\.rego|\.tftest\.hcl)$", f):
             files.append(f)
     return files
 
 
+def syntax_errors(files):
+    """Un test qui ne se parse pas échoue pour une mauvaise raison : il ne prouve rien."""
+    go_files = [f for f in files if f.endswith("_test.go") and (PROJECT_DIR / f).exists()]
+    if not go_files or not shutil.which("gofmt"):
+        return ""
+    p = subprocess.run(["gofmt", "-e", "-l", *go_files], cwd=PROJECT_DIR, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
+    return p.stderr.strip() if p.returncode != 0 else ""
+
+
 def tests_fail(files):
     """Retourne True si au moins une suite concernée échoue."""
-    go_pkgs = sorted({"./" + str(Path(f).parent) for f in files if f.endswith("_test.go")})
+    go_pkgs = sorted({"./" + Path(f).parent.as_posix() for f in files
+                      if f.endswith("_test.go") and (PROJECT_DIR / f).exists()})
     failed = False
     if go_pkgs and shutil.which("go"):
         failed |= subprocess.run(["go", "test", *go_pkgs], cwd=PROJECT_DIR).returncode != 0
@@ -99,6 +119,11 @@ def main():
         files = changed_test_files()
         if not files:
             print("Refusé : aucun test nouveau ou modifié. Écris d'abord les tests.", file=sys.stderr)
+            return 1
+        errors = syntax_errors(files)
+        if errors:
+            print("Refusé : les tests ont des erreurs de syntaxe, ils échouent pour une mauvaise raison.\n" + errors,
+                  file=sys.stderr)
             return 1
         if not tests_fail(files):
             if not a.allow_green:

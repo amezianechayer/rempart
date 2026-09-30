@@ -212,3 +212,69 @@ func TestSchemaSecretPropertyWrapped(t *testing.T) {
 		}
 	})
 }
+
+// namedPlacements put a value v under a property called name, where the model
+// reads the value together with the name (obligation (aa), D8).
+var namedPlacements = map[string]func(name, v string) string{
+	"const": func(name, v string) string { return namedObject(name, `{"const":"`+v+`"}`, "") },
+	"enum":  func(name, v string) string { return namedObject(name, `{"type":"string","enum":["`+v+`"]}`, "") },
+	"pattern": func(name, v string) string {
+		return namedObject(name, `{"type":"string","pattern":"^`+v+`$"}`, "")
+	},
+	"ref enum": func(name, v string) string {
+		return namedObject(name, `{"$ref":"#/$defs/l"}`, `{"l":{"enum":["`+v+`"]}}`)
+	},
+	"const object": func(name, v string) string {
+		return namedObject(name, `{"const":{"`+name+`":"\n`+v+`"}}`, "")
+	},
+}
+
+func namedObject(name, sub, defs string) string {
+	s := `{"type":"object","additionalProperties":false,"required":["` + name + `"],"properties":{"` + name + `":` + sub + `}`
+	if defs != "" {
+		s += `,"$defs":` + defs
+	}
+	return s + `}`
+}
+
+// TestSchemaNamedValueProperty: a value that is a secret only when read with
+// its property name ("api_key: v") never reaches the provider, whatever its
+// placement, as a tool or a prompt schema. The oracle is the redactor applied
+// to "api_key: " + v, computed here apart from schema.Texts; the same value
+// under a neutral name reaches the provider, so that the refusal comes from
+// the name (checked on the first retained value). A run that retains no value
+// fails (vacuous property).
+func TestSchemaNamedValueProperty(t *testing.T) {
+	r := redact.New()
+	names := make([]string, 0, len(namedPlacements))
+	for name := range namedPlacements {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	kept := 0
+	rapid.Check(t, func(rt *rapid.T) {
+		v := "FAKE" + rapid.StringMatching(`[A-Za-z0-9]{12,36}`).Draw(rt, "tail")
+		if r.ContainsSecret(v) || !r.ContainsSecret("api_key: "+v) {
+			return
+		}
+		kept++
+		for _, name := range names {
+			for _, asPrompt := range []bool{false, true} {
+				ok, err := reaches(namedPlacements[name]("api_key", v), asPrompt)
+				if err != nil || ok {
+					rt.Fatalf("%s, prompt %v: value under api_key reached the provider (%v, %v)", name, asPrompt, ok, err)
+				}
+				if kept > 1 {
+					continue
+				}
+				if ok, err := reaches(namedPlacements[name]("note", v), asPrompt); !ok || err != nil {
+					rt.Fatalf("%s, prompt %v: witness under note did not reach the provider (%v, %v)", name, asPrompt, ok, err)
+				}
+			}
+		}
+	})
+	if kept == 0 {
+		t.Fatal("no drawn value is a secret only with its name: vacuous property")
+	}
+	t.Logf("%d values retained", kept)
+}

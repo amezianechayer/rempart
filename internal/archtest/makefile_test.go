@@ -459,10 +459,13 @@ func checkVerifyTargets(mf parsedMakefile, problems *problemList) {
 		problems.addf("Makefile line %d: target verify must have verify-quick as a prerequisite", verify.Line)
 	}
 	joined := strings.Join(verify.Recipe, "\n")
-	for _, want := range []string{"go test -tags=integration ./...", "go tool govulncheck ./..."} {
-		if !strings.Contains(joined, want) {
-			problems.addf("Makefile: target verify must run %q", want)
-		}
+	// M0-T03b (D4): the integration tests of the whole module may run as the
+	// two passes of TestMakeDevUsesWait, the first one listing the packages.
+	if !strings.Contains(joined, "go test -tags=integration ./...") && !strings.Contains(joined, "go test -tags=integration $$(go list ./...") {
+		problems.addf("Makefile: target verify must run %q", "go test -tags=integration ./...")
+	}
+	if !strings.Contains(joined, "go tool govulncheck ./...") {
+		problems.addf("Makefile: target verify must run %q", "go tool govulncheck ./...")
 	}
 	for _, l := range mf.Lines {
 		if strings.Contains(l.Text, "govulncheck") && !strings.Contains(l.Text, "go tool govulncheck") {
@@ -1031,5 +1034,172 @@ func TestMakefileTargets(t *testing.T) {
 			t.Fatalf("Makefile: %v", err)
 		}
 		reportProblems(t, checkMakefile(mf))
+	})
+}
+
+// TestMakefileGoflagsNeutralized (ax, D15, threat T74): a GOFLAGS taken from
+// the environment (-mod=mod, -overlay, -modfile, -tags) would let go build and
+// go test compile other sources than the ones the rules read. The Makefile
+// overrides it with -mod=readonly and exports it, each by exactly one line,
+// override first; no other line, recipe included, names GOFLAGS.
+func TestMakefileGoflagsNeutralized(t *testing.T) {
+	_, fsys := repoRoot(t)
+	src, err := readRepoFile(fsys, "Makefile", "created by M0-T01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, l := range strings.Split(src, "\n") {
+		if strings.Contains(l, "GOFLAGS") {
+			lines = append(lines, l)
+		}
+	}
+	want := []string{"override GOFLAGS := -mod=readonly", "export GOFLAGS"}
+	if !slices.Equal(lines, want) {
+		t.Errorf("Makefile lines naming GOFLAGS: %q, want exactly %q in this order", lines, want)
+	}
+}
+
+// demoRunFlags are the flags of go run in the demo recipe (docs/plans/M0-worker-demo.md
+// section 4.4): the fake model behind -dev, the fixed demo tenant, the literal
+// loopback address, the script under testdata.
+func demoRunFlags() []string {
+	return []string{
+		"-dev", "-demo-once", "-llm=fake", "-tenant=0d3e0000-0000-4000-8000-000000000001",
+		"-temporal-address=127.0.0.1:7233", "-namespace=rempart",
+		"-fake-script=internal/loops/demo/testdata/scripts/converge.json",
+	}
+}
+
+// demoRecipeLines returns the logical recipe lines of the rule "demo:", tabs
+// and prefixes kept.
+func demoRecipeLines(mf parsedMakefile) []string {
+	var out []string
+	in := false
+	for _, l := range mf.Lines {
+		text := strings.TrimSpace(l.Text)
+		switch {
+		case strings.HasPrefix(l.Text, "\t"):
+			if in {
+				out = append(out, l.Text)
+			}
+		case text == "" || strings.HasPrefix(text, "#"):
+		default:
+			in = strings.HasPrefix(l.Text, "demo:")
+		}
+	}
+	return out
+}
+
+// checkDemoTarget: make demo writes exactly one JSON document on stdout (dev
+// on stderr, recipe lines silenced by @), runs the worker with exactly the
+// flags of section 4.4, and make interpolates nothing but $(MAKE) (T8).
+func checkDemoTarget(mf parsedMakefile) []string {
+	var problems problemList
+	r, ok := mf.Rules["demo"]
+	if !ok {
+		problems.addf("Makefile: target demo is not defined")
+		return problems
+	}
+	if !mf.Phony["demo"] {
+		problems.addf("Makefile: target demo is not declared .PHONY")
+	}
+	if len(r.Prereqs) != 0 {
+		problems.addf("Makefile line %d: target demo has prerequisites %q: dev runs in the recipe, its stdout sent to stderr", r.Line, r.Prereqs)
+	}
+	for _, l := range demoRecipeLines(mf) {
+		if !strings.HasPrefix(l, "\t@") {
+			problems.addf("Makefile: demo recipe line %q is not silenced by @ (make would echo it on stdout)", l)
+		}
+		if strings.Contains(strings.ReplaceAll(l, "$(MAKE)", ""), "$(") || strings.Contains(l, "${") {
+			problems.addf("Makefile: demo recipe line %q interpolates a make variable other than $(MAKE)", l)
+		}
+	}
+	if len(r.Recipe) != 2 {
+		problems.addf("Makefile: demo recipe has %d lines, want 2 (dev, then go run)", len(r.Recipe))
+		return problems
+	}
+	if r.Recipe[0] != "$(MAKE) --no-print-directory dev >&2" {
+		problems.addf("Makefile: first demo recipe line %q, want \"$(MAKE) --no-print-directory dev >&2\"", r.Recipe[0])
+	}
+	fields := strings.Fields(r.Recipe[1])
+	if len(fields) < 3 || !slices.Equal(fields[:3], []string{"go", "run", "./cmd/rempart-worker"}) {
+		problems.addf("Makefile: second demo recipe line %q does not start with \"go run ./cmd/rempart-worker\"", r.Recipe[1])
+		return problems
+	}
+	flags := slices.Clone(fields[3:])
+	want := demoRunFlags()
+	slices.Sort(flags)
+	slices.Sort(want)
+	if !slices.Equal(flags, want) {
+		problems.addf("Makefile: demo runs the worker with %q, want exactly %q", fields[3:], demoRunFlags())
+	}
+	return problems
+}
+
+// TestMakefileDemoTarget (M0-T20, criterion 8): the demo target of the
+// repository, and negative controls of its checker.
+func TestMakefileDemoTarget(t *testing.T) {
+	const (
+		devLine = "\t@$(MAKE) --no-print-directory dev >&2\n"
+		runHead = "\t@go run ./cmd/rempart-worker -dev -demo-once -llm=fake -tenant=0d3e0000-0000-4000-8000-000000000001 \\\n"
+		runTail = "\t\t-temporal-address=127.0.0.1:7233 -namespace=rempart \\\n" +
+			"\t\t-fake-script=internal/loops/demo/testdata/scripts/converge.json\n"
+	)
+	valid := ".PHONY: dev demo\n\ndev:\n\t@echo dev\n\n# Demo.\ndemo:\n" + devLine + runHead + runTail
+	cases := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{name: "valid", src: valid},
+		{name: "missing", src: ".PHONY: dev\n\ndev:\n\t@echo dev\n", want: []string{"target demo is not defined"}},
+		{name: "not_phony", src: mustReplace(t, valid, ".PHONY: dev demo\n", ".PHONY: dev\n"), want: []string{"not declared .PHONY"}},
+		{name: "dev_prerequisite", src: mustReplace(t, valid, "demo:\n"+devLine, "demo: dev\n"), want: []string{"has prerequisites"}},
+		{name: "dev_on_stdout", src: mustReplace(t, valid, " dev >&2\n", " dev\n"), want: []string{"first demo recipe line"}},
+		{name: "echoed_line", src: mustReplace(t, valid, "\t@go run", "\tgo run"), want: []string{"not silenced by @"}},
+		{name: "anthropic", src: mustReplace(t, valid, "-llm=fake", "-llm=anthropic"), want: []string{"demo runs the worker with"}},
+		{name: "without_dev", src: mustReplace(t, valid, " -dev -demo-once", " -demo-once"), want: []string{"demo runs the worker with"}},
+		{
+			name: "secret_flag", src: mustReplace(t, valid, " -namespace=rempart", " -namespace=rempart -anthropic-key=x"),
+			want: []string{"demo runs the worker with"},
+		},
+		{name: "remote_temporal", src: mustReplace(t, valid, "127.0.0.1:7233", "10.0.0.1:7233"), want: []string{"demo runs the worker with"}},
+		{
+			name: "tenant_variable", src: mustReplace(t, valid, "-tenant=0d3e0000-0000-4000-8000-000000000001", "-tenant=$(TENANT)"),
+			want: []string{"interpolates a make variable", "demo runs the worker with"},
+		},
+		{name: "namespace_braces", src: mustReplace(t, valid, "-namespace=rempart", "-namespace=${NS}"), want: []string{"interpolates a make variable"}},
+		{name: "piped", src: mustReplace(t, valid, "converge.json\n", "converge.json | jq .\n"), want: []string{"demo runs the worker with"}},
+		{name: "other_package", src: mustReplace(t, valid, "./cmd/rempart-worker", "./cmd/rempart"), want: []string{"does not start with"}},
+		{name: "extra_line", src: valid + "\t@echo done\n", want: []string{"demo recipe has 3 lines"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mf, err := parseMakefile(tc.src)
+			if err != nil {
+				t.Fatalf("parseMakefile: %v", err)
+			}
+			expectProblems(t, checkDemoTarget(mf), tc.want)
+		})
+	}
+
+	t.Run("repository", func(t *testing.T) {
+		_, fsys := repoRoot(t)
+		src, err := readRepoFile(fsys, "Makefile", "created by M0-T01")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mf, err := parseMakefile(src)
+		if err != nil {
+			t.Fatalf("Makefile: %v", err)
+		}
+		reportProblems(t, checkDemoTarget(mf))
+		if _, err := readRepoFile(fsys, "internal/loops/demo/testdata/scripts/converge.json", "M0-T20"); err != nil {
+			t.Errorf("script of make demo: %v", err)
+		}
+		if slices.Contains(reachableTargets(mf, "verify-quick"), "demo") {
+			t.Error("target demo is reachable from verify-quick (it needs the dev stack)")
+		}
 	})
 }

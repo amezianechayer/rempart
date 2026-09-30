@@ -1,11 +1,8 @@
 package loops
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +33,9 @@ const (
 	identityBytes = "abcdefghijklmnopqrstuvwxyz0123456789._-@"
 )
 
+// valueBytes admits plan hashes and signatures: JSON never escapes them (T57).
+const valueBytes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=._:-@"
+
 // ApprovalRequest says what to gather before applying one plan. The calling
 // workflow builds it from constants and the deterministic risk
 // classification, never from an input (threat T54).
@@ -50,6 +50,7 @@ type ApprovalRequest struct {
 
 // Approval is one decision on a plan hash. A signal is not authenticated:
 // only the signature, checked by the verification activity, counts.
+// A signal counts only in the canonical form of decodeApproval (T57).
 type Approval struct {
 	Approved  bool   `json:"approved"`
 	PlanHash  string `json:"plan_hash"`
@@ -87,10 +88,11 @@ const (
 	IgnoredNeedsSecurityRole IgnoredReason = "needs_security_role"
 )
 
-// IgnoredSignal records one ignored signal; Approver is empty if malformed.
+// IgnoredSignal records one ignored signal. DeclaredApprover is what the
+// signal claims, never authenticated (T18); empty if malformed.
 type IgnoredSignal struct {
-	Approver string        `json:"approver"`
-	Reason   IgnoredReason `json:"reason"`
+	DeclaredApprover string        `json:"declared_approver"`
+	Reason           IgnoredReason `json:"reason"`
 }
 
 // ApprovalResult holds Approvals only for OutcomeApproved: exactly Required
@@ -205,7 +207,7 @@ func AwaitApprovals(ctx workflow.Context, req ApprovalRequest, timeout time.Dura
 				continue
 			}
 		}
-		res.Ignored = append(res.Ignored, IgnoredSignal{Approver: a.Approver, Reason: reason})
+		res.Ignored = append(res.Ignored, IgnoredSignal{DeclaredApprover: a.Approver, Reason: reason})
 		if len(res.Ignored) > req.MaxIgnored {
 			return end(OutcomeSignalFlood)
 		}
@@ -229,33 +231,30 @@ func screen(raw converter.RawValue, req ApprovalRequest, kept []Approval) (Appro
 	return a, ""
 }
 
-// approvalWire tells absent and null fields apart from zero values.
-type approvalWire struct {
-	Approved  *bool   `json:"approved"`
-	PlanHash  *string `json:"plan_hash"`
-	Approver  *string `json:"approver"`
-	Signature *string `json:"signature"`
-}
-
-// decodeApproval accepts one bounded json/plain object with exactly the four
-// fields, none null, a canonical approver and a non-empty signature.
+// decodeApproval admits one json/plain payload of at most
+// MaxApprovalSignalBytes whose bytes, trailing JSON blanks aside, are exactly
+// {"approved":B,"plan_hash":"H","approver":"A","signature":"S"}, the encoding
+// of the Approval it yields; any other form is malformed (T57).
 func decodeApproval(raw converter.RawValue) (Approval, bool) {
 	p := raw.Payload()
 	if string(p.GetMetadata()[converter.MetadataEncoding]) != converter.MetadataEncodingJSON {
 		return Approval{}, false
 	}
 	data := p.GetData()
-	var w approvalWire
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if len(data) > MaxApprovalSignalBytes || dec.Decode(&w) != nil || !errors.Is(dec.Decode(new(json.RawMessage)), io.EOF) {
+	if len(data) > MaxApprovalSignalBytes {
 		return Approval{}, false
 	}
-	if w.Approved == nil || w.PlanHash == nil || w.Approver == nil || w.Signature == nil ||
-		!validIdentity(*w.Approver) || *w.Signature == "" {
+	s := strings.TrimRight(string(data), jsonBlanks)
+	approved := strings.HasPrefix(s, `{"approved":true,`)
+	rest, ok0 := strings.CutPrefix(s, `{"approved":`+strconv.FormatBool(approved)+`,"plan_hash":"`)
+	hash, rest, ok1 := strings.Cut(rest, `","approver":"`)
+	approver, rest, ok2 := strings.Cut(rest, `","signature":"`)
+	signature, ok3 := strings.CutSuffix(rest, `"}`)
+	if !ok0 || !ok1 || !ok2 || !ok3 || !validValue(hash) || !validIdentity(approver) ||
+		signature == "" || !validValue(signature) {
 		return Approval{}, false
 	}
-	return Approval{Approved: *w.Approved, PlanHash: *w.PlanHash, Approver: *w.Approver, Signature: *w.Signature}, true
+	return Approval{Approved: approved, PlanHash: hash, Approver: approver, Signature: signature}, true
 }
 
 // validPlanHash: 64 lower-case hex digits (Trim leaves any other byte).
@@ -268,6 +267,9 @@ func validPlanHash(s string) bool {
 func validIdentity(s string) bool {
 	return s != "" && len(s) <= MaxIdentityBytes && strings.Trim(s, identityBytes) == ""
 }
+
+// validValue: bytes of valueBytes only, the empty string included.
+func validValue(s string) bool { return strings.Trim(s, valueBytes) == "" }
 
 func invalidApproval(what string) error {
 	return temporal.NewNonRetryableApplicationError("invalid approval request: "+what, ErrTypeInvalidApprovalRequest, nil)

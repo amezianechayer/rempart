@@ -123,4 +123,32 @@ func TestRepositoryConforms(t *testing.T) {
 			t.Errorf("%s: %s imports %s", v.Rule, v.Importer, v.Imported)
 		}
 	})
+
+	// M0-T19c V2 (threat T74): no package reached through a symlink.
+	t.Run("package_dirs", func(t *testing.T) {
+		for _, v := range CheckPackageDirs(m, dir, pkgs) {
+			t.Errorf("%s: %s (%s)", v.Rule, v.Importer, v.Imported)
+		}
+	})
+
+	t.Run("package_dirs_negative_control", func(t *testing.T) {
+		// cmd/rempart-worker importing internal/devwire, a symlink to
+		// internal/loops/fake: go list ./... lists the importer only.
+		mutated := make([]Package, 0, len(pkgs))
+		found := false
+		for _, p := range pkgs {
+			q := Package{ImportPath: p.ImportPath, Dir: p.Dir, Imports: slices.Clone(p.Imports)}
+			if q.ImportPath == m+"/cmd/rempart-worker" {
+				q.Imports = append(q.Imports, m+"/internal/devwire")
+				found = true
+			}
+			mutated = append(mutated, q)
+		}
+		if !found {
+			t.Fatalf("go list did not return %s/cmd/rempart-worker", m)
+		}
+		expectViolations(t, CheckPackageDirs(m, dir, mutated), []Violation{
+			{Rule: "package-unlisted", Importer: m + "/cmd/rempart-worker", Imported: m + "/internal/devwire"},
+		})
+	})
 }

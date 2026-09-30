@@ -95,7 +95,7 @@ func Fingerprint(f []Finding) string {
 	var cs []couple
 	for _, x := range f {
 		if x.Severity.Weight() >= SeverityMedium.Weight() {
-			cs = append(cs, couple{x.Code, x.Resource})
+			cs = append(cs, couple{code: x.Code, resource: x.Resource})
 		}
 	}
 	slices.SortFunc(cs, func(a, b couple) int {

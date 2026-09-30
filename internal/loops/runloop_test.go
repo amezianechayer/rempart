@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 
@@ -125,6 +127,11 @@ func testSpec(strategies ...string) LoopSpec {
 
 func execute(t *testing.T, spec LoopSpec, s *script, setup func(*testsuite.TestWorkflowEnvironment)) (LoopResult, error) {
 	t.Helper()
+	return executeWith(t, spec, payload(), s, setup)
+}
+
+func executeWith(t *testing.T, spec LoopSpec, in any, s *script, setup func(*testsuite.TestWorkflowEnvironment)) (LoopResult, error) {
+	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.RegisterActivityWithOptions(s.propose, activity.RegisterOptions{Name: proposeName})
@@ -132,7 +139,8 @@ func execute(t *testing.T, spec LoopSpec, s *script, setup func(*testsuite.TestW
 	if setup != nil {
 		setup(env)
 	}
-	env.ExecuteWorkflow(RunLoop, spec, payload())
+	env.RegisterWorkflow(RunLoop)
+	env.ExecuteWorkflow("RunLoop", spec, in) // by name: no reflective check, a RawValue input passes as is
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("workflow not completed")
 	}
@@ -144,6 +152,38 @@ func execute(t *testing.T, spec LoopSpec, s *script, setup func(*testsuite.TestW
 		t.Fatalf("GetWorkflowResult: %v", err)
 	}
 	return res, nil
+}
+
+// rawValue is a json/plain payload holding exactly data.
+func rawValue(t *testing.T, data string) converter.RawValue {
+	t.Helper()
+	p, err := converter.GetDefaultDataConverter().ToPayload("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Data = []byte(data)
+	return converter.NewRawValue(p)
+}
+
+// obj is {"k":"<fill x n>"}: 12 bytes of weight around the fill.
+func obj(fill string, n int) string { return `{"k":"` + strings.Repeat(fill, n) + `"}` }
+
+// rawActivity answers every call to the activity name with data.
+func rawActivity(name string, data converter.RawValue) func(*testsuite.TestWorkflowEnvironment) {
+	return func(env *testsuite.TestWorkflowEnvironment) {
+		env.RegisterActivityWithOptions(func(context.Context, json.RawMessage) (converter.RawValue, error) {
+			return data, nil
+		}, activity.RegisterOptions{Name: name})
+	}
+}
+
+func isInvalidSpecErr(err error) bool {
+	var ae *temporal.ApplicationError
+	return errors.As(err, &ae) && ae.Type() == ErrTypeInvalidLoopSpec && ae.NonRetryable()
+}
+
+func traced(failed bool) IterationTrace {
+	return IterationTrace{Iteration: 1, Strategy: "s1", Failed: failed}
 }
 
 func run(t *testing.T, spec LoopSpec, s *script, setup func(*testsuite.TestWorkflowEnvironment)) LoopResult {
@@ -277,8 +317,8 @@ func TestRunLoopBudgetTokens(t *testing.T) {
 	for _, n := range []int{-1, MaxTokensLimit + 1} {
 		s := newScript(step{tokens: n})
 		res := run(t, testSpec(), s, nil)
-		want(t, res, StatusEscalated, ReasonInvalidResponse, 0)
-		if _, v := s.calls(); v != 0 || res.Tokens != 0 {
+		want(t, res, StatusEscalated, ReasonInvalidResponse, 1) // traced first (obligation i)
+		if _, v := s.calls(); v != 0 || res.Tokens != 0 || res.Trace[0] != traced(false) {
 			t.Errorf("tokens %d accepted", n)
 		}
 	}
@@ -463,7 +503,7 @@ func TestRunLoopValidationErrorNotRetried(t *testing.T) {
 
 func TestRunLoopActivityFailureEscalates(t *testing.T) {
 	transient := errors.New("transient")
-	e := step{proposeErr: transient}
+	e := step{proposeErr: temporal.NewApplicationError("transient", "Transient", ProposeFailure{})} // declared (obligation h)
 	s := newScript(fail(high("A")), e, e, e, pass())
 	res := run(t, testSpec(), s, nil)
 	want(t, res, StatusEscalated, ReasonActivityFailed, 1+MaxActivityAttempts)
@@ -497,8 +537,8 @@ func TestRunLoopProposerFailuresCounted(t *testing.T) {
 	for _, d := range []any{ProposeFailure{Tokens: -1}, ProposeFailure{Tokens: MaxTokensLimit + 1}, "tokens"} {
 		s := newScript(failed(d), pass())
 		res := run(t, testSpec(), s, nil)
-		want(t, res, StatusEscalated, ReasonInvalidResponse, 0)
-		if p, _ := s.calls(); p != 1 || res.Tokens != 0 {
+		want(t, res, StatusEscalated, ReasonInvalidResponse, 1)
+		if p, _ := s.calls(); p != 1 || res.Tokens != 0 || res.Trace[0] != traced(true) {
 			t.Errorf("detail %v: calls %d, tokens %d", d, p, res.Tokens)
 		}
 	}
@@ -586,5 +626,262 @@ func TestRunLoopCanceled(t *testing.T) {
 				t.Fatalf("error %v: a cancellation is neither an escalation nor a failure", err)
 			}
 		})
+	}
+}
+
+func TestRunLoopPayloadBounded(t *testing.T) {
+	for _, c := range []struct {
+		name, data string
+		ok         bool
+	}{
+		{"at the bound", obj("a", MaxPayloadBytes-12), true},
+		{"one byte over", obj("a", MaxPayloadBytes-11), false},
+		{"raw < weighs 6", obj("<", (MaxPayloadBytes-12)/6+1), false},
+		{"rune bytes weigh 2", obj("\u00e9", (MaxPayloadBytes-12)/4+1), false},
+		{"invalid UTF-8", obj("\xff", 1), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newScript(pass())
+			res, err := executeWith(t, testSpec(), rawValue(t, c.data), s, nil)
+			p, v := s.calls()
+			if c.ok && (err != nil || res.Status != StatusConverged) || !c.ok && (!isInvalidSpecErr(err) || p+v != 0) {
+				t.Errorf("error %v, status %q, %d activities", err, res.Status, p+v)
+			}
+		})
+	}
+}
+
+func TestRunLoopCandidateBounded(t *testing.T) {
+	for _, c := range []struct {
+		name, cand string
+		ok         bool
+	}{
+		{"at the bound", obj("a", MaxCandidateBytes-12), true},
+		{"one byte over", obj("a", MaxCandidateBytes-11), false},
+		{"raw < weighs 6", obj("<", (MaxCandidateBytes-12)/6+1), false},
+		{"invalid UTF-8", obj("\xff", 1), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newScript(pass(), pass())
+			res := run(t, testSpec(), s, rawActivity(proposeName, rawValue(t, `{"candidate":`+c.cand+`,"tokens":10}`)))
+			if c.ok {
+				want(t, res, StatusConverged, "", 1)
+				return
+			}
+			want(t, res, StatusEscalated, ReasonInvalidResponse, 1)
+			if _, v := s.calls(); v != 0 || res.Tokens != 10 || res.Best != nil {
+				t.Errorf("verifies %d, tokens %d, best %d bytes", v, res.Tokens, len(res.Best))
+			}
+		})
+	}
+}
+
+func TestRunLoopBlankCandidateRejected(t *testing.T) {
+	for _, c := range []string{"[ \n ]", "{\t}", "[\r\n]", `"  "`} {
+		s := newScript(pass(), pass())
+		res := run(t, testSpec(), s, rawActivity(proposeName, rawValue(t, `{"candidate":`+c+`,"tokens":10}`)))
+		want(t, res, StatusEscalated, ReasonInvalidResponse, 1)
+		if _, v := s.calls(); v != 0 || res.Tokens != 10 {
+			t.Errorf("candidate %q: %d verifies, tokens %d", c, v, res.Tokens)
+		}
+	}
+}
+
+func TestRunLoopFindingsBounded(t *testing.T) {
+	many := func(n int) []domain.Finding {
+		f := make([]domain.Finding, n)
+		for i := range f {
+			f[i] = fnd(domain.SeverityLow, "L"+strconv.Itoa(i))
+		}
+		return f
+	}
+	refused := func(t *testing.T, st step) {
+		t.Helper()
+		s := newScript(st, pass())
+		res := run(t, testSpec(), s, nil)
+		want(t, res, StatusEscalated, ReasonInvalidResponse, 1)
+		if _, v := s.calls(); v != 1 || res.Trace[0].Verified || res.Best != nil || res.Remaining != nil {
+			t.Errorf("verifies %d, trace %+v, best %s", v, res.Trace[0], res.Best)
+		}
+	}
+	want(t, run(t, testSpec(), newScript(fail(many(MaxFindings)...), pass()), nil), StatusConverged, "", 2)
+	refused(t, fail(many(MaxFindings+1)...))
+	refused(t, pass(many(MaxFindings+1)...))
+	base := domain.Finding{Code: "c", Source: "s", Severity: domain.SeverityLow, Resource: "r", File: "f", Message: "m"} // weight 8
+	for i := range 6 {
+		at, over := base, base
+		for _, c := range []struct {
+			f *domain.Finding
+			n int
+		}{{&at, MaxFindingBytes - 8}, {&over, MaxFindingBytes - 7}} {
+			fields := []*string{&c.f.Code, &c.f.Source, (*string)(&c.f.Severity), &c.f.Resource, &c.f.File, &c.f.Message}
+			*fields[i] += strings.Repeat("x", c.n)
+		}
+		if res := run(t, testSpec(), newScript(fail(at), pass()), nil); res.Status != StatusConverged {
+			t.Errorf("field %d at the bound: %q %q", i, res.Status, res.Reason)
+		}
+		refused(t, fail(over))
+	}
+	lt := base
+	lt.Message = strings.Repeat("<", 170) // 170 raw bytes, weight 7 + 1020
+	refused(t, fail(lt))
+	type class struct {
+		fill   string
+		weight int
+	}
+	classes := []class{{"\u00e9", 4}, {"\u2028", 6}, {"\U0001f600", 8}}
+	for b := range 0x80 { // D1 for every ASCII byte
+		c := class{string(rune(b)), 1}
+		switch {
+		case b < 0x20 || strings.ContainsRune("<>&", rune(b)):
+			c.weight = 6
+		case b == '"' || b == '\\':
+			c.weight = 2
+		}
+		classes = append(classes, c)
+	}
+	for _, c := range classes {
+		at, over := base, base // other fields weigh 7
+		at.Message = strings.Repeat(c.fill, (MaxFindingBytes-7)/c.weight)
+		over.Message = at.Message + c.fill
+		if enc, err := json.Marshal(at.Message); err != nil || len(enc)-2 > len(at.Message)/len(c.fill)*c.weight {
+			t.Errorf("fill %q: weight %d below its encoding %d, %v", c.fill, c.weight, len(enc)-2, err)
+		}
+		if res := run(t, testSpec(), newScript(fail(at), pass()), nil); res.Status != StatusConverged {
+			t.Errorf("fill %q at the bound: %q %q", c.fill, res.Status, res.Reason)
+		}
+		s := newScript(fail(over), pass())
+		if res := run(t, testSpec(), s, nil); res.Reason != ReasonInvalidResponse || res.Trace[0].Verified {
+			t.Errorf("fill %q over the bound: %q %q", c.fill, res.Status, res.Reason)
+		}
+	}
+}
+
+func TestRunLoopSizeLimits(t *testing.T) {
+	if got := []int{MaxPayloadBytes, MaxCandidateBytes, MaxFindings, MaxFindingBytes, MaxNameBytes}; !slices.Equal(got, []int{64 << 10, 64 << 10, 100, 1 << 10, 64}) {
+		t.Fatalf("size limits %v", got)
+	}
+	for _, c := range []struct { // D1: every bound reached with the bytes JSON expands most
+		fill   string
+		weight int
+	}{{"<", 6}, {"&", 6}, {"\u2028", 6}, {"\u00e9", 4}} {
+		f := domain.Finding{Message: strings.Repeat(c.fill, MaxFindingBytes/c.weight), Line: math.MinInt}
+		tr := IterationTrace{
+			Iteration: MaxIterationsLimit, Strategy: strings.Repeat("s", MaxNameBytes), Fingerprint: domain.Fingerprint(nil),
+			Score: MaxFindings * 100, Findings: MaxFindings, Tokens: MaxTokensLimit,
+		}
+		res := LoopResult{
+			Status: StatusEscalated, Reason: ReasonStrategiesExhausted,
+			Best:      json.RawMessage(`"` + strings.Repeat(c.fill, (MaxCandidateBytes-4)/c.weight) + `"`),
+			Remaining: slices.Repeat([]domain.Finding{f}, MaxFindings), Iterations: MaxIterationsLimit,
+			Tokens: MaxTokensLimit, Trace: slices.Repeat([]IterationTrace{tr}, MaxIterationsLimit),
+		}
+		p, err := converter.GetDefaultDataConverter().ToPayload(res)
+		if err != nil || len(p.GetData()) >= 256<<10 {
+			t.Errorf("fill %q: %d bytes, %v", c.fill, len(p.GetData()), err)
+		}
+	}
+}
+
+func TestRunLoopProposerErrorKinds(t *testing.T) {
+	declared := temporal.NewApplicationError("llm call failed", "Transient", ProposeFailure{Tokens: 5})
+	check := func(t *testing.T, s *script, res LoopResult) {
+		t.Helper()
+		want(t, res, StatusEscalated, ReasonActivityFailed, 1)
+		if p, _ := s.calls(); p != 1 || res.Tokens != 0 || res.Trace[0] != traced(true) {
+			t.Errorf("calls %d, tokens %d, trace %+v", p, res.Tokens, res.Trace)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		err  error
+	}{
+		{"undeclared", errors.New("transient")},
+		{"declared cause of an undeclared application error", temporal.NewApplicationErrorWithCause("llm", "Transient", declared)},
+		{"declared cause of a timeout", temporal.NewTimeoutError(1, declared)}, // 1: START_TO_CLOSE, no import of go.temporal.io/api
+		{"cancellation by the activity", temporal.NewCanceledError(ProposeFailure{Tokens: 5})},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newScript(step{proposeErr: c.err}, pass())
+			check(t, s, run(t, testSpec(), s, nil))
+		})
+	}
+	t.Run("declared but non retryable", func(t *testing.T) {
+		err := temporal.NewNonRetryableApplicationError("llm call failed", "Transient", nil, ProposeFailure{Tokens: 5})
+		s := newScript(step{proposeErr: err}, pass())
+		res := run(t, testSpec(), s, nil)
+		want(t, res, StatusEscalated, ReasonActivityFailed, 1)
+		if p, _ := s.calls(); p != 1 || res.Tokens != 5 || !res.Trace[0].Failed || res.Trace[0].Tokens != 5 {
+			t.Errorf("calls %d, tokens %d, trace %+v", p, res.Tokens, res.Trace)
+		}
+	})
+	t.Run("panic", func(t *testing.T) {
+		s := newScript(pass(), pass())
+		check(t, s, run(t, testSpec(), s, func(env *testsuite.TestWorkflowEnvironment) {
+			env.RegisterActivityWithOptions(func(ctx context.Context, req ProposeRequest) (ProposeResponse, error) {
+				r, err := s.propose(ctx, req)
+				r.Tokens /= len(req.Findings) // runtime panic: no finding at iteration 1 (criterion 7 bans the builtin)
+				return r, err
+			}, activity.RegisterOptions{Name: proposeName})
+		}))
+	})
+}
+
+func TestRunLoopProposeFailureCanonical(t *testing.T) {
+	failed := func(details ...any) step {
+		return step{proposeErr: temporal.NewApplicationError("llm call failed", "Transient", details...)}
+	}
+	s := newScript(failed(rawValue(t, `{"tokens":7}`)), failed(ProposeFailure{}), pass())
+	res := run(t, testSpec(), s, nil)
+	want(t, res, StatusConverged, "", 3)
+	if res.Tokens != 17 {
+		t.Errorf("tokens %d", res.Tokens)
+	}
+	bad := [][]any{{ProposeFailure{Tokens: 7}, ProposeFailure{Tokens: 7}}, {[]byte(`{"tokens":7}`)}}
+	for _, d := range []string{
+		`{"tokens":07}`, `{"tokens":+7}`, `{"tokens":-0}`, `{"tokens":7.0}`, `{"tokens":1e1}`, `{"tokens":"7"}`,
+		`{"tokens": 7}`, ` {"tokens":7}`, `{"tokens":7} `, `{"Tokens":7}`, `{"tokens":7,"tokens":7}`,
+		`{"tokens":7,"cost":1}`, `null`, `{}`, `7}`, `{"tokens":7`,
+	} {
+		bad = append(bad, []any{rawValue(t, d)})
+	}
+	for i, d := range bad {
+		s := newScript(failed(d...), pass())
+		res := run(t, testSpec(), s, nil)
+		want(t, res, StatusEscalated, ReasonInvalidResponse, 1)
+		if p, _ := s.calls(); p != 1 || res.Tokens != 0 || res.Trace[0] != traced(true) {
+			t.Errorf("detail %d: calls %d, tokens %d, trace %+v", i, p, res.Tokens, res.Trace)
+		}
+	}
+}
+
+func TestRunLoopFailureWithoutFindingAtFirstIteration(t *testing.T) {
+	res := run(t, testSpec(), newScript(fail(), pass()), nil)
+	want(t, res, StatusEscalated, ReasonInvalidResponse, 1)
+	if !res.Trace[0].Verified || res.Best != nil || res.Remaining != nil {
+		t.Errorf("trace %+v, best %s, remaining %v", res.Trace[0], res.Best, res.Remaining)
+	}
+}
+
+func TestRunLoopSpecNamesBounded(t *testing.T) {
+	long := strings.Repeat("n", MaxNameBytes)
+	for i, f := range []func(*LoopSpec){
+		func(s *LoopSpec) { s.ID = long + "n" },
+		func(s *LoopSpec) { s.ID = "loop\n" },
+		func(s *LoopSpec) { s.ProposeActivity = "Propose " },
+		func(s *LoopSpec) { s.VerifyActivity = "V\u00e9rifier" },
+		func(s *LoopSpec) { s.Strategies = []string{"s1", long + "s"} },
+		func(s *LoopSpec) { s.Strategies = []string{`s"1`} },
+	} {
+		s := testSpec()
+		f(&s)
+		if err := s.Validate(); !isInvalidSpecErr(err) {
+			t.Errorf("case %d: %v", i, err)
+		}
+	}
+	s := testSpec()
+	s.ID, s.ProposeActivity, s.Strategies = long, "A-Z.a_z0-9", []string{long}
+	if err := s.Validate(); err != nil {
+		t.Errorf("valid names refused: %v", err)
 	}
 }

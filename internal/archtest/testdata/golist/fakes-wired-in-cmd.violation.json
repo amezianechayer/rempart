@@ -5,10 +5,10 @@
 	]
 }
 {
-	"ImportPath": "github.com/amezianechayer/rempart/internal/loops/demo",
+	"ImportPath": "github.com/amezianechayer/rempart/internal/graph",
 	"Imports": [
-		"github.com/amezianechayer/rempart/internal/loops",
-		"github.com/amezianechayer/rempart/internal/loops/fake"
+		"github.com/amezianechayer/rempart/internal/graph/fake",
+		"github.com/amezianechayer/rempart/internal/graph/ports"
 	]
 }
 {
@@ -18,15 +18,15 @@
 	]
 }
 {
-	"ImportPath": "github.com/amezianechayer/rempart/internal/loops/fake",
+	"ImportPath": "github.com/amezianechayer/rempart/internal/graph/fake",
 	"Imports": [
-		"github.com/amezianechayer/rempart/internal/loops"
+		"github.com/amezianechayer/rempart/internal/graph/ports"
 	]
 }
 {
 	"ImportPath": "github.com/amezianechayer/rempart/cmd/rempart-worker",
 	"Imports": [
-		"github.com/amezianechayer/rempart/internal/llm/fake",
-		"github.com/amezianechayer/rempart/internal/loops/fake"
+		"github.com/amezianechayer/rempart/internal/graph/fake",
+		"github.com/amezianechayer/rempart/internal/llm/fake"
 	]
 }

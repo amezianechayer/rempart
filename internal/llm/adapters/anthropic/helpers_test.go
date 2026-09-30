@@ -82,6 +82,15 @@ func serve(t *testing.T, fn reply) (*httptest.Server, *recorder) {
 func text(s string) map[string]any { return map[string]any{"type": "text", "text": s} }
 
 func message(model, stop string, in, out int, content ...map[string]any) reply {
+	return messageUsage("msg_EXAMPLE1", model, stop, in, out, content...)
+}
+
+// messageID is message with the given id, usage 12 and 5.
+func messageID(id, model, stop string, content ...map[string]any) reply {
+	return messageUsage(id, model, stop, 12, 5, content...)
+}
+
+func messageUsage(id, model, stop string, in, out int, content ...map[string]any) reply {
 	return func(t *testing.T, w http.ResponseWriter, body map[string]any) {
 		m := model
 		if m == "" {
@@ -89,7 +98,7 @@ func message(model, stop string, in, out int, content ...map[string]any) reply {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		err := json.NewEncoder(w).Encode(map[string]any{
-			"id": "msg_EXAMPLE1", "type": "message", "role": "assistant",
+			"id": id, "type": "message", "role": "assistant",
 			"model": m, "stop_reason": stop, "content": content, "usage": map[string]any{"input_tokens": in, "output_tokens": out},
 		})
 		if err != nil {
@@ -116,13 +125,13 @@ func status(code int, body string) reply {
 	}
 }
 
-func config(url string, retries int) anthropic.Config {
-	return anthropic.Config{APIKey: secret.New(fakeKey()), BaseURL: url, Timeout: 5 * time.Second, MaxRetries: retries}
+func config(url string) anthropic.Config {
+	return anthropic.Config{APIKey: secret.New(fakeKey()), BaseURL: url, Timeout: 5 * time.Second}
 }
 
-func newProvider(t *testing.T, url string, retries int) *anthropic.Provider {
+func newProvider(t *testing.T, url string) *anthropic.Provider {
 	t.Helper()
-	p, err := anthropic.New(config(url, retries))
+	p, err := anthropic.New(config(url))
 	if err != nil {
 		t.Fatal(err)
 	}

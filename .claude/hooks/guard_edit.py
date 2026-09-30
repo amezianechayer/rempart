@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """PreToolUse (Edit|Write|MultiEdit).
 
-1. Protège le harnais (.claude/settings.json, hooks, bin, state) contre toute modification par l'agent.
+1. Protège le harnais (.claude/settings.json, hooks, bin, state) et les baselines d'eval contre toute modification par l'agent.
 2. Applique la discipline TDD selon la phase courante :
    - phase "tests" : seuls les tests, fixtures, evals et docs sont modifiables ;
-   - phase "impl"  : les tests, cas d'eval et baselines sont gelés ;
+   - phase "impl"  : les tests et cas d'eval sont gelés ;
    - phase "free"  : aucune restriction TDD (bootstrap, docs).
 3. Bloque l'écriture de secrets en clair.
+Les chemins sont comparés sans tenir compte de la casse (systèmes de fichiers Windows et macOS).
 """
 import re
 import sys
@@ -15,13 +16,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _common import block, read_input, rel, state  # noqa: E402
 
-PROTECTED = re.compile(r"^(CLAUDE\.md$|\.claude/(settings\.json|settings\.local\.json|hooks/|bin/|state/|agents/|commands/))")
-TEST_FILE = re.compile(
-    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|^evals/.*/baseline\.json$|"
-    r"^modules/.*/tests?/|\.tftest\.hcl$|^evals/security/lab/)"
+PROTECTED = re.compile(
+    r"^(CLAUDE\.md$|\.github/CODEOWNERS$|\.claude/(settings\.json|settings\.local\.json|hooks/|bin/|state/|agents/|commands/))", re.I
 )
-DOC_FILE = re.compile(r"(^docs/|\.md$)")
-SOURCE_FILE = re.compile(r"^(internal|cmd|pkg|policies|modules|web/src)/")
+# baseline.json, ou une baseline par couple (plateforme, modèle) sous evals/<boucle>/baseline/ (ADR 0002).
+BASELINE = re.compile(r"^evals/.+/baseline(\.json|/.+\.json)$", re.I)
+# suite.yaml (cible, motifs watch), imbriqué ou non, est gelé en phase impl comme les cas : T58, T61.
+TEST_FILE = re.compile(
+    r"(_test\.go$|_test\.rego$|/testdata/|^evals/.*/(cases|graders)/|^evals/.*/suite\.yaml$|"
+    r"^modules/.*/tests?/|\.tftest\.hcl$|^evals/security/lab/)",
+    re.I,
+)
+DOC_FILE = re.compile(r"(^docs/|\.md$)", re.I)
+SOURCE_FILE = re.compile(r"^(internal|cmd|pkg|policies|modules|web/src)/", re.I)
 
 SECRET_PATTERNS = [
     (re.compile(r"AKIA[0-9A-Z]{16}"), "clé d'accès AWS"),
@@ -33,6 +40,7 @@ SECRET_PATTERNS = [
     (re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}"), "jeton Slack"),
 ]
 ALLOWED_FAKE = re.compile(r"(EXAMPLE|FAKE|DUMMY|PLACEHOLDER)")
+SKIP_CALL = re.compile(r"\bt\.(Skip|Skipf|SkipNow)\(")
 
 
 def new_content(tool: str, ti: dict) -> str:
@@ -46,7 +54,7 @@ def new_content(tool: str, ti: dict) -> str:
 
 
 def main() -> None:
-    data = read_input()
+    data = read_input(fail_closed=True)
     tool = data.get("tool_name", "")
     ti = data.get("tool_input", {}) or {}
     path = rel(ti.get("file_path", ""))
@@ -57,6 +65,8 @@ def main() -> None:
             f"BLOQUÉ : {path} fait partie du harnais Rempart et ne peut pas être modifié par l'agent. "
             "Si un changement du harnais est nécessaire, explique pourquoi à l'humain et propose le diff."
         )
+    if BASELINE.search(path):
+        block(f"BLOQUÉ : {path} est une baseline d'eval. Elle ne change que par une PR humaine explicite.")
 
     for pattern, label in SECRET_PATTERNS:
         for m in pattern.finditer(content):
@@ -74,11 +84,11 @@ def main() -> None:
     if phase == "impl":
         if is_test:
             block(
-                f"BLOQUÉ (phase impl) : {path} est un test, un cas d'eval ou une baseline, gelés pendant l'implémentation. "
+                f"BLOQUÉ (phase impl) : {path} est un test ou un cas d'eval, gelés pendant l'implémentation. "
                 "Si un test est faux, arrête-toi, explique pourquoi, et repasse en phase tests avec "
-                "`python3 .claude/bin/rempart-state phase tests` (le changement sera tracé dans STATUS.md)."
+                "`python3 .claude/bin/rempart-state phase tests --reason \"...\"` (le changement sera tracé dans STATUS.md)."
             )
-        if re.search(r"\bt\.Skip\(|\bt\.SkipNow\(", content):
+        if SKIP_CALL.search(content):
             block("BLOQUÉ : ajout de t.Skip interdit en phase impl. Un test qui échoue se corrige, il ne se désactive pas.")
     elif phase == "tests":
         if SOURCE_FILE.search(path) and not is_test and not is_doc:

@@ -3,7 +3,9 @@ package domain
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 )
 
 type Residency string
@@ -28,13 +30,24 @@ type TenantPolicy struct {
 
 const maxRegionLen = 32
 
-const modelVersion = `claude-[a-z]+(-[0-9]{1,2}){1,2}`
+// undatedModels: models of anthropic-sdk-go v1.75.0 (message.go) published
+// without a dated snapshot, 2026-09-28. Any other model needs its date (T51).
+var undatedModels = [...]string{
+	"claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1",
+	"claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5",
+	"claude-opus-5-5", "claude-sonnet-4-6", "claude-sonnet-5",
+}
+
+const (
+	family = `claude-(?:opus|sonnet|haiku)-[0-9]{1,2}(?:-[0-9]{1,2})?`
+	dated  = `(?P<date>20[0-9]{6})`
+)
 
 var (
 	regionPattern  = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
-	anthropicModel = regexp.MustCompile(`^` + modelVersion + `(-[0-9]{8})?$`)
-	bedrockModel   = regexp.MustCompile(`^((eu|us|apac|global)\.)?anthropic\.` + modelVersion + `(-[0-9]{8}-v[0-9]+:[0-9]+|-v[0-9]+(:[0-9]+)?)?$`)
-	vertexModel    = regexp.MustCompile(`^` + modelVersion + `(@[0-9]{8})?$`)
+	anthropicModel = regexp.MustCompile(`^` + family + `-` + dated + `$`)
+	bedrockModel   = regexp.MustCompile(`^(?:(?:eu|us|apac|global)\.)?anthropic\.` + family + `-` + dated + `-v[0-9]+:[0-9]+$`)
+	vertexModel    = regexp.MustCompile(`^` + family + `@` + dated + `$`)
 	genericModel   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$`)
 )
 
@@ -92,21 +105,31 @@ func validRegion(s string) bool {
 
 func modelPinned(r Route) bool {
 	lower := strings.ToLower(r.Model)
-	for _, tok := range [...]string{"latest", "stable", "default", "current"} {
+	for _, tok := range [...]string{"latest", "stable", "default", "current", "preview", "beta", "experimental"} {
 		if strings.Contains(lower, tok) {
 			return false
 		}
 	}
 	switch r.Platform {
 	case PlatformAnthropic:
-		return anthropicModel.MatchString(r.Model)
+		return slices.Contains(undatedModels[:], r.Model) || datedMatch(anthropicModel, r.Model)
 	case PlatformBedrock:
-		return bedrockModel.MatchString(r.Model)
+		return datedMatch(bedrockModel, r.Model)
 	case PlatformVertex:
-		return vertexModel.MatchString(r.Model)
+		return datedMatch(vertexModel, r.Model)
 	default:
 		return genericModel.MatchString(r.Model)
 	}
+}
+
+// datedMatch: s matches re and its date group is a real calendar day.
+func datedMatch(re *regexp.Regexp, s string) bool {
+	m := re.FindStringSubmatch(s)
+	if m == nil {
+		return false
+	}
+	_, err := time.Parse("20060102", m[re.SubexpIndex("date")])
+	return err == nil
 }
 
 // residentInEU: Anthropic direct has no EU inference_geo; self-hosted has no

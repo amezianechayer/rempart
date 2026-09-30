@@ -173,10 +173,19 @@ func DefaultRules(module string) []Rule {
 				m("internal/secrets/ports"), m("internal/secrets/envelope"),
 			},
 		},
-		{ // R5
+		{ // R5, except internal/loops/fake
 			Name: "fakes-wired-in-cmd", Kind: Confine,
 			Targets:     []string{m("internal/*/fake/...")},
 			AllowedFrom: []string{m("cmd/...")},
+		},
+		{ // M0-T19c, obligation (k): the keyless approval verifier, tests only (T41)
+			Name: "loops-fake-tests-only", Kind: Confine,
+			Targets: []string{m("internal/loops/fake/...")},
+		},
+		{ // M0-T20, lifted after M0-T20b: the real adapter has no importer outside itself (T41)
+			Name: "anthropic-unwired-m0", Kind: Confine,
+			Targets:     []string{m("internal/llm/adapters/anthropic/...")},
+			AllowedFrom: []string{m("internal/llm/adapters/anthropic/...")},
 		},
 	}
 }

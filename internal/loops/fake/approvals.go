@@ -1,5 +1,5 @@
-// Package fake holds deterministic fakes of the loop engine: tests and the
-// -dev composition root only (rule R5). Its approval verifier has no key:
+// Package fake holds deterministic fakes of the loop engine: tests only (rule
+// loops-fake-tests-only, threat T41). Its approval verifier has no key:
 // anyone can compute a valid signature (threats T12, T41).
 package fake
 

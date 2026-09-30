@@ -6,6 +6,8 @@
 
 BASE b5821ec.
 
+- V1 (2026-09-27, `test-author`, étape A2) : code de référence (sections 3 à 5) sans défaut, commentaire de `RunLoop` retouché. Tests : `executeWith` enregistre `RunLoop` et l'exécute par son nom (un `converter.RawValue` n'est pas assignable à `json.RawMessage`, `jsontext.Value` en Go 1.27.1) ; remplacements sans effet de 6.3 écrits en échappements JSON (`\"\\u0062ob\"`, `\"plan_hash\":\"\\u0061`) ; littéraux non ASCII en échappements Go ASCII ; gofumpt. Mutations réancrées pour compiler : M7 et M9 de M0-T15 (`err.Error() == \"\"`), N15 (`) != nil || second.Payload() != nil`). Tests renforcés après mutations exploratoires survivantes : chaque octet ASCII, é, U+2028, U+1F600 à la borne et un octet au-dessus, majorant D1 vérifié contre `json.Marshal` ; échec déclaré mais `NonRetryable` non repris ; `ProposeFailure` tronqué (`7}`, `{\"tokens\":7`) refusé ; signal sans préfixe, tronqué, à fins `\\v`, `\\f`, NUL, U+00A0, U+0085, signature à espace ou é refusés. Point 11.3 partiellement infirmé : une `CanceledError` rendue par l'activité arrive en `ActivityError -> ApplicationError -> CanceledError` (même effet, garde `HasDetails`). `LoopResult` maximal mesuré : 203 555 octets. 27, 22 et 25 mutations détectées ; équivalentes : X16b, X17, X28, X34b, X35b.
+
 ## 1. Objet et périmètre
 
 Dans : `internal/loops/{spec,runloop,approvals,runloop_test,approvals_test}.go`, `docs/STATUS.md`, `docs/02-THREAT-MODEL.md`. Hors : `fake`, `domain`, T19c, T19d, `workflowcheck.config.yaml`, M1. Aucun appel JSON nouveau dans un workflow ; `approvals.go` perd son `json.Decoder`. Code : déclarations modifiées en entier, `RunLoop` en diff contre BASE ; « HEAD l. x à y » : lignes inchangées de `git show b5821ec:<fichier>`.
@@ -442,7 +444,7 @@ func TestRunLoopSizeLimits(t *testing.T) {
 	for _, c := range []struct { // D1: every bound reached with the bytes JSON expands most
 		fill   string
 		weight int
-	}{{"<", 6}, {"&", 6}, {" ", 6}, {"é", 4}} {
+	}{{"<", 6}, {"&", 6}, {"\u2028", 6}, {"é", 4}} {
 		f := domain.Finding{Message: strings.Repeat(c.fill, MaxFindingBytes/c.weight), Line: math.MinInt}
 		tr := IterationTrace{
 			Iteration: MaxIterationsLimit, Strategy: strings.Repeat("s", MaxNameBytes), Fingerprint: domain.Fingerprint(nil),
@@ -581,7 +583,7 @@ func TestAwaitApprovalsCanonicalSignalOnly(t *testing.T) {
 		strings.Replace(j, `"bob"`, `"bob"`, 1),
 		strings.Replace(j, `"plan_hash":"a`, `"plan_hash":"a`, 1),
 		strings.Replace(j, `":`, `": `, 1),
-		string(indented), " " + j, "﻿" + j,
+		string(indented), " " + j, "\ufeff" + j,
 	} {
 		signals = append(signals, rawJSON(t, d))
 	}
