@@ -1,0 +1,13 @@
+{
+  "superblock": "10.0.0.0/8",
+  "networks": [
+    {"name": "vpc-a", "cidr": "10.1.0.0/16"},
+    {"name": "vpc-a-zone", "cidr": "10.1.0.0/20", "parent": "vpc-a"},
+    {"name": "vpc-a-zone-app", "cidr": "10.1.0.0/24", "parent": "vpc-a-zone"},
+    {"name": "vpc-a-zone-data", "cidr": "10.1.1.0/24", "parent": "vpc-a-zone"},
+    {"name": "vpc-a-mgmt", "cidr": "10.1.16.0/24", "parent": "vpc-a"},
+    {"name": "vpc-b", "cidr": "10.2.0.0/16"},
+    {"name": "vpc-b-app", "cidr": "10.2.0.0/24", "parent": "vpc-b"}
+  ],
+  "external": [{"name": "onprem", "cidr": "192.168.0.0/16"}]
+}

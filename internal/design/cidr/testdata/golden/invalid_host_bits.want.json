@@ -1,0 +1,11 @@
+[
+  {
+    "code": "CIDR_INVALID",
+    "source": "cidr_check",
+    "severity": "critical",
+    "resource": "vpc-a",
+    "file": "",
+    "line": 0,
+    "message": "CIDR invalide : 10.0.0.1/16 has host bits set"
+  }
+]

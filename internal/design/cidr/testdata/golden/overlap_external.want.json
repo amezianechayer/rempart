@@ -1,0 +1,11 @@
+[
+  {
+    "code": "CIDR_OVERLAP_EXTERNAL",
+    "source": "cidr_check",
+    "severity": "critical",
+    "resource": "vpc-a|onprem",
+    "file": "",
+    "line": 0,
+    "message": "10.0.0.0/16 chevauche la plage externe 10.0.128.0/17"
+  }
+]

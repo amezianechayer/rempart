@@ -1,0 +1,11 @@
+[
+  {
+    "code": "CIDR_UNKNOWN_PARENT",
+    "source": "cidr_check",
+    "severity": "critical",
+    "resource": "orphan-app",
+    "file": "",
+    "line": 0,
+    "message": "parent inconnu : ghost"
+  }
+]

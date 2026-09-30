@@ -1,0 +1,11 @@
+{
+  "superblock": "10.0.0.0/8",
+  "networks": [
+    {"name": "aws-eu-west-3-staging", "cidr": "10.0.0.0/20"},
+    {"name": "aws-eu-west-3-staging-app", "cidr": "10.0.0.0/23", "parent": "aws-eu-west-3-staging"},
+    {"name": "aws-eu-west-3-staging-public", "cidr": "10.0.2.0/26", "parent": "aws-eu-west-3-staging"},
+    {"name": "azure-francecentral-staging", "cidr": "10.0.16.0/25"},
+    {"name": "azure-francecentral-staging-data", "cidr": "10.0.16.0/27", "parent": "azure-francecentral-staging"}
+  ],
+  "external": []
+}

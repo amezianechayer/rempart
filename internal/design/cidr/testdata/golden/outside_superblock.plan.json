@@ -1,0 +1,8 @@
+{
+  "superblock": "10.0.0.0/16",
+  "networks": [
+    {"name": "vpc-a", "cidr": "10.0.0.0/20"},
+    {"name": "vpc-b", "cidr": "10.1.0.0/20"}
+  ],
+  "external": []
+}

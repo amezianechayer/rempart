@@ -1,0 +1,11 @@
+[
+  {
+    "code": "CIDR_OUTSIDE_PARENT",
+    "source": "cidr_check",
+    "severity": "critical",
+    "resource": "vpc-a-app",
+    "file": "",
+    "line": 0,
+    "message": "10.2.0.0/24 hors de son parent 10.1.0.0/16"
+  }
+]

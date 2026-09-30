@@ -1,0 +1,20 @@
+[
+  {
+    "code": "CIDR_NOT_PRIVATE",
+    "source": "cidr_check",
+    "severity": "high",
+    "resource": "vpc-public",
+    "file": "",
+    "line": 0,
+    "message": "8.8.8.0/24 n'est pas une plage privée"
+  },
+  {
+    "code": "CIDR_OUTSIDE_SUPERBLOCK",
+    "source": "cidr_check",
+    "severity": "high",
+    "resource": "vpc-public",
+    "file": "",
+    "line": 0,
+    "message": "8.8.8.0/24 hors du superbloc 10.0.0.0/8"
+  }
+]
