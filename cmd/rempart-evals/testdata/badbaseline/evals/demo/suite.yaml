@@ -1,7 +1,0 @@
-name: demo
-loop: L0-demo
-target: demo
-watch:
-  - internal/loops/**
-  - internal/llm/**
-  - internal/tenancy/**
