@@ -41,6 +41,7 @@ type makeDatabase struct {
 type makeDBTarget struct {
 	Prereqs    []string // sorted
 	RecipeLine int      // "recipe to execute (from 'Makefile', line N)", 0 if none
+	Commands   int      // V3, D16: non-blank recipe lines printed under the entry
 }
 
 var (
@@ -308,6 +309,7 @@ func TestMakefileOracle(t *testing.T) {
 	base := runMakeDatabase(t, writeOracleMakefile(t, "", nil))
 	template := mustParseMakefile(t, targetMakefile)
 	templateLines := strings.Count(targetMakefile, "\n")
+	selfLine := exactLine(t, targetMakefile, "Makefile: ;")
 
 	type oracleCase struct {
 		name  string
@@ -345,6 +347,20 @@ func TestMakefileOracle(t *testing.T) {
 			name: "missing_include", src: targetMakefile + "include absent.mk\n", mf: template,
 			want: []string{"make exited with code 2 (oracle): \"Makefile:" + strconv.Itoa(templateLines+1) + ": absent.mk: No such file or directory"},
 		},
+		// V3, D16: make reads the rule "Makefile: ;" (target Makefile, no
+		// prerequisite, empty recipe at its line) exactly when the parser does.
+		{ // OC7
+			name: "self_rule_unseen_by_parser", src: targetMakefile, mf: withoutSelfRule(template),
+			want: []string{fmt.Sprintf("target Makefile: make read prerequisites [], recipe line %d, the test parser no such target (oracle)", selfLine)},
+		},
+		{ // OC8, the line blanked: every other line keeps its number
+			name: "self_rule_absent_for_make", src: mustReplace(t, targetMakefile, "\nMakefile: ;\n", "\n\n"), mf: template,
+			want: []string{fmt.Sprintf("target Makefile: make read no such target, the test parser prerequisites [], recipe line %d (oracle)", selfLine)},
+		},
+		{ // OC9, a command make would run to remake the Makefile, hidden from the parser
+			name: "self_rule_hidden_command", src: mustReplace(t, targetMakefile, "\nMakefile: ;\n", "\nMakefile: ; @true\n"), mf: template,
+			want: []string{"target Makefile: make read 1 recipe commands, want none (D16, oracle)"},
+		},
 	}
 	reference := referenceDevMakefile(t)
 	positives := []oracleCase{
@@ -378,6 +394,18 @@ func TestMakefileOracle(t *testing.T) {
 			t.Fatal(err)
 		}
 		mf := mustParseMakefile(t, src)
-		reportProblems(t, compareMakeDatabase(mf, runMakeDatabase(t, dir), base))
+		db := runMakeDatabase(t, dir)
+		reportProblems(t, compareMakeDatabase(mf, db, base))
+		// V3, D16: make itself holds the rule that stops it from remaking the Makefile.
+		if tg, ok := db.Targets["Makefile"]; !ok || len(tg.Prereqs) != 0 || tg.Commands != 0 {
+			t.Errorf("make database: target Makefile %s, want prerequisites [] and no command (rule \"Makefile: ;\", D16)", describeDBTarget(tg, ok))
+		}
 	})
+}
+
+// withoutSelfRule returns mf as the parser would have read it without the rule
+// "Makefile: ;" (V3, D16).
+func withoutSelfRule(mf parsedMakefile) parsedMakefile {
+	mf.SelfRule = 0
+	return mf
 }

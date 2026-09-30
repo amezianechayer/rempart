@@ -30,6 +30,9 @@ type parsedMakefile struct {
 	Phony map[string]bool
 	Lines []makeLine     // every logical line, comments included, for whole-file rules
 	Vars  map[string]int // V2: variable name -> line of its last assignment (D8 step 3), for the oracle
+	// V3, D16: line of the rule "Makefile: ;", 0 if absent. Not in Rules: it is
+	// no target of the checks, only the barrier against remaking the Makefile.
+	SelfRule int
 }
 
 // Grammar of parseMakefile: the closed subset of GNU make of
@@ -312,6 +315,12 @@ func (p *makeParser) addRecipe(text string, num int) {
 		r.Recipe = append(r.Recipe, cmd)
 	}
 	p.mf.Rules[p.current] = r
+}
+
+// checkMakefileSelfRule (M0-T04b V3, D16, T32): the Makefile holds the rule
+// "Makefile: ;" (parseMakefile admits it once, in that form only).
+func checkMakefileSelfRule(mf parsedMakefile) []string {
+	return nil
 }
 
 // requiredMakeTargets must each be defined once and declared .PHONY.
@@ -703,10 +712,17 @@ func checkOpaTest(mf parsedMakefile, problems *problemList) {
 	}
 }
 
+// selfRuleComment precedes the line "Makefile: ;" (D16) in targetMakefile and
+// in the reference Makefile of M0-T04b V3: three column-0 make comments.
+const selfRuleComment = `# Menace T32 : sans règle explicite pour lui, GNU make referait le Makefile par une règle
+# implicite intégrée (Makefile.sh, Makefile,v, RCS/, SCCS/) avant toute recette, même sous -n.
+# Cette règle sans prérequis ni recette l'en empêche (M0-make-subcalls D16).`
+
 // targetMakefile is the Makefile of docs/plans/M0-squelette.md section 6.1,
 // amended by docs/plans/M0-make-subcalls.md (sub-makes in the canonical form
-// "$(MAKE) -f Makefile --no-print-directory <target>"), recipe lines starting
-// with a tab: the conforming negative control.
+// "$(MAKE) -f Makefile --no-print-directory <target>", V3 D16: the rule
+// "Makefile: ;" after the .PHONY lines), recipe lines starting with a tab: the
+// conforming negative control.
 const targetMakefile = `# Rempart : vérification et outillage. Issu de Makefile.template (M0-T01).
 # Le hook Stop exige ` + "`make verify-quick`" + ` : cette cible ne demande ni réseau ni Docker
 # (hors premier téléchargement des modules Go et de la chaîne d'outils).
@@ -729,6 +745,9 @@ export SCENARIO EVAL POLICIES_DIR OPA
 
 .PHONY: verify-quick verify opa-test arch-test evals update-baseline
 .PHONY: dev dev-preflight dev-down sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
+
+` + selfRuleComment + `
+Makefile: ;
 
 verify-quick:
 	go build ./...
@@ -1466,6 +1485,14 @@ const (
 	errContinuationAtEOF = "continuation at end of file (D11)"                                // E14
 )
 
+// Stable fragments of D16 (M0-T04b V3): E15, a line naming the Makefile as a
+// rule target in any other form than "Makefile: ;"; the problem of
+// checkMakefileSelfRule when that line is missing.
+const (
+	errSelfRuleForm    = `rule naming Makefile must be exactly "Makefile: ;" (D16)` // E15
+	errSelfRuleMissing = `rule "Makefile: ;" missing`                               // D16 problem
+)
+
 // errControlByte is E9 for the byte b.
 func errControlByte(b byte) string {
 	return fmt.Sprintf("control byte 0x%02x not allowed (D13)", b)
@@ -1553,6 +1580,17 @@ func TestMakefileGrammar(t *testing.T) {
 	n10 := mustReplace(t, valid, "EVAL ?= all\n", "EVAL ?= \\\nall\n")
 	n11 := addRecipeLines("dev", "\t@echo \"a\u202eb\"")
 	n14 := valid + "\t@echo x \\"
+	// V3, D16: the rule "Makefile: ;" is admitted once, in that exact form only.
+	const selfRule = "Makefile: ;\n"
+	selfTwice := valid + "\n" + selfRule
+	selfTwiceLines := exactLines(selfTwice, "Makefile: ;")
+	if len(selfTwiceLines) != 2 {
+		t.Fatalf("self_rule_twice: line Makefile: ; found on lines %d, want 2 lines", selfTwiceLines)
+	}
+	// withSelf replaces the rule "Makefile: ;" of the template by lines (newline included).
+	withSelf := func(lines string) string { return mustReplace(t, valid, selfRule, lines) }
+	selfRecipe := withSelf(selfRule + "\t@cp Makefile.sh Makefile\n")
+	selfRecipeAfterBlank := withSelf(selfRule + "\n# x\n\t@cp Makefile.sh Makefile\n")
 	negatives := []testCase{
 		at("eval_include_comment_colon", g1, evilInclude, errTrailingComment),                                       // G1, BLOCK finding 1
 		at("eval_include_indirect", g2, "X := evil.mk", errVariableNotAllowed("X")),                                 // G2, BLOCK finding 1
@@ -1624,9 +1662,52 @@ func TestMakefileGrammar(t *testing.T) {
 		at("nonascii_indented_comment", afterOPA("  # arrêt\n"), "  # arrêt", errNonASCII),               // N13
 		{name: "continuation_at_eof", src: n14, wantErr: fmt.Sprintf("line %d: %s", // N14
 			exactLine(t, n14, "\t@echo x \\"), errContinuationAtEOF)},
+
+		// V3, D16 (third BLOCK): "Makefile: ;" once, in that exact form. Any other
+		// rule naming the Makefile could give it a recipe or prerequisites that
+		// remake it, or leave the implicit rule search on.
+		{name: "self_rule_twice", src: selfTwice, wantErr: errAlreadyNamed(selfTwiceLines[1], "Makefile", selfTwiceLines[0])}, // S1
+		atExact("self_rule_prerequisite", withSelf("Makefile: x\n"), "Makefile: x", errSelfRuleForm),                          // S2
+		atExact("self_rule_prerequisite_sh", withSelf("Makefile: Makefile.sh\n"), "Makefile: Makefile.sh", errSelfRuleForm),   // S3
+		atExact("self_rule_inline_recipe", withSelf("Makefile: ; echo\n"), "Makefile: ; echo", errSelfRuleForm),               // S4
+		atExact("self_rule_inline_copy", withSelf("Makefile: ; cp Makefile.sh $@\n"), "Makefile: ; cp Makefile.sh $@", errSelfRuleForm),
+		atExact("self_rule_without_semicolon", withSelf("Makefile:\n"), "Makefile:", errSelfRuleForm), // S5
+		atExact("self_rule_glued_semicolon", withSelf("Makefile:;\n"), "Makefile:;", errSelfRuleForm),
+		atExact("self_rule_space_before_colon", withSelf("Makefile : ;\n"), "Makefile : ;", errSelfRuleForm),
+		atExact("self_rule_double_colon", withSelf("Makefile:: ;\n"), "Makefile:: ;", errSelfRuleForm),
+		atExact("self_rule_trailing_space", withSelf("Makefile: ; \n"), "Makefile: ; ", errSelfRuleForm),
+		atExact("self_rule_leading_space", withSelf(" Makefile: ;\n"), " Makefile: ;", errSelfRuleForm),
+		atExact("self_rule_tab_before_semicolon", withSelf("Makefile:\t;\n"), "Makefile:\t;", errSelfRuleForm),
+		at("self_rule_recipe_line", selfRecipe, "\t@cp Makefile.sh Makefile", errRecipeOutside),
+		at("self_rule_recipe_after_comment", selfRecipeAfterBlank, "\t@cp Makefile.sh Makefile", errRecipeOutside),
+		// Other targets stay [a-z][a-z0-9-]*: the shape of Makefile alone is admitted.
+		atExact("other_file_rule", withSelf(selfRule+"Makefile.sh: ;\n"), "Makefile.sh: ;", errOutsideGrammar),
+		atExact("makefile_prerequisite", withSelf(selfRule+"verify: Makefile\n"), "verify: Makefile", errOutsideGrammar),
 	}
 	positives := []testCase{
-		{name: "valid_template", src: valid}, // GP1
+		{name: "valid_template", src: valid, // GP1
+			// V3, D16: the rule "Makefile: ;" is read, apart from the rules of the checks.
+			check: func(t *testing.T, mf parsedMakefile) {
+				if want := exactLine(t, valid, "Makefile: ;"); mf.SelfRule != want {
+					t.Errorf("SelfRule = %d, want %d (line of \"Makefile: ;\")", mf.SelfRule, want)
+				}
+				if _, ok := mf.Rules["Makefile"]; ok {
+					t.Error("Rules holds Makefile: the rule \"Makefile: ;\" is no target of the checks")
+				}
+			}},
+		{name: "self_rule_first_line", src: selfRule + valid[:strings.Index(valid, selfRule)] + // GP7
+			valid[strings.Index(valid, selfRule)+len(selfRule):],
+			check: func(t *testing.T, mf parsedMakefile) {
+				if mf.SelfRule != 1 {
+					t.Errorf("SelfRule = %d, want 1", mf.SelfRule)
+				}
+			}},
+		{name: "self_rule_absent", src: withSelf(""), // GP8: the grammar admits it, checkMakefileSelfRule requires it
+			check: func(t *testing.T, mf parsedMakefile) {
+				if mf.SelfRule != 0 {
+					t.Errorf("SelfRule = %d, want 0", mf.SelfRule)
+				}
+			}},
 		{name: "go_env_lines", src: mustReplace(t, valid, exportLine, // GP2
 			exportLine+"export GOWORK := off\noverride GOFLAGS := -mod=readonly\nexport GOFLAGS\n")},
 		{name: "comments_with_syntax", src: mustReplace(t, valid, ".DEFAULT_GOAL := verify-quick\n", // GP3
@@ -1670,14 +1751,42 @@ func TestMakefileGrammar(t *testing.T) {
 	t.Run("negative_controls", func(t *testing.T) { run(t, negatives) })
 	t.Run("positive_controls", func(t *testing.T) { run(t, positives) })
 
+	// V3, D16: checkMakefileSelfRule requires the rule the grammar admits.
+	t.Run("self_rule", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			src  string
+			want []string
+		}{
+			{name: "present", src: valid},
+			{name: "absent", src: withSelf(""), want: []string{"Makefile: " + errSelfRuleMissing, "(D16, T32)"}},
+			{name: "only_in_comment", src: withSelf("# Makefile: ;\n"), want: []string{"Makefile: " + errSelfRuleMissing}},
+			{name: "only_in_recipe", src: withSelf("") + "\t@echo 'Makefile: ;'\n", want: []string{"Makefile: " + errSelfRuleMissing}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				mf, err := parseMakefile(tc.src)
+				if err != nil {
+					t.Fatalf("parseMakefile: %v", err)
+				}
+				expectProblems(t, checkMakefileSelfRule(mf), tc.want)
+			})
+		}
+	})
+
 	t.Run("repository", func(t *testing.T) {
 		_, fsys := repoRoot(t)
 		src, err := readRepoFile(fsys, "Makefile", "created by M0-T01")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := parseMakefile(src); err != nil {
+		mf, err := parseMakefile(src)
+		if err != nil {
 			t.Fatalf("Makefile: %v", err)
+		}
+		// V3, D16 (criterion: grep -c '^Makefile: ;$' Makefile is 1).
+		reportProblems(t, checkMakefileSelfRule(mf))
+		if n := len(exactLines(src, "Makefile: ;")); n != 1 {
+			t.Errorf("Makefile: %d lines \"Makefile: ;\", want exactly 1 (D16)", n)
 		}
 	})
 }
