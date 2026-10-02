@@ -413,14 +413,12 @@ func TestDevStackOpenBaoReady(t *testing.T) {
 		t.Fatalf("GET /v1/sys/mounts: %v", err)
 	}
 	var paths []string
-	for p, m := range mounts.Data {
+	for p := range mounts.Data {
 		paths = append(paths, p)
-		if m.Type == "transit" {
-			t.Errorf("mount %s is a transit engine: Transit arrives in M1 (A1)", p)
-		}
 	}
 	slices.Sort(paths)
-	if want := []string{"cubbyhole/", "identity/", "secret/", "sys/"}; !slices.Equal(paths, want) {
+	// M1-T01: make dev mounts Transit (TestDevStackTransitReady checks its type).
+	if want := []string{"cubbyhole/", "identity/", "secret/", "sys/", "transit/"}; !slices.Equal(paths, want) {
 		t.Errorf("OpenBao mounts are %q, want %q", paths, want)
 	}
 }

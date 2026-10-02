@@ -106,7 +106,7 @@ func tamperCheck(where string, s *envelope.Sealer, ctx context.Context, tampered
 	case err == nil:
 		return fmt.Errorf("%s: Open of a tampered payload succeeded (%d bytes returned)", where, len(got))
 	case !errors.Is(err, envelope.ErrCorrupt) && !errors.Is(err, envelope.ErrTenantMismatch):
-		return fmt.Errorf("%s: Open error %v, want ErrCorrupt or ErrTenantMismatch", where, err)
+		return fmt.Errorf("%s: Open error %w, want ErrCorrupt or ErrTenantMismatch", where, err)
 	case got != nil:
 		return fmt.Errorf("%s: Open returned %d bytes along with an error, want nil", where, len(got))
 	}
