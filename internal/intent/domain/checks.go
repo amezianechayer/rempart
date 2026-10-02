@@ -22,16 +22,22 @@ const (
 	codeDataOmitted       = "INTENT-DATA-OMITTED"
 )
 
+// CodeLanguageUnsupported: the request is in a language, script or encoding
+// not covered by the deterministic checks (ADR 0006 A1.2). The proposer cannot
+// fix it: L1 escalates without calling the model.
+const CodeLanguageUnsupported = "INTENT-LANGUAGE-UNSUPPORTED"
+
 // Fixed messages, per code, never quoting a value (plan P6).
 var messages = map[string]string{
-	codeRefUnknown:        "reference to a workload that does not exist",
-	codeRefDuplicate:      "identifier used twice",
-	codeTechnicalValue:    "technical value (CIDR, IP address, ASN, IAM role) not allowed here; describe the need instead",
-	codeInventedValue:     "value not written by the user; declare it in assumptions or ask a question",
-	codeBlockingAssumed:   "blocking field cannot be assumed; ask a question",
-	codeExposureSensitive: "sensitive workload exposed; remove the entry and capture the request in explicit_overrides",
-	codeExposureUnrequest: "exposure not requested by the user; remove the entry",
-	codeDataOmitted:       "sensitive data written by the user is not declared in data",
+	codeRefUnknown:          "reference to a workload that does not exist",
+	codeRefDuplicate:        "identifier used twice",
+	codeTechnicalValue:      "technical value (CIDR, IP address, ASN, IAM role) not allowed here; describe the need instead",
+	codeInventedValue:       "value not written by the user; declare it in assumptions or ask a question",
+	codeBlockingAssumed:     "blocking field cannot be assumed; ask a question",
+	codeExposureSensitive:   "sensitive workload exposed; remove the entry and capture the request in explicit_overrides",
+	codeExposureUnrequest:   "exposure not requested by the user; remove the entry",
+	codeDataOmitted:         "sensitive data written by the user is not declared in data",
+	CodeLanguageUnsupported: "request language, script or encoding not covered by the deterministic checks; human review required",
 }
 
 var severities = map[string]loopsdomain.Severity{
@@ -51,6 +57,9 @@ func finding(code, resource string) loopsdomain.Finding {
 func Check(text string, d Draft, c TenantContext) []loopsdomain.Finding {
 	ix := newIndex(text)
 	var out []loopsdomain.Finding
+	if DetectLanguage(text).Unsupported {
+		out = append(out, finding(CodeLanguageUnsupported, "request"))
+	}
 	out = append(out, checkReferences(d)...)
 	out = append(out, checkTechnical(text, d)...)
 	out = append(out, checkProvenance(ix, d, c)...)

@@ -17,6 +17,21 @@ type controlled struct {
 
 var standardPorts = map[string]int{"https": 443, "http": 80}
 
+// classRank orders the classifications, the strictest last (plan P9, A1.4).
+var classRank = map[string]int{"public": 0, "internal": 1, "confidential": 2, "regulated": 3}
+
+// strictestClass is the highest rank of the classifications anchored in the
+// text, -1 if none.
+func strictestClass(ix tokenIndex) int {
+	r := -1
+	for c, k := range classRank {
+		if k > r && ix.anchoredIn(lexClass, c) {
+			r = k
+		}
+	}
+	return r
+}
+
 func controlledValues(ix tokenIndex, d Draft) []controlled {
 	var out []controlled
 	add := func(path, value string, anchored, safe bool) {
@@ -65,8 +80,13 @@ func controlledValues(ix tokenIndex, d Draft) []controlled {
 			add(iPath("exposure", i, "allowed_sources"), s, strings.Contains(ix.raw, s), false)
 		}
 	}
+	strictest := strictestClass(ix)
 	for _, x := range d.Data {
-		add(dPath(x.ID, "classification"), x.Classification, ix.anchoredIn(lexClass, x.Classification), x.Classification == "confidential")
+		rank, known := classRank[x.Classification]
+		atLeast := known && rank >= strictest
+		add(dPath(x.ID, "classification"), x.Classification,
+			atLeast && ix.anchoredIn(lexClass, x.Classification),
+			atLeast && x.Classification == "confidential")
 		for _, r := range x.Regulation {
 			lex(dPath(x.ID, "regulation"), lexRegulation, r)
 		}

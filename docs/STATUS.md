@@ -609,3 +609,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-10-02 10:45 [harnais] phase : impl -> free
 
 - 2026-10-02 11:18 [harnais] phase : free -> tests
+
+- 2026-10-02 11:26 [harnais] phase : tests -> impl

@@ -22,7 +22,19 @@ const (
 	fallbackRegion = "eu-west-3"
 )
 
-var questionText = map[string]string{
+var questionText = map[Lang]map[string]string{
+	LangFR: questionsFR,
+	LangEN: questionsEN,
+}
+
+var questionsEN = map[string]string{
+	ContraResidency:        "The chosen region is outside the residency zone required for the data. Use the proposed region?",
+	ContraRegionNotAllowed: "The chosen region is not one of the allowed regions. Use the proposed region?",
+	ContraForbiddenCloud:   "This cloud is forbidden for this tenant. Remove this component?",
+	ContraRunsOnNotCluster: "This component must be deployed in a Kubernetes cluster. Deploy it without a cluster?",
+}
+
+var questionsFR = map[string]string{
 	ContraResidency:        "La région choisie est hors de la zone de résidence exigée pour les données. Utiliser la région proposée ?",
 	ContraRegionNotAllowed: "La région choisie ne fait pas partie des régions autorisées. Utiliser la région proposée ?",
 	ContraForbiddenCloud:   "Ce cloud est interdit pour ce tenant. Retirer ce composant ?",
@@ -71,7 +83,7 @@ func Contradictions(ir IR, c TenantContext) []Contradiction {
 	}
 	for _, w := range ir.Workloads {
 		if slices.Contains(c.ForbiddenClouds, w.Cloud) || slices.Contains(ir.Constraints.ForbiddenClouds, w.Cloud) {
-			addOnce(Contradiction{ContraForbiddenCloud, "workloads[" + w.ID + "].cloud", "retirer"})
+			addOnce(Contradiction{ContraForbiddenCloud, "workloads[" + w.ID + "].cloud", "remove"})
 		}
 		if notAllowed(w.Region, ir, c) {
 			def := fallbackRegion
@@ -82,7 +94,7 @@ func Contradictions(ir IR, c TenantContext) []Contradiction {
 		}
 		if w.RunsOn != nil {
 			if t, ok := byID[*w.RunsOn]; ok && t.Kind != "k8s_cluster" {
-				addOnce(Contradiction{ContraRunsOnNotCluster, "workloads[" + w.ID + "].runs_on", "aucun"})
+				addOnce(Contradiction{ContraRunsOnNotCluster, "workloads[" + w.ID + "].runs_on", "none"})
 			}
 		}
 	}
@@ -110,11 +122,17 @@ func Contradictions(ir IR, c TenantContext) []Contradiction {
 
 // WithContradictions puts the contradictions first in OpenQuestions, at most
 // three questions in total; it returns the IR and the contradictions not asked.
-func WithContradictions(ir IR, cs []Contradiction) (IR, []Contradiction) {
+// The questions are written in lang; any other value than fr or en gives French
+// (plan P8).
+func WithContradictions(ir IR, cs []Contradiction, lang Lang) (IR, []Contradiction) {
+	texts, ok := questionText[lang]
+	if !ok {
+		texts = questionText[LangFR]
+	}
 	n := min(len(cs), maxQuestions)
 	qs := []Question{}
 	for _, x := range cs[:n] {
-		qs = append(qs, Question{Field: x.Field, Question: questionText[x.Code], Default: x.Default})
+		qs = append(qs, Question{Field: x.Field, Question: texts[x.Code], Default: x.Default})
 	}
 	for _, q := range ir.OpenQuestions {
 		if len(qs) == maxQuestions {
