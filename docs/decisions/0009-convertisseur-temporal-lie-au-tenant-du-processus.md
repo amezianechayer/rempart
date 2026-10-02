@@ -1,6 +1,6 @@
 # 0009. Convertisseur Temporal lié au tenant du processus
 
-- Statut : proposé
+- Statut : accepté le 2026-10-02 (décision humaine)
 - Date : 2026-10-02
 - Jalon : M1 (tâche M1-T02 `codec-replay`, plan `docs/plans/M1-codec-replay.md`)
 

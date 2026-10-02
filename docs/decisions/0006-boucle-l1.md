@@ -110,7 +110,7 @@ Le texte n'entre dans le prompt que par `UntrustedBlock`, dans un appel `Structu
 
 ## Amendement A1 : langues de la demande (M1-T03b `intent-multilingual`)
 
-- Statut de A1 : proposé le 2026-10-02 par `architect`, à accepter par l'humain avant la phase impl de M1-T03b (remplacer cette ligne par « Statut de A1 : accepté le <date> (décision humaine) »).
+- Statut de A1 : accepté le 2026-10-02 par `architect`, à accepter par l'humain avant la phase impl de M1-T03b (remplacer cette ligne par « Statut de A1 : accepté le <date> (décision humaine) »).
 - Origine : obligation (cs) de `docs/STATUS.md` (demande de l'humain du 2026-09-30) ; obligations (ci) et (cm). Plan : `docs/plans/M1-intent-multilingual.md`.
 
 ### Contexte
