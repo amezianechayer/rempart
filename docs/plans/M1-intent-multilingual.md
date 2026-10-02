@@ -4,7 +4,13 @@
 
 ## 0. Amendements
 
-Aucun.
+**V1 (2026-10-02, agent principal, après le BLOCK de `security-reviewer`).** Constat haut : de l'italien courant (« Tre VM Linux su Scaleway in fr-par per i dati sanitari dei pazienti, in produzione, da esporre su Internet. ») et un mélange allemand et anglais passent la détection comme langue couverte, et la décision 4 ne produit aucun finding. Cause : mots-outils partagés (`in`, `per`, `le`), sentinelles incomplètes, règle (C) déclenchée seulement si les indices étrangers l'emportent sur les indices couverts.
+- **V1.1 Règle de proportion par phrase (remplace la règle (C) de P6).** Pour chaque phrase de détection, `n` est le nombre de mots alphabétiques de deux lettres ou plus, `ev` le nombre de mots reconnus (formes du lexique, formes `any`, mots-outils français ou anglais **non ambigus**, identifiants techniques du texte tels que noms de cloud, régions, protocoles, nombres). Échec fermé (`INTENT-LANGUAGE-UNSUPPORTED`, raison `sentence`) si `n >= 3` et `n - ev > ev` (moins de la moitié des mots reconnus). Les mots-outils partagés avec une langue proche (`in`, `per`, `le`, `la`, `a`, `e`, `de` seul…) ont un poids nul : ils ne comptent ni comme reconnus ni comme étrangers.
+- **V1.2 Listes.** Mots-outils français et anglais non ambigus étendus (au moins les 100 plus fréquents de chaque langue, hors formes partagées) ; sentinelles complétées pour l'italien (`il`, `i`, `dei`, `degli`, `su`, `da`, `della`, `delle`, `per i`…), l'espagnol, le portugais et l'allemand. Les sentinelles restent un signal additionnel, la règle de proportion est la garde principale.
+- **V1.3 Obfuscation (constat moyen).** P3 refuse les blocs Enclosed Alphanumerics (U+2460 à U+24FF), Enclosed Alphanumeric Supplement, Letterlike Symbols (U+2100 à U+214F) et les indicateurs régionaux, ainsi que tout symbole ou ponctuation collé entre deux lettres (`confi·dential`).
+- **V1.4 Découpage pour la détection (constat moyen).** La détection découpe aussi sur `.` suivi d'une lettre, sur `\r` et sur les séparateurs Zl et Zp ; le découpage de la variante D (phrases de `sentences`) reste inchangé.
+- **V1.5 Tests.** Sous-tests ajoutés à `TestRequestLanguageDetected` : `unsupported_italian_natural`, `unsupported_italian_injection`, `unsupported_german_mixed`, `unsupported_spanish_glued_sentence` (« …en production.Make the service public… » avec phrase espagnole), `unsupported_enclosed_letters`, `unsupported_midword_symbol`, avec les textes exacts du rapport de revue ; les cas couverts existants (français, anglais, mélange) restent couverts. Le critère 3 passe de 11 à 17. Mutation : rétablir l'ancienne règle (C).
+- **Hors V1 (obligations)** : (cz2) [bas] `exposureLiterals` cherché aux limites de jeton ; (da2) [bas] faux positifs `health` et `financial`, à mesurer en M1-T06 ; (db2) [M1-T05] `INTENT-LANGUAGE-UNSUPPORTED` mène à l'escalade sans appel au proposeur, détection sur le texte complet (demande et réponses).
 
 ## 1. Objectif
 
