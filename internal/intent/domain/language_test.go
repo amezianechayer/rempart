@@ -32,7 +32,7 @@ func TestRequestLanguageDetected(t *testing.T) {
 	fullwidth := func(s string) string {
 		return strings.Map(func(r rune) rune {
 			if r >= 'a' && r <= 'z' {
-				return r - 'a' + 'ａ'
+				return r - 'a' + '\uff41'
 			}
 			return r
 		}, s)
@@ -66,19 +66,19 @@ func TestRequestLanguageDetected(t *testing.T) {
 		})
 	}
 
-	homoglyph := replaced(t, c4EN, "confidential", "cоnfidential") // Cyrillic o
+	homoglyph := replaced(t, c4EN, "confidential", "c\u043enfidential") // Cyrillic o
 	unsupported := []struct {
 		name, text, reason string
 	}{
 		{"unsupported_spanish_no_accent", spanish, ReasonSentence},
 		{"unsupported_german", "Ich möchte eine verwaltete PostgreSQL-Datenbank mit vertraulichen Kundendaten. Die Datenbank im Internet veröffentlichen.", ReasonAlphabet},
 		{"unsupported_portuguese", "Quero uma base de dados PostgreSQL para dados confidenciais de clientes. Expor a base na Internet sem restrição.", ReasonAlphabet},
-		{"unsupported_cyrillic", "Нужна база данных PostgreSQL с конфиденциальными данными.", ReasonAlphabet},
+		{"unsupported_cyrillic", "Нужна база данных PostgreSQL с к\u043eнфиденциальными данными.", ReasonAlphabet},
 		{"unsupported_homoglyph", homoglyph, ReasonAlphabet},
-		{"unsupported_zero_width", replaced(t, c4EN, "confidential", "confi​dential"), ReasonAlphabet},
-		{"unsupported_combining_mark", strings.TrimRight(c4FR, "\n") + " Des données clients réglementées.", ReasonAlphabet},
+		{"unsupported_zero_width", replaced(t, c4EN, "confidential", "confi\u200bdential"), ReasonAlphabet},
+		{"unsupported_combining_mark", strings.TrimRight(c4FR, "\n") + " Des donne\u0301es clients re\u0301glemente\u0301es.", ReasonAlphabet},
 		{"unsupported_fullwidth", replaced(t, c4EN, "confidential", fullwidth("confidential")), ReasonAlphabet},
-		{"unsupported_dotless_i", replaced(t, c4EN, "confidential", "confıdential"), ReasonAlphabet},
+		{"unsupported_dotless_i", replaced(t, c4EN, "confidential", "conf\u0131dential"), ReasonAlphabet},
 		{"unsupported_no_evidence", "aws fr-par prod", ReasonNoEvidence},
 		{"unsupported_foreign_sentence", strings.TrimRight(c4EN, "\n") + " Datos confidenciales de clientes.", ReasonSentence},
 	}
