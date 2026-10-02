@@ -612,3 +612,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-10-02 11:18 [harnais] phase : free -> tests
 
 - 2026-10-02 11:26 [harnais] phase : tests -> impl
+
+- 2026-10-02 11:32 [harnais] RETOUR EN PHASE TESTS depuis impl : BLOCK securite M1-T03b : italien detecte comme anglais, regle de proportion
+
+- 2026-10-02 11:32 [harnais] phase : impl -> tests
