@@ -594,3 +594,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-09-30 21:20 [harnais] PHASE FREE (discipline TDD suspendue) : tâche M1-T04 design-cidr terminée
 
 - 2026-09-30 21:20 [harnais] phase : impl -> free
+
+- 2026-10-02 10:15 [harnais] phase : free -> tests
