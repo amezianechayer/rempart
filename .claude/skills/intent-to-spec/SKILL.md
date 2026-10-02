@@ -25,5 +25,7 @@ description: Transformer une demande d'infrastructure en langage naturel en Inte
 ## Note (M1-T03, ADR 0006)
 Le `tenant_id` du scénario de référence (`references/example-reference-scenario.json`, valeur `tenant-demo`) n'est pas un identifiant valide : l'IR canonique exige un UUID v4 en minuscules (ADR 0004), et certaines valeurs du scénario ne sont pas des chaînes. Pour les tests, `internal/intent/testdata/reference-ir.json` fait foi. Schémas du dépôt : `schemas/intent/v1.json` (IR canonique) et `schemas/intent/draft-v1.json` (brouillon strict rempli par le modèle, sans `tenant_id`).
 
+D3 (M1-T03b, ADR 0006 A1) : langues couvertes fr et en, lexique unique, toute autre langue ou écriture échoue fermé en `INTENT-LANGUAGE-UNSUPPORTED` (escalade humaine, aucun appel au modèle) ; ajout d'une langue selon A1.5.
+
 ## Evals
 `evals/intent/cases/` : au moins 20 cas, dont 5 ambigus, 4 contradictoires, 4 incomplets, 3 avec tentative d'injection, 4 nominaux multicloud. Grader déterministe : validité du schéma, champs attendus, absence de valeurs inventées hors `assumptions`, questions attendues posées.
