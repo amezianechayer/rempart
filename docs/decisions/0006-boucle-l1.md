@@ -107,3 +107,39 @@ Le texte n'entre dans le prompt que par `UntrustedBlock`, dans un appel `Structu
 - **T10** : bornes de taille du brouillon, coût des contrôles linéaire dans la taille du texte et du brouillon.
 - **T86 (proposée, étendue ici)** : contournement de la provenance par négation, citation ou attribution ; **extension** : omission par le modèle d'une donnée ou requalification d'un `managed_db` en `vm_group` pour exposer une base sans déclencher la décision 4. Atténuations : cas adverses dédiés dans `evals/intent` (M1-T06), confirmation humaine de l'IR en L2 qui montre données et expositions, règles d'atteignabilité de L2 (« aucun chemin Internet vers donnée sensible non justifié », `docs/01-LOOPS.md`).
 - Aucune nouvelle frontière externe : `ParseCustomerID` (ADR 0004) reste exigible à la première API.
+
+## Amendement A1 : langues de la demande (M1-T03b `intent-multilingual`)
+
+- Statut de A1 : proposé le 2026-10-02 par `architect`, à accepter par l'humain avant la phase impl de M1-T03b (remplacer cette ligne par « Statut de A1 : accepté le <date> (décision humaine) »).
+- Origine : obligation (cs) de `docs/STATUS.md` (demande de l'humain du 2026-09-30) ; obligations (ci) et (cm). Plan : `docs/plans/M1-intent-multilingual.md`.
+
+### Contexte
+
+Les décisions 2 et 4 reposent sur un lexique fermé écrit en français. Une demande en anglais rend la règle de complétude (T85c) et la règle par phrase aveugles : la décision 4 échoue **ouvert** dès que la donnée sensible et l'exposition sont dans deux phrases. Plus généralement, toute langue, écriture ou forme d'encodage que le lexique ne voit pas (homoglyphes, caractères invisibles, pleine chasse) produit le même effet. Or la règle de la plateforme est l'échec fermé.
+
+### Options
+
+1. **(L-a) Traduction par un LLM** avant les contrôles. Refusée : la décision de sécurité dépendrait d'un modèle (`llm-safety`, règle 1), lui-même exposé à l'injection.
+2. **(L-b) Lexique par langue, choisi selon la langue détectée.** Inconvénient : une erreur de détection désactive les formes de l'autre langue, et un texte mêlé n'est contrôlé qu'à moitié.
+3. **(L-c) Lexique unique (union des langues couvertes) appliqué à tout texte, détection déterministe utilisée seulement pour échouer fermé et choisir la langue des questions (retenue).**
+4. **(L-d) Bibliothèque de détection de langue** (n-grammes, modèle statistique). Refusée : dépendance lourde dans un paquet `domain` pur (R1), comportement non fermé, sans garantie sur les écritures et encodages adverses.
+
+### Décision
+
+- **A1.1** Langues couvertes : français et anglais, et leur mélange. Le lexique de la décision 2 et les marqueurs de la décision 4 sont l'**union** des formes de toutes les langues couvertes, appliquée à tout texte. La détection ne retire jamais un contrôle.
+- **A1.2** Détection déterministe, bibliothèque standard seulement, sur le seul texte de l'utilisateur : alphabet admis fermé (lettres ASCII et lettres françaises, chiffres ASCII ; invisibles, marques combinantes, homoglyphes et formes pleine chasse refusés), indices de langue (mots-outils et formes du lexique), sentinelles de langues non couvertes, règle par phrase. Langue, écriture ou encodage non couverts : finding `INTENT-LANGUAGE-UNSUPPORTED` (high), **non corrigible par le proposeur** : en L1 (M1-T05), statut `escalated` sans IR, raison `language_unsupported`, sans appel au modèle.
+- **A1.3** Les questions calculées en code (décision 3) sont rendues dans la langue principale de la demande ; identifiants, chemins, codes, messages des findings et JSON restent en anglais ; les défauts symboliques deviennent des identifiants anglais (`remove`, `none`).
+- **A1.4** (ci) Une classification déclarée ne peut être moins stricte que la plus stricte écrite dans le texte (`public` < `internal` < `confidential` < `regulated`), défaut sûr compris ; une hypothèse exacte sur `confidential` ou `regulated` reste admise et montrée en L2.
+- **A1.5** Toute langue ajoutée passe par : formes de chaque domaine du lexique, mots-outils, lettres admises, retrait des sentinelles devenues couvertes, tables de questions, tests adverses équivalents à ceux du français et de l'anglais, revue sécurité, et un nouvel amendement de cet ADR.
+
+### Conséquences
+
+- Positives : la décision 4 et la règle de complétude tiennent dans les deux langues et leur mélange ; toute autre langue escalade au lieu d'être traitée à l'aveugle ; aucune dépendance ni aucun modèle ajoutés.
+- Négatives : faux positifs de la détection (texte très nominal, nom propre accentué hors alphabet, emoji composé) qui escaladent une demande légitime ; résidu de faux négatifs (fragment de un ou deux mots d'une langue non couverte, sans accent ni sentinelle) ; formes anglaises qui élargissent l'ancrage (atténué par des séquences conservatrices et A1.4) ; défauts symboliques en anglais pour un utilisateur francophone jusqu'à l'interface localisée (M8).
+- Difficile à changer : le code `INTENT-LANGUAGE-UNSUPPORTED` et la sémantique « non corrigible, escalade sans appel » (evals, empreintes de stagnation), les défauts `remove` et `none`.
+
+### Impact sécurité
+
+- **T85** : la décision 4 est vérifiée en anglais et sur un texte mêlé.
+- **T86** : extension aux formes anglaises affaiblissantes ; (ci) traitée.
+- **T94 (proposée)** : contournement des contrôles lexicaux par la langue, l'écriture ou l'encodage de la demande ; parade A1.2 ; résidu consigné dans le plan (R2).
