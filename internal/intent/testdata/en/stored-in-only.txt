@@ -1,0 +1,1 @@
+A public web application reachable from the Internet, on Scaleway in fr-par, in production. Customer data is confidential.

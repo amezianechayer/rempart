@@ -13,7 +13,27 @@ import (
 // value, relabelling the database or omitting its data set does not escape the
 // rule, and the compliant draft captures the demand as an explicit override.
 func TestSensitiveExposureRejected(t *testing.T) {
-	c4 := readText(t, "c4-request.txt")
+	runSensitiveExposureCases(t, exposureTexts{
+		c4:                  readText(t, "c4-request.txt"),
+		split:               readText(t, "c4-split-sentence.txt"),
+		storedIn:            readText(t, "stored-in-only.txt"),
+		reference:           readText(t, "reference-request.txt"),
+		referenceNoExposure: readText(t, "reference-request-no-exposure.txt"),
+	})
+}
+
+// exposureTexts are the user's texts of the decision 4 cases, in one language
+// (plan M1-intent-multilingual, section 9): the drafts are shared, the texts
+// are not.
+type exposureTexts struct {
+	c4, split, storedIn, reference, referenceNoExposure string
+}
+
+// runSensitiveExposureCases runs the decision 4 cases on the texts s. The
+// subtest names are those of M1-T03 (criterion 2).
+func runSensitiveExposureCases(t *testing.T, s exposureTexts) {
+	t.Helper()
+	c4 := s.c4
 	ctx := TenantContext{}
 
 	t.Run("obey_managed_db", func(t *testing.T) {
@@ -47,7 +67,7 @@ func TestSensitiveExposureRejected(t *testing.T) {
 	// T85c: the injection splits the database and the exposure over two
 	// sentences, and the draft relabels the database and omits its data set.
 	t.Run("split_sentence", func(t *testing.T) {
-		text := readText(t, "c4-split-sentence.txt")
+		text := s.split
 		got := Check(text, draftFrom(t, "drafts/c4-split-sentence.json", nil), ctx)
 		if !hasFinding(got, "INTENT-DATA-OMITTED", loopsdomain.SeverityHigh, "data") &&
 			!hasFinding(got, "INTENT-EXPOSURE-SENSITIVE", loopsdomain.SeverityHigh, "exposure[0].workload") {
@@ -58,7 +78,7 @@ func TestSensitiveExposureRejected(t *testing.T) {
 	// Completeness rule: a classification (confidential, regulated) or a
 	// regulation written in the text needs a data entry that declares it.
 	t.Run("data_omitted", func(t *testing.T) {
-		reference := readText(t, "reference-request.txt")
+		reference := s.reference
 		omitted := []struct {
 			name, text, fixture string
 			edit                func(t *testing.T, m map[string]any)
@@ -101,7 +121,7 @@ func TestSensitiveExposureRejected(t *testing.T) {
 	// Exposure and sensitivity sit in different sentences and no database is
 	// named, so only the stored_in rule of decision 4 can raise the finding.
 	t.Run("stored_in_only", func(t *testing.T) {
-		text := readText(t, "stored-in-only.txt")
+		text := s.storedIn
 		got := atLeastMedium(Check(text, draftFrom(t, "drafts/stored-in-only.json", nil), ctx))
 		want := "INTENT-EXPOSURE-SENSITIVE"
 		if len(got) != 1 || !hasFinding(got, want, loopsdomain.SeverityHigh, "exposure[0].workload") {
@@ -117,7 +137,7 @@ func TestSensitiveExposureRejected(t *testing.T) {
 	})
 
 	t.Run("unrequested", func(t *testing.T) {
-		text := readText(t, "reference-request-no-exposure.txt")
+		text := s.referenceNoExposure
 		got := Check(text, draftFrom(t, "reference-draft.json", nil), ctx)
 		if !hasFinding(got, "INTENT-EXPOSURE-UNREQUESTED", loopsdomain.SeverityHigh, "") {
 			t.Errorf("want INTENT-EXPOSURE-UNREQUESTED high, got %+v", got)

@@ -63,7 +63,7 @@ func TestAtMostThreeQuestionsWithDefaults(t *testing.T) {
 	}
 
 	t.Run("three_contradictions_before_model_questions", func(t *testing.T) {
-		ir, rest := domain.WithContradictions(withModelQuestions(t), contradictions[:3])
+		ir, rest := domain.WithContradictions(withModelQuestions(t), contradictions[:3], domain.LangFR)
 		check(t, ir, contradictions[:3])
 		if len(rest) != 0 {
 			t.Errorf("want no contradiction left, got %+v", rest)
@@ -71,7 +71,7 @@ func TestAtMostThreeQuestionsWithDefaults(t *testing.T) {
 	})
 
 	t.Run("four_contradictions_one_deferred", func(t *testing.T) {
-		ir, rest := domain.WithContradictions(withModelQuestions(t), contradictions)
+		ir, rest := domain.WithContradictions(withModelQuestions(t), contradictions, domain.LangFR)
 		check(t, ir, contradictions[:3])
 		if len(rest) != 1 || rest[0] != contradictions[3] {
 			t.Errorf("want the fourth contradiction returned, got %+v", rest)
