@@ -681,3 +681,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-10-13 23:34 [harnais] PHASE FREE (discipline TDD suspendue) : M1-T08 code and tests done, security review pending
 
 - 2026-10-13 23:34 [harnais] phase : tests -> free
+
+- 2026-10-13 23:37 [harnais] phase : free -> tests
+
+- 2026-10-13 23:39 [harnais] phase : tests -> impl

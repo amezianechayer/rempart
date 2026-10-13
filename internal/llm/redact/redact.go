@@ -113,6 +113,24 @@ func find(s string) []Match {
 func findBudget(s string, b *budget) []Match {
 	s = denul(s)
 	protected := placeholderRe.FindAllStringIndex(s, -1)
+	cs := ruleCandidates(s, protected)
+	for _, c := range structured(s, b) {
+		if c.end > c.start && !inside(protected, c.start) {
+			cs = append(cs, c)
+		}
+	}
+	return merge(cs)
+}
+
+// findRules evaluates the regular expressions only.
+func findRules(s string) []Match {
+	s = denul(s)
+	return merge(ruleCandidates(s, placeholderRe.FindAllStringIndex(s, -1)))
+}
+
+// ruleCandidates returns the candidates of the regular expressions on s,
+// where the placeholders in protected are opaque.
+func ruleCandidates(s string, protected [][]int) []candidate {
 	view := opaque(s, protected)
 	var cs []candidate
 	for prio, ru := range rules {
@@ -124,12 +142,7 @@ func findBudget(s string, b *budget) []Match {
 			cs = append(cs, c)
 		}
 	}
-	for _, c := range structured(s, b) {
-		if c.end > c.start && !inside(protected, c.start) {
-			cs = append(cs, c)
-		}
-	}
-	return merge(cs)
+	return cs
 }
 
 // opaque returns s where every byte of the placeholders in protected is NUL,

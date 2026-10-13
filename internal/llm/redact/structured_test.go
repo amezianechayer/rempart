@@ -183,3 +183,59 @@ func TestRedactTypedSecrets(t *testing.T) {
 		t.Errorf("DisarmPlaceholders changed the length: %q", s)
 	}
 }
+
+// nested returns a JSON string encoded d times around {"a":"b {x}"}.
+func nested(d int) string {
+	v := `{"a":"b {x}"}`
+	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	for range d {
+		v = `{"k":"` + esc.Replace(v) + `"}`
+	}
+	return v
+}
+
+// TestRedactReviewFindings: findings of the security review of M1-T08.
+func TestRedactReviewFindings(t *testing.T) {
+	t.Run("pair_with_escaped_siblings", func(t *testing.T) {
+		tag := `{"Key":"t","Value":"{\"a\":\"{\\\"b\\\":1}\"} x"}`
+		hides(t, `{"Tags":[`+tag+`,`+tag+`],"name":"DB_PASSWORD","value":"hunter2xyz","description":"set {x} here"}`, "hunter2xyz")
+	})
+	t.Run("deep_nesting_bounded", func(t *testing.T) {
+		in := strings.Repeat(nested(7)+",", (1<<20)/(len(nested(7))+1))
+		start := time.Now()
+		New().Redact(in)
+		if d := time.Since(start); d > 8*time.Second {
+			t.Errorf("1 MiB of deeply nested encodings redacted in %v, want less than 8s", d)
+		}
+	})
+	t.Run("yaml_in_prose", func(t *testing.T) {
+		hides(t, "Deploy log: step 1: ok\npassword:\n  hunter2-yaml-value\n", "hunter2-yaml-value")
+	})
+	t.Run("yaml_after_64_documents", func(t *testing.T) {
+		hides(t, strings.Repeat("a: 1\n---\n", 70)+"password: hunter2-doc-71\n", "hunter2-doc-71")
+	})
+	t.Run("yaml_multiline_plain", func(t *testing.T) {
+		hides(t, "password: hunter2-first\n  hunter2-second\nuser: x\n", "hunter2-first", "hunter2-second")
+	})
+	t.Run("yaml_tagged_quoted", func(t *testing.T) {
+		hides(t, "password: !!str \"hunter2-tagged\"\n", "hunter2-tagged")
+		hides(t, "- name: DB_PASSWORD\n  value: !!str 'hunter2-tagged2'\n", "hunter2-tagged2")
+	})
+	t.Run("yaml_alias", func(t *testing.T) {
+		hides(t, "defaults: &pw hunter2-anchor\npassword: *pw\n", "hunter2-anchor")
+	})
+	t.Run("cloud_keys", func(t *testing.T) {
+		hides(t, `{"Parameter":{"Name":"/prod/app/config","Type":"SecureString","Value":"ssm-secure-v1"}}`, "ssm-secure-v1")
+		hides(t, `{"keys":[{"keyName":"key1","value":"azkey-0123456789","permissions":"FULL"}]}`, "azkey-0123456789")
+		hides(t, `{"primaryMasterKey":"cosmos-master-k1","accountKey":"az-acct-k2"}`, "cosmos-master-k1", "az-acct-k2")
+		hides(t, `{"credentials":"creds-blob-123","jwt":"eyJhbGciOi.x.y"}`, "creds-blob-123", "eyJhbGciOi.x.y")
+		hides(t, `{"Name":"/prod/db/password/v2","Value":"ssm-path-v2"}`, "ssm-path-v2")
+		hides(t, `{"OptionSettings":[{"OptionName":"DB_PASSWORD","Value":"eb-option-pw"}]}`, "eb-option-pw")
+	})
+	t.Run("escaped_nul_boundary", func(t *testing.T) {
+		hides(t, `{"env":"x`+"\\"+"u"+`0000sk-proj-abcdefghijklmnopqrstuvwx"}`, "abcdefghijklmnopqrstuvwx")
+	})
+	t.Run("forged_escaped_placeholder", func(t *testing.T) {
+		hides(t, `{"msg":"token=`+"\\"+"u"+`005bREDACTED:sensitive_variable]hunter2xyz"}`, "hunter2xyz")
+	})
+}

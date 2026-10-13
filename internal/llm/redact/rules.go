@@ -226,7 +226,17 @@ func (ru rule) candidates(s string, protected [][]int) []candidate {
 	}
 	for _, loc := range ru.re.FindAllStringSubmatchIndex(s, -1) {
 		vs := afterBlanks(s, loc[1])
-		if vs < skip || inside(protected, vs) || (colon > 0 && loc[2*colon] >= 0 && vs == loc[1]) {
+		if colon > 0 && loc[2*colon] >= 0 && vs == loc[1] {
+			// A bare ':' needs a blank after it, or a value on the next,
+			// more indented line (YAML in free text, obligation (ad)).
+			ks, _ := span(ru.re, loc, "k")
+			next, ok := nextLineValue(s, ks, loc[1])
+			if !ok {
+				continue
+			}
+			vs = next
+		}
+		if vs < skip || inside(protected, vs) {
 			continue
 		}
 		st, en, open, ok := readValue(s, vs)
@@ -241,6 +251,32 @@ func (ru rule) candidates(s string, protected [][]int) []candidate {
 		out = append(out, candidate{start: st, end: en, exempt: exempt})
 	}
 	return out
+}
+
+// nextKeyRe: a line that starts with a mapping key.
+var nextKeyRe = regexp.MustCompile(`^[^\s:]+:(?:[ \t]|\r?\n|$)`)
+
+// nextLineValue returns the start of the value on the line after a key that
+// starts at ks and whose separator ends at after: that line must be more
+// indented than the line of the key, and start neither a list item, a
+// comment, nor a mapping key.
+func nextLineValue(s string, ks, after int) (int, bool) {
+	i := after
+	switch {
+	case strings.HasPrefix(s[i:], "\r\n"):
+		i += 2
+	case strings.HasPrefix(s[i:], "\n"):
+		i++
+	default:
+		return 0, false
+	}
+	ls := strings.LastIndexByte(s[:ks], '\n') + 1
+	keyIndent := afterBlanks(s, ls) - ls
+	j := afterBlanks(s, i)
+	if j-i <= keyIndent || j >= len(s) || strings.IndexByte("\r\n-#", s[j]) >= 0 || nextKeyRe.MatchString(s[j:]) {
+		return 0, false
+	}
+	return j, true
 }
 
 // allMatches returns the matches of re in s, where a match may start at the

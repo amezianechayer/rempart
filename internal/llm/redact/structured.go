@@ -34,10 +34,16 @@ const (
 	budgetPerByte      = 80 // work units per byte of input, nested encodings included
 	budgetBase         = 1 << 16
 	yamlNodeCost       = 16
+	// maxNesting: JSON strings decoded inside JSON strings; deeper, a leaf
+	// that may hide something is masked whole (T83).
+	maxNesting = 2
+	// nestedCost: work units per byte of a nested pass (the regular
+	// expressions and the structured pass on a decoded leaf).
+	nestedCost = 64
 )
 
 // budget bounds the work of the structured pass on one input (T81).
-type budget struct{ left int }
+type budget struct{ left, depth int }
 
 func newBudget(n int) *budget { return &budget{left: budgetPerByte*n + budgetBase} }
 
@@ -48,7 +54,8 @@ func (b *budget) spend(n int) bool {
 
 var (
 	// extraKeys: keys whose value is a secret, read by no keyed rule.
-	extraKeys = regexp.MustCompile(`(?i)^(?:cookie|set-cookie)$`)
+	extraKeys = regexp.MustCompile(`(?i)^(?:cookie|set-cookie|credentials?|jwt|connection_?string|account_?key` +
+		`|(?:primary|secondary)_?(?:readonly_?)?(?:master_?)?key)$`)
 	// pairNameKeys, pairValueKeys: the fields of a name/value pair.
 	pairNameKeys  = regexp.MustCompile(`(?i)^(?:name|key|parameterkey|optionname)$`)
 	pairValueKeys = regexp.MustCompile(`(?i)^(?:value|parametervalue|optionvalue)$`)
@@ -76,12 +83,15 @@ func sensitiveKey(key, value string) (Kind, bool) {
 // sensitivePairName reports whether the name of a name/value pair, or the
 // last segment of its path (SSM parameter), is sensitive.
 func sensitivePairName(n string) bool {
-	seg := n[strings.LastIndexByte(n, '/')+1:]
-	if pairName.MatchString(seg) {
-		return true
+	for _, seg := range strings.Split(n, "/") {
+		if pairName.MatchString(seg) {
+			return true
+		}
+		if _, ok := sensitiveKey(seg, ""); ok {
+			return true
+		}
 	}
-	_, ok := sensitiveKey(seg, "")
-	return ok
+	return false
 }
 
 // prioOf returns the priority of the first rule of kind k.
@@ -102,35 +112,42 @@ func mask(start, end int, k Kind) candidate {
 // form dec when dec holds a secret that the redaction of raw leaves in its
 // decoded form. When the regular expressions on raw suffice, their precise
 // masks are kept.
+//
+// The regular expressions read the JSON escapes of raw ("\n", "\t", "\"",
+// "\\"): a leaf is decoded again only when it may hide something they
+// cannot read (a structure, a "\u" or "\/" escape). A placeholder that
+// appears only in the decoded form was forged by escapes (T38): the leaf is
+// masked whole, as when the nesting or the budget is exhausted (T83).
 func leafCandidate(raw, dec string, start, end int, b *budget) (candidate, bool) {
-	if raw == dec || start >= end || !b.spend(2*len(dec)+len(raw)) {
+	if raw == dec || start >= end {
 		return candidate{}, false
 	}
-	// A placeholder that appears only in the decoded form was forged by
-	// escapes (T38): it protects nothing, and the leaf is masked whole.
 	forged := strings.Count(dec, "[REDACTED:") > strings.Count(raw, "[REDACTED:")
-	if forged {
-		dec = DisarmPlaceholders(dec)
-	}
-	ms := findBudget(dec, b)
-	if len(ms) == 0 {
+	if !forged && !strings.ContainsAny(dec, "{[") && !strings.Contains(raw, `\u`) && !strings.Contains(raw, `\/`) {
 		return candidate{}, false
 	}
-	whole := mask(start, end, ms[0].Kind)
-	red, rms := redactBudget(raw, b)
-	if forged || len(rms) == 0 {
+	whole := mask(start, end, KindSensitiveVar)
+	if forged || b.depth >= maxNesting || !b.spend(nestedCost*len(raw)) {
 		return whole, true
 	}
 	var again string
-	if json.Unmarshal([]byte(`"`+red+`"`), &again) != nil || len(findBudget(again, b)) > 0 {
+	if json.Unmarshal([]byte(`"`+redactRules(raw)+`"`), &again) != nil {
 		return whole, true
 	}
-	return candidate{}, false
+	b.depth++
+	ms := findBudget(again, b)
+	b.depth--
+	if len(ms) == 0 {
+		return candidate{}, false
+	}
+	whole.prio = prioOf(ms[0].Kind)
+	return whole, true
 }
 
-// redactBudget is Redact under the budget b.
-func redactBudget(s string, b *budget) (string, []Match) {
-	ms := findBudget(s, b)
+// redactRules is Redact with the regular expressions only.
+func redactRules(s string) string {
+	s = denul(s)
+	ms := findRules(s)
 	var out strings.Builder
 	prev := 0
 	for _, m := range ms {
@@ -139,7 +156,7 @@ func redactBudget(s string, b *budget) (string, []Match) {
 		prev = m.End
 	}
 	out.WriteString(s[prev:])
-	return out.String(), ms
+	return out.String()
 }
 
 // structured returns the candidates of the structured pass on s; a panic of a
@@ -309,6 +326,8 @@ func (w *jsonWalk) value(top *jsonFrame, l jsonLeaf) {
 			top.typed = append(top.typed, leafRange{idx, idx + 1})
 		case strings.EqualFold(top.key, "kind") && l.dec == "Secret":
 			top.isSecret = true
+		case strings.EqualFold(top.key, "type") && l.dec == "SecureString", strings.EqualFold(top.key, "keyname"):
+			top.sensTrue = true // SSM SecureString, Azure listKeys: the value is a secret
 		}
 		top.expectKey = true
 	} else {
@@ -347,7 +366,7 @@ func (w *jsonWalk) close(f *jsonFrame, stack []*jsonFrame) {
 			cat.WriteString(w.leaves[i].dec)
 		}
 		if w.b.spend(cat.Len()) {
-			if ms := findBudget(cat.String(), w.b); len(ms) > 0 {
+			if ms := findRules(cat.String()); len(ms) > 0 {
 				for _, i := range f.strs {
 					if l := w.leaves[i]; l.start < l.end {
 						w.out = append(w.out, mask(l.start, l.end, ms[0].Kind))
@@ -387,7 +406,10 @@ func yamlCandidates(s string, b *budget) []candidate {
 	lines, ascii := lineStarts(s)
 	dec := yaml.NewDecoder(strings.NewReader(s))
 	var out []candidate
-	for range maxYAMLDocuments {
+	for docs := 0; ; docs++ {
+		if docs == maxYAMLDocuments { // a bound reached masks the whole text
+			return []candidate{mask(0, len(s), KindSensitiveVar)}
+		}
 		var doc yaml.Node
 		if err := dec.Decode(&doc); err != nil {
 			if errors.Is(err, io.EOF) {
@@ -404,7 +426,6 @@ func yamlCandidates(s string, b *budget) []candidate {
 		}
 		out = append(out, w.out...)
 	}
-	return out
 }
 
 type yamlWalker struct {
@@ -435,7 +456,8 @@ func (w *yamlWalker) walk(n *yaml.Node, depth int, sens Kind) bool {
 				name, hasName = v.Value, true
 			case strings.EqualFold(k.Value, "kind") && v.Value == "Secret":
 				isSecret = true
-			case strings.EqualFold(k.Value, "sensitive") && v.Tag == "!!bool" && strings.EqualFold(v.Value, "true"):
+			case strings.EqualFold(k.Value, "sensitive") && v.Tag == "!!bool" && strings.EqualFold(v.Value, "true"),
+				strings.EqualFold(k.Value, "type") && v.Value == "SecureString", strings.EqualFold(k.Value, "keyname"):
 				sensTrue = true
 			}
 		}
@@ -461,6 +483,14 @@ func (w *yamlWalker) walk(n *yaml.Node, depth int, sens Kind) bool {
 		for _, c := range n.Content {
 			if !w.walk(c, depth+1, sens) {
 				return false
+			}
+		}
+	case yaml.AliasNode:
+		// The anchor of an alias under a sensitive key is masked where it is
+		// defined: the model could resolve the alias.
+		if a := n.Alias; sens != "" && a != nil && a.Kind == yaml.ScalarNode {
+			if st, en, ok := w.span(a); ok {
+				w.out = append(w.out, mask(st, en, sens))
 			}
 		}
 	case yaml.ScalarNode:
@@ -527,6 +557,13 @@ func (w *yamlWalker) span(n *yaml.Node) (int, int, bool) {
 	if start > le {
 		return 0, 0, false
 	}
+	// Tags and anchors before the value ("!!str", "&a").
+	for start < le && (w.s[start] == '!' || w.s[start] == '&') {
+		for start < le && w.s[start] != ' ' && w.s[start] != '\t' {
+			start++
+		}
+		start = afterBlanks(w.s[:le], start)
+	}
 	switch {
 	case n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0 && start < len(w.s):
 		if end, ok := quotedEnd(w.s, start); ok {
@@ -536,9 +573,31 @@ func (w *yamlWalker) span(n *yaml.Node) (int, int, bool) {
 		return w.block(n.Line)
 	case n.Value != "" && strings.HasPrefix(w.s[start:], n.Value):
 		return start, start + len(n.Value), true
+	case n.Style == 0:
+		return start, w.continued(n.Line, start), true
 	}
 	end := len(strings.TrimRight(w.s[start:le], " \t\r")) + start
 	return start, end, start < end
+}
+
+// continued returns the end of a plain scalar that starts at start on line
+// (1-based) and continues on the following lines more indented than that
+// line.
+func (w *yamlWalker) continued(line, start int) int {
+	head := w.s[w.lines[line-1]:w.lineEnd(line-1)]
+	indent := len(head) - len(strings.TrimLeft(head, " \t"))
+	end := len(strings.TrimRight(w.s[:w.lineEnd(line-1)], " \t\r"))
+	for li := line; li < len(w.lines); li++ {
+		text := w.s[w.lines[li]:w.lineEnd(li)]
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		if len(text)-len(strings.TrimLeft(text, " \t")) <= indent {
+			break
+		}
+		end = len(strings.TrimRight(w.s[:w.lineEnd(li)], " \t\r"))
+	}
+	return max(end, start)
 }
 
 // block returns the content of the block scalar whose indicator is on line
