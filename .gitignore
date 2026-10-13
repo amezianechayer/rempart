@@ -11,3 +11,6 @@
 __pycache__/
 /bin/
 evals/**/reports/
+
+# Founder skill pack: business plan, pricing and finances stay local (public repository).
+founder/

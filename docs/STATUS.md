@@ -629,3 +629,9 @@ Préalables humains (étape H0 du plan) :
 - 2026-10-02 11:46 [harnais] phase : impl -> free
 
 - 2026-10-02 11:47 [harnais] phase : free -> tests
+
+- 2026-10-13 22:11 [harnais] PHASE FREE (discipline TDD suspendue) : installation du pack de skills founder demandee par l'humain, hors tache
+
+- 2026-10-13 22:11 [harnais] phase : tests -> free
+
+- 2026-10-13 : **skills `founder-*` (11) ajoutés** dans `.claude/skills/` à la demande de l humain (pack tiers MIT, https://github.com/Jakeschincariol/founder-skill, `fd9385b`), à relire ; `founder/` ignoré par Git (dépôt public).
