@@ -38,8 +38,8 @@ var seed = [32]byte{0x52, 0x45, 0x4d, 0x50, 0x41, 0x52, 0x54, 0x2d, 0x54, 0x30, 
 
 // value is a payload of the tests: canonical JSON by encoding/json.
 type value struct {
-	Secret string `json:"secret"`
-	N      int    `json:"n"`
+	Text string `json:"text"`
+	N    int    `json:"n"`
 }
 
 // spyKW counts the calls of a fake KeyWrapper at entry; down makes
@@ -161,7 +161,7 @@ func appError(t *testing.T, err error) *temporal.ApplicationError {
 func TestCodecRoundTrip(t *testing.T) {
 	kw := newSpy()
 	dc := newDC(t, kw, tenantA)
-	in := value{Secret: canary, N: 7}
+	in := value{Text: canary, N: 7}
 	inner, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
@@ -234,17 +234,17 @@ func TestCodecRoundTrip(t *testing.T) {
 func TestCodecNoTenantFails(t *testing.T) {
 	kw := newSpy()
 	dc := newDC(t, kw, tenantA)
-	sealed, err := dc.ToPayload(value{Secret: canary})
+	sealed, err := dc.ToPayload(value{Text: canary})
 	if err != nil {
 		t.Fatalf("unbound ToPayload: %v", err)
 	}
 	g0, u0 := kw.calls()
 	b := bind(t, dc, context.Background())
-	p, err := b.ToPayload(value{Secret: canary})
+	p, err := b.ToPayload(value{Text: canary})
 	if !errors.Is(err, codec.ErrNoTenant) || p != nil {
 		t.Errorf("ToPayload without tenant = %v, %v; want nil, ErrNoTenant", p, err)
 	}
-	if _, err := b.ToPayloads(value{Secret: canary}); err == nil {
+	if _, err := b.ToPayloads(value{Text: canary}); err == nil {
 		t.Error("ToPayloads without tenant succeeded")
 	}
 	var out value
@@ -263,7 +263,7 @@ func TestCodecRejectsPlaintextPayload(t *testing.T) {
 	kw := newSpy()
 	dc := newDC(t, kw, tenantA)
 	bound := bind(t, dc, tenantCtx(t, tenantA))
-	plain, err := converter.GetDefaultDataConverter().ToPayload(value{Secret: canary, N: 1})
+	plain, err := converter.GetDefaultDataConverter().ToPayload(value{Text: canary, N: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,22 +286,20 @@ func TestCodecRejectsPlaintextPayload(t *testing.T) {
 		}
 	}
 	t.Run("altered_envelope", func(t *testing.T) {
-		sealed, err := bound.ToPayload(value{Secret: canary, N: 2})
+		sealed, err := bound.ToPayload(value{Text: canary, N: 2})
 		if err != nil {
 			t.Fatal(err)
 		}
 		data := sealed.GetData()
 		for _, i := range []int{0, 1, 60, len(data) / 2, len(data) - 1} {
-			altered := proto.Clone(sealed).(*commonpb.Payload)
-			altered.Data = bytes.Clone(data)
+			altered := &commonpb.Payload{Metadata: sealed.GetMetadata(), Data: bytes.Clone(data)}
 			altered.Data[i] ^= 0x01
 			var out value
 			if err := bound.FromPayload(altered, &out); err == nil || out != (value{}) {
 				t.Errorf("byte %d altered: FromPayload = %+v, %v; want a refusal", i, out, err)
 			}
 		}
-		truncated := proto.Clone(sealed).(*commonpb.Payload)
-		truncated.Data = data[:len(data)-1]
+		truncated := &commonpb.Payload{Metadata: sealed.GetMetadata(), Data: data[:len(data)-1]}
 		var out value
 		if err := bound.FromPayload(truncated, &out); err == nil || out != (value{}) {
 			t.Errorf("truncated: FromPayload = %+v, %v; want a refusal", out, err)
@@ -316,7 +314,7 @@ func TestCodecRejectsPlaintextPayload(t *testing.T) {
 func TestCodecTenantMismatch(t *testing.T) {
 	kw := newSpy()
 	dcA, dcB := newDC(t, kw, tenantA), newDC(t, kw, tenantB)
-	pB, err := bind(t, dcB, tenantCtx(t, tenantB)).ToPayload(value{Secret: canary})
+	pB, err := bind(t, dcB, tenantCtx(t, tenantB)).ToPayload(value{Text: canary})
 	if err != nil {
 		t.Fatalf("ToPayload for tenant B: %v", err)
 	}
@@ -347,7 +345,7 @@ func TestCodecTenantMismatch(t *testing.T) {
 	}
 	t.Run("encode_for_other_tenant", func(t *testing.T) {
 		g0, _ := kw.calls()
-		p, err := bind(t, dcA, tenantCtx(t, tenantB)).ToPayload(value{Secret: canary})
+		p, err := bind(t, dcA, tenantCtx(t, tenantB)).ToPayload(value{Text: canary})
 		if err == nil || p != nil {
 			t.Fatalf("ToPayload = %v, %v; want TenantMismatch", p, err)
 		}

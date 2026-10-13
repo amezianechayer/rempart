@@ -388,7 +388,7 @@ func TestTransitClientHardened(t *testing.T) {
 	// for its own token and checks the policies before using it (T95).
 	const (
 		wrappingToken = "s.WrappingToken-canary-3d9b"
-		workerToken   = "s.UnwrappedWorker-canary-81e0"
+		workerToken   = "s.UnwrappedWorker-canary-81e0" //nolint:gosec // G101: test canary, not a credential.
 	)
 	unwrapServer := func(t *testing.T, policies, tokenPolicies string, lease int) *transitServer {
 		t.Helper()

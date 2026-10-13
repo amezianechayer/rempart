@@ -187,6 +187,11 @@ func DefaultRules(module string) []Rule {
 			Targets:     []string{m("internal/llm/adapters/anthropic/...")},
 			AllowedFrom: []string{m("internal/llm/adapters/anthropic/...")},
 		},
+		{ // M1-T02, obligation (cw): the fake KeyWrapper (fixed seed), evaluation command only
+			Name: "secrets-fake-dev-only", Kind: Confine,
+			Targets:     []string{m("internal/secrets/fake/...")},
+			AllowedFrom: []string{m("cmd/rempart-evals")},
+		},
 	}
 }
 

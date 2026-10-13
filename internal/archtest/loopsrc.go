@@ -81,6 +81,10 @@ func unkeyed(lit *ast.CompositeLit) bool {
 }
 
 // decodingNames are admitted in workflow code only as the Fun of a call (aj).
+// codecWorkflowNames are the only identifiers of the workflow package the
+// codec may use: propagation and context-aware conversion (M1-T02 D11).
+var codecWorkflowNames = []string{"Context", "ContextPropagator", "HeaderReader", "HeaderWriter", "ContextAware", "WithValue"}
+
 var decodingNames = []string{
 	"Receive", "ReceiveWithTimeout", "ReceiveAsync", "ReceiveAsyncWithMoreFlag", "Get", "Details",
 	"LastHeartbeatDetails", "GetLastCompletionResult", "SetUpdateHandler", "SetUpdateHandlerWithOptions",
@@ -232,9 +236,11 @@ func (c *srcChecker) index(sf *SourceFile) {
 func (c *srcChecker) file(sf *SourceFile) {
 	fake := c.loops + "/fake"
 	inLoops := under(sf.Pkg, c.loops)
-	dec := inLoops && !under(sf.Pkg, fake) // (au)
-	wf := sf.Pkg == c.loops || under(sf.Pkg, c.loops+"/domain") || under(sf.Pkg, c.loops+"/codec") ||
-		under(sf.Pkg, c.loops) && c.wfPkg[sf.Pkg]
+	// M1-T02 D11: the codec is the decoder itself, out of the workflow code
+	// and decoding classes, confined by loops-codec-confined instead.
+	codec := under(sf.Pkg, c.loops+"/codec")
+	dec := inLoops && !under(sf.Pkg, fake) && !codec // (au)
+	wf := !codec && (sf.Pkg == c.loops || under(sf.Pkg, c.loops+"/domain") || under(sf.Pkg, c.loops) && c.wfPkg[sf.Pkg])
 	cmd := under(sf.Pkg, c.module+"/cmd")
 	sa := wf || cmd || inLoops || c.sdkPkg[sf.Pkg] // (bd), V3 C4: every package under internal/loops
 	for _, is := range sf.File.Imports {
@@ -301,6 +307,8 @@ func (c *srcChecker) file(sf *SourceFile) {
 			pkg, name, ok := c.resolve(sf, nil, n)
 			switch {
 			case !ok:
+			case codec && pkg == "go.temporal.io/sdk/workflow" && !slices.Contains(codecWorkflowNames, name):
+				c.add(sf, n, "loops-codec-confined", pkg+"."+name)
 			case pkg == c.loops && guarded(name) != "":
 				c.ref(sf, n, name, stack)
 			case wf && pkg == "encoding/json" && name != "RawMessage",

@@ -644,3 +644,9 @@ Préalables humains (étape H0 du plan) :
 - 2026-10-13 : **skills `founder-*` (11) ajoutés** dans `.claude/skills/` à la demande de l humain (pack tiers MIT, https://github.com/Jakeschincariol/founder-skill, `fd9385b`), à relire ; `founder/` ignoré par Git (dépôt public).
 
 - 2026-10-13 22:17 [harnais] phase : free -> tests
+
+- 2026-10-13 22:20 [harnais] phase : tests -> impl
+
+- 2026-10-13 22:24 [harnais] RETOUR EN PHASE TESTS depuis impl : M1-T02: lint fixes in the test files (errcheck, gosec), no behavior change
+
+- 2026-10-13 22:24 [harnais] phase : impl -> tests

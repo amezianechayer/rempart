@@ -57,9 +57,17 @@ type Sealer struct {
 	maxUses uint64
 	now     func() time.Time
 
-	mu      sync.Mutex
-	current map[tenancy.ID]*currentDEK
-	cache   *aeadCache
+	mu       sync.Mutex
+	current  map[tenancy.ID]*currentDEK
+	inflight map[tenancy.ID]*dekFlight
+	cache    *aeadCache
+}
+
+// dekFlight is a DEK generation in progress for one tenant (single flight,
+// plan M1-codec-replay D1): done is closed once the leader is finished.
+type dekFlight struct {
+	done chan struct{}
+	err  error
 }
 
 // NewSealer returns a Sealer: ErrInvalidOptions if kw is nil or o is out of bounds.
@@ -68,7 +76,10 @@ func NewSealer(kw ports.KeyWrapper, o Options) (*Sealer, error) {
 		o.CacheEntries < 0 || o.CacheEntries > maxCacheEntries {
 		return nil, ErrInvalidOptions
 	}
-	s := &Sealer{kw: kw, maxAge: o.DEKMaxAge, maxUses: o.DEKMaxUses, now: o.Now, current: map[tenancy.ID]*currentDEK{}}
+	s := &Sealer{
+		kw: kw, maxAge: o.DEKMaxAge, maxUses: o.DEKMaxUses, now: o.Now,
+		current: map[tenancy.ID]*currentDEK{}, inflight: map[tenancy.ID]*dekFlight{},
+	}
 	if s.maxAge == 0 {
 		s.maxAge = DefaultDEKMaxAge
 	}
@@ -126,27 +137,77 @@ func (s *Sealer) Seal(ctx context.Context, plaintext []byte) ([]byte, error) {
 	if len(plaintext) > MaxPlaintext {
 		return nil, ErrPayloadTooLarge
 	}
-	s.mu.Lock()
-	now := s.now()
-	d := s.current[tenant]
-	if d == nil || now.Sub(d.created) >= s.maxAge || d.uses >= s.maxUses {
-		if d, err = s.newDEK(ctx, tenant, now); err != nil {
-			s.mu.Unlock()
-			return nil, err
-		}
-		s.current[tenant] = d
-		s.cache.put(cacheKey{tenant, d.id}, d.aead, now, 0)
+	hdr, a, err := s.useDEK(ctx, tenant)
+	if err != nil {
+		return nil, err
 	}
-	d.uses++
-	hdr := buildHeader(tenant, d.id, d.wrapped)
-	a := d.aead
-	s.mu.Unlock()
-
 	out := make([]byte, len(hdr)+nonceSize, len(hdr)+nonceSize+len(plaintext)+tagSize)
 	copy(out, hdr)
 	nonce := out[len(hdr):]
 	_, _ = rand.Read(nonce)
 	return a.Seal(out, nonce, plaintext, hdr), nil
+}
+
+// useDEK takes one use of the current DEK of tenant. The key manager is called
+// outside the global lock, once per tenant and per rotation: concurrent
+// callers of the same tenant wait for the leader (or their own ctx), and the
+// leader's error is returned to them, never cached (D1, obligation (ct)).
+func (s *Sealer) useDEK(ctx context.Context, tenant tenancy.ID) ([]byte, cipher.AEAD, error) {
+	for {
+		s.mu.Lock()
+		now := s.now()
+		if d := s.current[tenant]; d != nil && now.Sub(d.created) < s.maxAge && d.uses < s.maxUses {
+			d.uses++
+			hdr := buildHeader(tenant, d.id, d.wrapped)
+			a := d.aead
+			s.mu.Unlock()
+			return hdr, a, nil
+		}
+		if f := s.inflight[tenant]; f != nil {
+			s.mu.Unlock()
+			select {
+			case <-f.done:
+				if f.err != nil {
+					return nil, nil, f.err
+				}
+				continue
+			case <-ctx.Done():
+				return nil, nil, fmt.Errorf("envelope: generate data key: %w", ctx.Err())
+			}
+		}
+		f := &dekFlight{done: make(chan struct{})}
+		s.inflight[tenant] = f
+		s.mu.Unlock()
+		if err := s.lead(ctx, tenant, f, now); err != nil {
+			return nil, nil, err
+		}
+	}
+}
+
+// lead generates the DEK of a flight and installs it; the flight is removed
+// and released even if the key manager panics.
+func (s *Sealer) lead(ctx context.Context, tenant tenancy.ID, f *dekFlight, now time.Time) (err error) {
+	defer func() {
+		s.mu.Lock()
+		delete(s.inflight, tenant)
+		s.mu.Unlock()
+		if r := recover(); r != nil {
+			f.err = errors.New("envelope: generate data key: key manager panicked")
+			close(f.done)
+			panic(r)
+		}
+		f.err = err
+		close(f.done)
+	}()
+	d, err := s.newDEK(ctx, tenant, now)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.current[tenant] = d
+	s.cache.put(cacheKey{tenant, d.id}, d.aead, now, 0)
+	s.mu.Unlock()
+	return nil
 }
 
 // Open decrypts a payload sealed for the tenant of ctx.
