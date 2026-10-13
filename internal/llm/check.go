@@ -95,7 +95,11 @@ func redactMessages(msgs []domain.Message) ([]domain.Message, int) {
 		parts := make([]domain.Part, len(m.Parts))
 		for j, p := range m.Parts {
 			if p.Untrusted != nil {
-				parts[j].Untrusted = &domain.UntrustedBlock{SourceID: red(p.Untrusted.SourceID), Content: red(p.Untrusted.Content)}
+				// T38: a placeholder forged in untrusted data never protects a secret.
+				parts[j].Untrusted = &domain.UntrustedBlock{
+					SourceID: red(redact.DisarmPlaceholders(p.Untrusted.SourceID)),
+					Content:  red(redact.DisarmPlaceholders(p.Untrusted.Content)),
+				}
 			} else {
 				parts[j].Text = red(p.Text)
 			}

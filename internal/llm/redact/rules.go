@@ -75,7 +75,14 @@ const (
 	rePEM = `-----BEGIN[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----` +
 		`(?:[A-Za-z-]+:[^\r\n\\\x00]*|[A-Za-z0-9+/=\s\\])*` +
 		`(?:-----END[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----)?`
-	reAWSKey     = `(?:AKIA|ASIA)[A-Z0-9]{16}`
+	// reAWSKey: a line break may cut the key anywhere (wrapped output, (ad)).
+	reAWSKey = `A(?:\r?\n)?[KS](?:\r?\n)?I(?:\r?\n)?A(?:(?:\r?\n)?[A-Z0-9]){16}`
+	// reAWSEnvColon: the AWS secret key variable in a list joined by ':' ((ad)).
+	reAWSEnvColon = `:(?i:aws_secret_access_key)=(?P<v>[^\s:"'\\\x00]+)`
+	// reXMLPSK, reXMLSecret: an XML element whose tag is sensitive
+	// (ec2:DescribeVpnConnections).
+	reXMLPSK     = `<(?i:pre_?shared_?key|psk|ike_psk)>(?P<v>[^<\x00]+)</`
+	reXMLSecret  = `<(?P<k>(?i:` + names + `))>(?P<v>[^<\x00]+)</`
 	reAWSSession = `(?:FwoGZXIvYXdz|IQoJb3JpZ2lu)[A-Za-z0-9/+=]{50,}`
 	reAzure      = `(?i:AccountKey|SharedAccessKey)=(?P<v>[A-Za-z0-9+/=]{20,})` +
 		`|(?:[?&<>]|` + jsonEscape + `)(?i:sig)=(?P<v>[A-Za-z0-9%/+=]{16,})` +
@@ -99,13 +106,13 @@ const (
 	// reAuthz: a one-line array of header values, masked whole from its '['
 	// to its ']' or to the end of the line, or a header value, which stops
 	// like that of rePSKLine; reAuthzRelaxed reads the whole value.
-	authzHead   = boundary + `(?i:(?:proxy-)?authorization)["']?(?:[ \t]|\\t)*[:=](?:[ \t]|\\t)*`
+	authzHead   = boundary + `(?i:(?:proxy-)?authorization)(?:\\?["'])?(?:[ \t]|\\t)*[:=](?:[ \t]|\\t)*`
 	authzScheme = `(?i:(?:bearer|basic|token|digest|negotiate|ntlm|aws4-hmac-sha256)(?:[ \t]|\\+t)+)?`
 	authzArray  = `(?P<v>\[[^\r\n\]\x00]*\]?)`
 	reAuthz     = authzHead + `(?:` + authzArray +
-		`|["']?` + authzScheme + `(?P<v>[^"'\\` + jsonUnsafe + `]*[^\s"'\\` + jsonUnsafe + `]))`
+		`|(?:\\?["'])?` + authzScheme + `(?P<v>[^"'\\` + jsonUnsafe + `]*[^\s"'\\` + jsonUnsafe + `]))`
 	reAuthzRelaxed = authzHead + `(?:` + authzArray +
-		`|["']?` + authzScheme + `(?P<v>[^\r\n"'\\\x00]*[^\s"'\\\x00]))`
+		`|(?:\\?["'])?` + authzScheme + `(?P<v>[^\r\n"'\\\x00]*[^\s"'\\\x00]))`
 	reAuthScheme = boundary + `(?i:bearer)[ \t]+(?P<v>[A-Za-z0-9._~+/=-]{16,})`
 )
 
@@ -147,6 +154,7 @@ var rules = []rule{
 	shape(KindPrivateKey, rePEM),
 	keyed(KindKubeconfig, `client-key-data|token|id-token|refresh-token`, nil),
 	keyed(KindAWSSecretKey, `(?:aws_)?secret_?access_?key|aws_secret_key`, nil),
+	shape(KindAWSSecretKey, reAWSEnvColon),
 	keyed(KindAWSSessionToken, `(?:aws_)?session_?token|aws_security_token|x-amz-security-token|x-amz-signature`, nil),
 	shape(KindAWSSessionToken, reAWSSession),
 	keyed(KindAzureSecret, `(?:arm_|azure_)?client_?secret|secret_?text`, nil),
@@ -157,6 +165,7 @@ var rules = []rule{
 	keyed(KindIPsecPSK, `psk|pre_?shared_?key|tunnel[0-9]_preshared_key|shared_?key|ike_psk`, nil),
 	shape(KindIPsecPSK, rePSKLine),
 	{kind: KindIPsecPSK, re: regexp.MustCompile(rePSKRelaxed), blocked: true},
+	shape(KindIPsecPSK, reXMLPSK),
 	shape(KindAWSAccessKey, reAWSKey),
 	shape(KindGitHubToken, reGitHub),
 	shape(KindGitLabToken, reGitLab),
@@ -169,6 +178,7 @@ var rules = []rule{
 	{kind: KindSensitiveVar, re: regexp.MustCompile(reAuthzRelaxed), blocked: true},
 	shape(KindSensitiveVar, reAuthScheme),
 	keyed(KindSensitiveVar, names, exemptGeneric),
+	{kind: KindSensitiveVar, re: regexp.MustCompile(reXMLSecret), exempt: exemptGeneric},
 	{kind: KindSensitiveVar, pairs: true, exempt: exemptGeneric},
 }
 
@@ -199,13 +209,19 @@ func (ru rule) candidates(s string, protected [][]int) []candidate {
 	// skip the keys it contains: JSON escapes it and would read them.
 	skip := 0
 	colon := ru.re.SubexpIndex("c")
-	for _, loc := range ru.re.FindAllStringSubmatchIndex(s, -1) {
-		if !ru.keyed {
+	if !ru.keyed {
+		for _, loc := range allMatches(ru.re, s) {
 			st, en := span(ru.re, loc, "v")
-			exempt := ru.blocked || (ru.exempt != nil && ru.exempt("", s[st:en]))
+			key := ""
+			if k := ru.re.SubexpIndex("k"); k > 0 && loc[2*k] >= 0 {
+				key = s[loc[2*k]:loc[2*k+1]]
+			}
+			exempt := ru.blocked || (ru.exempt != nil && ru.exempt(key, s[st:en]))
 			out = append(out, candidate{start: st, end: en, exempt: exempt})
-			continue
 		}
+		return out
+	}
+	for _, loc := range ru.re.FindAllStringSubmatchIndex(s, -1) {
 		vs := afterBlanks(s, loc[1])
 		if vs < skip || inside(protected, vs) || (colon > 0 && loc[2*colon] >= 0 && vs == loc[1]) {
 			continue
@@ -220,6 +236,27 @@ func (ru rule) candidates(s string, protected [][]int) []candidate {
 			skip = en
 		}
 		out = append(out, candidate{start: st, end: en, exempt: exempt})
+	}
+	return out
+}
+
+// allMatches returns the matches of re in s, where a match may start at the
+// last byte of the previous one: the leading boundary of a shape is never
+// consumed by its neighbour (two URLs with credentials glued by an '@').
+func allMatches(re *regexp.Regexp, s string) [][]int {
+	var out [][]int
+	for pos := 0; pos <= len(s); {
+		loc := re.FindStringSubmatchIndex(s[pos:])
+		if loc == nil {
+			break
+		}
+		for i := range loc {
+			if loc[i] >= 0 {
+				loc[i] += pos
+			}
+		}
+		out = append(out, loc)
+		pos = max(loc[0]+1, loc[1]-1)
 	}
 	return out
 }
@@ -272,10 +309,11 @@ var (
 	// nameValueRe reads a name: an identifier, quoted or followed by a
 	// delimiter (a blank, ',', ';', '}', ']', an escaped line break or tab,
 	// or the end of the text).
-	nameValueRe = regexp.MustCompile(`^(?:"(?P<v>[A-Za-z0-9_.-]+)"|'(?P<v>[A-Za-z0-9_.-]+)'|\\"(?P<v>[A-Za-z0-9_.-]+)\\"` +
-		`|(?P<v>[A-Za-z0-9_.-]+)(?:[\s,;}\]]|\\[nrt]|$))`)
-	// sensitiveName: a whole name that the generic keyed rule would match.
-	sensitiveName = regexp.MustCompile(`(?i)^(?:` + names + `)$`)
+	nameValueRe = regexp.MustCompile(`^(?:"(?P<v>[A-Za-z0-9_./-]+)"|'(?P<v>[A-Za-z0-9_./-]+)'|\\"(?P<v>[A-Za-z0-9_./-]+)\\"` +
+		`|(?P<v>[A-Za-z0-9_./-]+)(?:[\s,;}\]]|\\[nrt]|$))`)
+	// pairName: a whole name that the generic keyed rule would match, or an
+	// HTTP header that carries credentials ((ad)).
+	pairName = regexp.MustCompile(`(?i)^(?:` + names + `|(?:proxy-)?authorization|cookie|set-cookie)$`)
 )
 
 // namedValues returns the values of "value" fields whose sibling "name" field
@@ -365,7 +403,7 @@ func readName(s string, vs int) (string, bool) {
 	}
 	st, en := span(nameValueRe, loc, "v")
 	n := s[vs+st : vs+en]
-	return n, sensitiveName.MatchString(n)
+	return n, sensitivePairName(n)
 }
 
 // isNameField reports whether the lineField match f is a "name" key.

@@ -72,10 +72,21 @@ func (r *Redactor) ContainsSecret(s string) bool {
 	return len(find(s)) > 0
 }
 
+// denul replaces every real NUL byte by a line break (T39): same length, so
+// the offsets of the input stay valid, and NUL keeps meaning "placeholder" in
+// the view of find.
+func denul(s string) string {
+	if strings.IndexByte(s, 0) < 0 {
+		return s
+	}
+	return strings.ReplaceAll(s, "\x00", "\n")
+}
+
 // Redact returns s with every detected secret replaced by its Placeholder,
 // and the matches, sorted and disjoint, as byte offsets in s. Placeholders
 // already present in s are never redacted again: Redact is idempotent.
 func (r *Redactor) Redact(s string) (string, []Match) {
+	s = denul(s)
 	ms := find(s)
 	if len(ms) == 0 {
 		return s, nil
@@ -92,9 +103,15 @@ func (r *Redactor) Redact(s string) (string, []Match) {
 	return b.String(), ms
 }
 
-// find evaluates every rule on s, where existing placeholders are opaque,
-// drops candidates that start inside them, and merges the rest.
+// find evaluates every rule on s, where existing placeholders are opaque, and
+// the structured pass (ADR 0007), drops candidates that start inside them,
+// and merges the rest.
 func find(s string) []Match {
+	return findBudget(s, newBudget(len(s)))
+}
+
+func findBudget(s string, b *budget) []Match {
+	s = denul(s)
 	protected := placeholderRe.FindAllStringIndex(s, -1)
 	view := opaque(s, protected)
 	var cs []candidate
@@ -104,6 +121,11 @@ func find(s string) []Match {
 				continue
 			}
 			c.prio = prio
+			cs = append(cs, c)
+		}
+	}
+	for _, c := range structured(s, b) {
+		if c.end > c.start && !inside(protected, c.start) {
 			cs = append(cs, c)
 		}
 	}
