@@ -236,6 +236,16 @@ func TestSourceRulesHardening(t *testing.T) {
 				fx("NeedsSecurityRole: false, ", "NeedsSecurityRole: true, ")),
 		})
 	})
+	// M1-T02 D11: the codec is the decoder itself, out of the workflow code
+	// classes; of the workflow package it may use only the propagation and
+	// context-aware types, never run a command such as an activity.
+	t.Run("codec", func(t *testing.T) {
+		runSourceCases(t, "loops-codec-confined", "ExecuteActivity", []srcCase{
+			sc("codec_executes_activity", "", "", addFile("internal/loops/codec/zz_activity.go",
+				"package codec\n\nimport \"go.temporal.io/sdk/workflow\"\n\n"+
+					"func runActivity(ctx workflow.Context) {\n\t_ = workflow.ExecuteActivity(ctx, \"demo.Propose\")\n}\n")),
+		})
+	})
 }
 
 // TestReadSourcesNestedBin: Go builds and imports a package in any directory

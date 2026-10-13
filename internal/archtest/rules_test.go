@@ -450,7 +450,7 @@ func defaultRuleNames() []string {
 	return []string{
 		"domain-pure", "adapters-edge", "sdk-confine-anthropic", "sdk-confine-temporal",
 		"sdk-confine-sql", "loops-agnostic", "fakes-wired-in-cmd", "loops-fake-tests-only",
-		"anthropic-unwired-m0",
+		"anthropic-unwired-m0", "secrets-fake-dev-only",
 	}
 }
 
@@ -469,7 +469,7 @@ func TestDefaultRules(t *testing.T) {
 	}
 
 	t.Run("names_and_kinds", func(t *testing.T) {
-		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine, Confine}
+		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine, Confine, Confine}
 		names := defaultRuleNames()
 		if len(rules) != len(names) {
 			t.Fatalf("DefaultRules returned %d rules, want %d (%q)", len(rules), len(names), names)
@@ -665,6 +665,11 @@ func TestRuleDetectsViolation(t *testing.T) {
 			// M0-T20: the real adapter has no importer until M0-T20b (T41).
 			v("anthropic-unwired-m0", m+"/cmd/rempart", m+"/internal/llm/adapters/anthropic/stream"),
 			v("anthropic-unwired-m0", m+"/cmd/rempart-worker", m+"/internal/llm/adapters/anthropic"),
+		}},
+		{"secrets-fake-dev-only", []Violation{
+			// M1-T02 D11, obligation (cw): the fake KeyWrapper (fixed seed) is
+			// wired only by the evaluation command, never by the worker.
+			v("secrets-fake-dev-only", m+"/cmd/rempart-worker", m+"/internal/secrets/fake"),
 		}},
 	}
 	if len(cases) != len(defaultRuleNames()) {

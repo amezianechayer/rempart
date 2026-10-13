@@ -383,4 +383,83 @@ func TestTransitClientHardened(t *testing.T) {
 			t.Errorf("NewTransit(nil, \"\"): no error")
 		}
 	})
+
+	// M1-T02 D9 (option O5): the worker exchanges a single-use wrapping token
+	// for its own token and checks the policies before using it (T95).
+	const (
+		wrappingToken = "s.WrappingToken-canary-3d9b"
+		workerToken   = "s.UnwrappedWorker-canary-81e0"
+	)
+	unwrapServer := func(t *testing.T, policies, tokenPolicies string, lease int) *transitServer {
+		t.Helper()
+		return newTransitServer(t, func(w http.ResponseWriter, r *http.Request, _ []byte) {
+			if r.URL.Path != "/v1/sys/wrapping/unwrap" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"request_id":"r1","auth":{"client_token":%q,"accessor":"acc","policies":%s,`+
+				`"token_policies":%s,"lease_duration":%d,"renewable":true,"orphan":true}}`, workerToken, policies, tokenPolicies, lease)
+		})
+	}
+
+	t.Run("unwrap_worker_token", func(t *testing.T) {
+		ts := unwrapServer(t, `["rempart-worker"]`, `["rempart-worker"]`, 600)
+		got, err := UnwrapWorkerToken(ctx, ts.URL, secret.New(wrappingToken))
+		if err != nil {
+			t.Fatalf("UnwrapWorkerToken: %v", err)
+		}
+		if got.Reveal() != workerToken {
+			t.Errorf("unwrapped token differs from the client_token of the response")
+		}
+		if s := fmt.Sprintf("%v %+v %#v", got, got, got); strings.Contains(s, workerToken) {
+			t.Error("printing the unwrapped token reveals it")
+		}
+		reqs := ts.recorded()
+		if len(reqs) != 1 {
+			t.Fatalf("%d requests, want exactly 1 (sys/wrapping/unwrap)", len(reqs))
+		}
+		r := reqs[0]
+		if r.method != http.MethodPost || r.path != "/v1/sys/wrapping/unwrap" || r.rawQuery != "" {
+			t.Errorf("request %s %s?%s, want POST /v1/sys/wrapping/unwrap", r.method, r.path, r.rawQuery)
+		}
+		if r.token != wrappingToken {
+			t.Errorf("X-Vault-Token %q, want the wrapping token", r.token)
+		}
+		if bytes.Contains(r.body, []byte(wrappingToken)) {
+			t.Error("the wrapping token is in the request body, want it in X-Vault-Token only")
+		}
+		if WorkerPolicy != "rempart-worker" {
+			t.Errorf("WorkerPolicy = %q, want rempart-worker", WorkerPolicy)
+		}
+	})
+
+	t.Run("unwrap_foreign_policy_refused", func(t *testing.T) {
+		for _, c := range []struct {
+			name, policies, tokenPolicies string
+			lease                         int
+			policyErr                     bool
+		}{
+			{"root", `["root"]`, `["root"]`, 600, true},
+			{"root_in_token_policies", `["rempart-worker"]`, `["root"]`, 600, true},
+			{"extra_policy", `["default","rempart-worker"]`, `["default","rempart-worker"]`, 600, true},
+			{"no_policy", `[]`, `[]`, 600, true},
+			{"lease_too_long", `["rempart-worker"]`, `["rempart-worker"]`, 3600, false},
+			{"lease_zero", `["rempart-worker"]`, `["rempart-worker"]`, 0, false},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				ts := unwrapServer(t, c.policies, c.tokenPolicies, c.lease)
+				got, err := UnwrapWorkerToken(ctx, ts.URL, secret.New(wrappingToken))
+				if err == nil || !got.IsZero() {
+					t.Fatalf("UnwrapWorkerToken = %d-byte token, %v; want a refusal and no token", len(got.Reveal()), err)
+				}
+				if c.policyErr && !errors.Is(err, ErrTokenPolicy) {
+					t.Errorf("error %v, want ErrTokenPolicy", err)
+				}
+				if s := fmt.Sprintf("%v %+v", err, err); strings.Contains(s, workerToken) || strings.Contains(s, wrappingToken) {
+					t.Errorf("error %q reveals a token", s)
+				}
+			})
+		}
+	})
 }
