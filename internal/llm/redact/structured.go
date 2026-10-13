@@ -13,24 +13,30 @@ import (
 
 // Structured pass of ADR 0007 (M1-T08): JSON documents and fragments of the
 // text, and the text as a YAML stream, are walked with their byte offsets.
-// A sensitive key masks its whole value; a name/value pair whose name is
-// sensitive masks its value; a leaf whose decoded form holds a secret, and
-// differs from its raw form (escapes, nested encodings), is masked whole; an
-// array of strings whose concatenation holds a secret that no element holds
-// masks all its strings. Every bound reached abandons the structured pass:
-// the regular expressions still run on the whole text (never fail open).
+//   - A sensitive key (the key names of every keyed rule, with their Kind)
+//     masks its value; under it, every string of an object or array value.
+//   - A name/value pair (name, key, ParameterKey, OptionName) whose name, or
+//     the last segment of its path (SSM), is sensitive masks its value.
+//   - Typed secrets: the data and stringData of a Kubernetes Secret, the value
+//     of an object with "sensitive": true (OpenTofu).
+//   - A leaf whose decoded form keeps a secret after the redaction of its raw
+//     form (escapes, nested encodings, T69) is masked whole; a placeholder
+//     that appears only in the decoded form is disarmed first (T38).
+//   - An array of strings whose concatenation holds a secret masks its
+//     strings.
+//
+// Bounds never fail open (T81, T98): the work budget exhausted masks the rest
+// of the text; a YAML document deeper than MaxStructuredDepth, or a panic of a
+// decoder, masks the whole text. YAML aliases are never followed.
 const (
-	MaxStructuredDepth = 64      // nesting of one document
-	MaxStructuredNodes = 1 << 16 // tokens or YAML nodes of one document
+	MaxStructuredDepth = 64 // YAML nesting
 	maxYAMLDocuments   = 64
-	budgetPerByte      = 80 // bytes parsed per byte of input, all attempts together
+	budgetPerByte      = 80 // work units per byte of input, nested encodings included
 	budgetBase         = 1 << 16
+	yamlNodeCost       = 16
 )
 
-var errBound = errors.New("redact: structured bound reached")
-
-// budget bounds the work of the structured pass on one input, nested
-// encodings included (T81).
+// budget bounds the work of the structured pass on one input (T81).
 type budget struct{ left int }
 
 func newBudget(n int) *budget { return &budget{left: budgetPerByte*n + budgetBase} }
@@ -40,30 +46,42 @@ func (b *budget) spend(n int) bool {
 	return b.left >= 0
 }
 
-// structuredKey: a key whose value is a secret, whole key, case-insensitive.
-var structuredKey = regexp.MustCompile(`(?i)^(?:` + names +
-	`|cookie|set-cookie|psk|pre_?shared_?key|tunnel[0-9]_preshared_key|shared_?key|ike_psk` +
-	`|client-key-data|(?:ovh_)?(?:application_?key|application_?secret|consumer_?key))$`)
+var (
+	// extraKeys: keys whose value is a secret, read by no keyed rule.
+	extraKeys = regexp.MustCompile(`(?i)^(?:cookie|set-cookie)$`)
+	// pairNameKeys, pairValueKeys: the fields of a name/value pair.
+	pairNameKeys  = regexp.MustCompile(`(?i)^(?:name|key|parameterkey|optionname)$`)
+	pairValueKeys = regexp.MustCompile(`(?i)^(?:value|parametervalue|optionvalue)$`)
+	typedKeys     = regexp.MustCompile(`(?i)^(?:data|stringdata)$`)
+)
 
-// pskKey: keys whose value is an IPsec pre-shared key.
-var pskKey = regexp.MustCompile(`(?i)^(?:psk|pre_?shared_?key|tunnel[0-9]_preshared_key|shared_?key|ike_psk)$`)
+// sensitiveKey returns the Kind of the value of key, and whether key is
+// sensitive and not exempt for value.
+func sensitiveKey(key, value string) (Kind, bool) {
+	for _, ru := range rules {
+		if ru.whole == nil || !ru.whole.MatchString(key) {
+			continue
+		}
+		if ru.exempt != nil && ru.exempt(key, value) {
+			return "", false
+		}
+		return ru.kind, true
+	}
+	if extraKeys.MatchString(key) {
+		return KindSensitiveVar, true
+	}
+	return "", false
+}
 
 // sensitivePairName reports whether the name of a name/value pair, or the
 // last segment of its path (SSM parameter), is sensitive.
 func sensitivePairName(n string) bool {
 	seg := n[strings.LastIndexByte(n, '/')+1:]
-	return pairName.MatchString(seg)
-}
-
-func keyCandidate(key, value string, start, end int) (candidate, bool) {
-	if start >= end || !structuredKey.MatchString(key) || exemptGeneric(key, value) {
-		return candidate{}, false
+	if pairName.MatchString(seg) {
+		return true
 	}
-	k := KindSensitiveVar
-	if pskKey.MatchString(key) {
-		k = KindIPsecPSK
-	}
-	return candidate{start: start, end: end, prio: prioOf(k)}, true
+	_, ok := sensitiveKey(seg, "")
+	return ok
 }
 
 // prioOf returns the priority of the first rule of kind k.
@@ -76,22 +94,31 @@ func prioOf(k Kind) int {
 	return len(rules) - 1
 }
 
-// leafCandidate masks a whole leaf [start, end) of raw form raw (JSON string
-// content) and decoded form dec when dec holds a secret that the redaction of
-// raw leaves in its decoded form (escapes, nested encodings, T69). The
-// regular expressions read raw already: when they suffice, their precise
+func mask(start, end int, k Kind) candidate {
+	return candidate{start: start, end: end, prio: prioOf(k)}
+}
+
+// leafCandidate masks a whole leaf [start, end) of raw form raw and decoded
+// form dec when dec holds a secret that the redaction of raw leaves in its
+// decoded form. When the regular expressions on raw suffice, their precise
 // masks are kept.
 func leafCandidate(raw, dec string, start, end int, b *budget) (candidate, bool) {
 	if raw == dec || start >= end || !b.spend(2*len(dec)+len(raw)) {
 		return candidate{}, false
 	}
+	// A placeholder that appears only in the decoded form was forged by
+	// escapes (T38): it protects nothing, and the leaf is masked whole.
+	forged := strings.Count(dec, "[REDACTED:") > strings.Count(raw, "[REDACTED:")
+	if forged {
+		dec = DisarmPlaceholders(dec)
+	}
 	ms := findBudget(dec, b)
 	if len(ms) == 0 {
 		return candidate{}, false
 	}
-	whole := candidate{start: start, end: end, prio: prioOf(ms[0].Kind)}
+	whole := mask(start, end, ms[0].Kind)
 	red, rms := redactBudget(raw, b)
-	if len(rms) == 0 {
+	if forged || len(rms) == 0 {
 		return whole, true
 	}
 	var again string
@@ -115,77 +142,93 @@ func redactBudget(s string, b *budget) (string, []Match) {
 	return out.String(), ms
 }
 
-// structured returns the candidates of the structured pass on s.
-func structured(s string, b *budget) []candidate {
-	out := jsonCandidates(s, b)
+// structured returns the candidates of the structured pass on s; a panic of a
+// decoder masks the whole text.
+func structured(s string, b *budget) (out []candidate) {
+	defer func() {
+		if recover() != nil {
+			out = []candidate{mask(0, len(s), KindSensitiveVar)}
+		}
+	}()
+	out = jsonCandidates(s, b)
 	return append(out, yamlCandidates(s, b)...)
 }
 
-// jsonLeaf is a string of a JSON document: the bounds of its content (inside
-// the quotes), its raw content and its decoded value.
+// jsonLeaf is a string value of a JSON document: the bounds of its content
+// (inside the quotes) and its decoded value.
 type jsonLeaf struct {
 	start, end int
-	raw, dec   string
+	dec        string
 }
+
+// leafRange is a range of indexes of jsonWalk.leaves: the string values of a
+// subtree, in order.
+type leafRange struct{ from, to int }
 
 type jsonFrame struct {
-	obj       bool
-	expectKey bool
-	key       string
-	pairName  string
-	hasName   bool
-	values    []jsonLeaf
-	strs      []jsonLeaf
+	obj, expectKey bool
+	key            string // current key of an object
+	parentKey      string // key of this value in its parent object
+	sensitive      bool   // every string value below is masked
+	kind           Kind
+	first          int // index of the first leaf of the subtree
+	pairName       string
+	hasName        bool
+	isSecret       bool // "kind": "Secret"
+	sensTrue       bool // "sensitive": true
+	values, typed  []leafRange
+	strs           []int // direct string elements of an array
 }
 
-// jsonCandidates tries a JSON value at every '{' or '[' of s that no parsed
-// document covers.
+type jsonWalk struct {
+	s      string
+	b      *budget
+	leaves []jsonLeaf
+	out    []candidate
+}
+
+// jsonCandidates tries a JSON value at every '{' or '[' of s; after a failure
+// the scan resumes at the failure point (the subtrees closed before it were
+// read), so that the work is linear in the size of s.
 func jsonCandidates(s string, b *budget) []candidate {
-	var out []candidate
+	w := &jsonWalk{s: s, b: b}
 	for i := 0; i < len(s); i++ {
 		if s[i] != '{' && s[i] != '[' {
 			continue
 		}
-		cs, end, err := jsonDocument(s, i, b)
-		if errors.Is(err, errBound) && b.left < 0 {
-			return out
+		next := w.document(i)
+		if b.left < 0 {
+			return append(w.out, mask(i, len(s), KindSensitiveVar))
 		}
-		if err == nil {
-			out = append(out, cs...)
-			i = end - 1
+		if next > i+1 {
+			i = next - 1
 		}
 	}
-	return out
+	return w.out
 }
 
-// jsonDocument walks the JSON value starting at s[at]: its candidates and the
-// offset of its end.
-func jsonDocument(s string, at int, b *budget) ([]candidate, int, error) {
-	dec := json.NewDecoder(strings.NewReader(s[at:]))
-	var (
-		out   []candidate
-		stack []*jsonFrame
-		nodes int
-	)
-	spent := 0
-	defer func() { b.spend(spent) }()
+// document walks the JSON value at s[at] and returns the offset where the
+// scan resumes: its end, or its failure point.
+func (w *jsonWalk) document(at int) int {
+	dec := json.NewDecoder(strings.NewReader(w.s[at:]))
+	var stack []*jsonFrame
 	for {
 		prev := int(dec.InputOffset())
 		tok, err := dec.Token()
 		off := int(dec.InputOffset())
-		spent = off
 		if err != nil {
 			var se *json.SyntaxError
-			if errors.As(err, &se) {
-				spent = int(se.Offset)
+			switch {
+			case errors.As(err, &se) && int(se.Offset) > 0:
+				off = int(se.Offset) - 1
+			case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+				off = len(w.s) - at
 			}
-			if errors.Is(err, io.EOF) {
-				spent = len(s) - at
-			}
-			return nil, 0, err
+			w.b.spend(off)
+			return at + max(off, 1)
 		}
-		if nodes++; nodes > MaxStructuredNodes || b.left-spent < 0 {
-			return nil, 0, errBound
+		if !w.b.spend(off - prev) {
+			return at + off
 		}
 		var top *jsonFrame
 		if len(stack) > 0 {
@@ -193,60 +236,136 @@ func jsonDocument(s string, at int, b *budget) ([]candidate, int, error) {
 		}
 		switch t := tok.(type) {
 		case json.Delim:
-			switch t {
-			case '{', '[':
-				if len(stack) >= MaxStructuredDepth {
-					return nil, 0, errBound
-				}
-				if top != nil && top.obj {
-					top.expectKey = true
-				}
-				stack = append(stack, &jsonFrame{obj: t == '{', expectKey: t == '{'})
-			default:
-				out = append(out, closeFrame(top, b)...)
-				stack = stack[:len(stack)-1]
-				if len(stack) == 0 {
-					return out, at + off, nil
-				}
+			if t == '{' || t == '[' {
+				stack = append(stack, w.open(top, t == '{'))
+				continue
+			}
+			w.close(top, stack)
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				return at + off
 			}
 		case string:
-			start := tokenStart(s, at+prev)
-			l := jsonLeaf{start: start + 1, end: at + off - 1, dec: t}
-			if l.start > l.end {
-				return nil, 0, errBound
+			if top == nil {
+				return at + off
 			}
-			l.raw = s[l.start:l.end]
-			switch {
-			case top == nil:
-				return out, at + off, nil
-			case top.obj && top.expectKey:
+			if top.obj && top.expectKey {
 				top.key, top.expectKey = t, false
 				continue
-			case top.obj:
-				if c, ok := keyCandidate(top.key, t, l.start, l.end); ok {
-					out = append(out, c)
-				}
-				switch {
-				case strings.EqualFold(top.key, "name") || strings.EqualFold(top.key, "key"):
-					top.pairName, top.hasName = t, true
-				case strings.EqualFold(top.key, "value"):
-					top.values = append(top.values, l)
-				}
-				top.expectKey = true
-			default:
-				top.strs = append(top.strs, l)
 			}
-			if c, ok := leafCandidate(l.raw, l.dec, l.start, l.end, b); ok {
-				out = append(out, c)
-			}
+			start := tokenStart(w.s, at+prev) + 1
+			w.value(top, jsonLeaf{start: start, end: at + off - 1, dec: t})
 		default:
 			if top == nil {
-				return out, at + off, nil
+				return at + off
 			}
 			if top.obj {
+				if v, ok := t.(bool); ok && v && strings.EqualFold(top.key, "sensitive") {
+					top.sensTrue = true
+				}
 				top.expectKey = true
 			}
 		}
+	}
+}
+
+// open starts a frame below top.
+func (w *jsonWalk) open(top *jsonFrame, obj bool) *jsonFrame {
+	f := &jsonFrame{obj: obj, expectKey: obj, first: len(w.leaves)}
+	if top == nil {
+		return f
+	}
+	f.sensitive, f.kind = top.sensitive, top.kind
+	if top.obj {
+		f.parentKey = top.key
+		if k, ok := sensitiveKey(top.key, ""); ok && !f.sensitive {
+			f.sensitive, f.kind = true, k
+		}
+		top.expectKey = true
+	}
+	return f
+}
+
+// value handles a string value of top.
+func (w *jsonWalk) value(top *jsonFrame, l jsonLeaf) {
+	if l.start > l.end || l.end > len(w.s) {
+		return
+	}
+	idx := len(w.leaves)
+	w.leaves = append(w.leaves, l)
+	if top.sensitive && l.start < l.end {
+		w.out = append(w.out, mask(l.start, l.end, top.kind))
+	}
+	if top.obj {
+		if k, ok := sensitiveKey(top.key, l.dec); ok && l.start < l.end {
+			w.out = append(w.out, mask(l.start, l.end, k))
+		}
+		switch {
+		case pairNameKeys.MatchString(top.key):
+			top.pairName, top.hasName = l.dec, true
+		case pairValueKeys.MatchString(top.key):
+			top.values = append(top.values, leafRange{idx, idx + 1})
+		case typedKeys.MatchString(top.key):
+			top.typed = append(top.typed, leafRange{idx, idx + 1})
+		case strings.EqualFold(top.key, "kind") && l.dec == "Secret":
+			top.isSecret = true
+		}
+		top.expectKey = true
+	} else {
+		top.strs = append(top.strs, idx)
+	}
+	if c, ok := leafCandidate(w.s[l.start:l.end], l.dec, l.start, l.end, w.b); ok {
+		w.out = append(w.out, c)
+	}
+}
+
+// close emits the candidates of a closed frame f and hands its subtree to its
+// parent.
+func (w *jsonWalk) close(f *jsonFrame, stack []*jsonFrame) {
+	emit := func(ranges []leafRange, name string) {
+		for _, r := range ranges {
+			for _, l := range w.leaves[r.from:r.to] {
+				if !w.b.spend(l.end-l.start+1) || l.start >= l.end || exemptGeneric(name, l.dec) {
+					continue
+				}
+				w.out = append(w.out, mask(l.start, l.end, KindSensitiveVar))
+			}
+		}
+	}
+	if f.hasName && sensitivePairName(f.pairName) {
+		emit(f.values, f.pairName)
+	}
+	if f.sensTrue {
+		emit(f.values, "")
+	}
+	if f.isSecret {
+		emit(f.typed, "")
+	}
+	if len(f.strs) > 1 {
+		var cat strings.Builder
+		for _, i := range f.strs {
+			cat.WriteString(w.leaves[i].dec)
+		}
+		if w.b.spend(cat.Len()) {
+			if ms := findBudget(cat.String(), w.b); len(ms) > 0 {
+				for _, i := range f.strs {
+					if l := w.leaves[i]; l.start < l.end {
+						w.out = append(w.out, mask(l.start, l.end, ms[0].Kind))
+					}
+				}
+			}
+		}
+	}
+	if len(stack) < 2 {
+		return
+	}
+	parent, sub := stack[len(stack)-2], leafRange{f.first, len(w.leaves)}
+	switch {
+	case !parent.obj:
+	case pairValueKeys.MatchString(f.parentKey):
+		parent.values = append(parent.values, sub)
+	case typedKeys.MatchString(f.parentKey):
+		parent.typed = append(parent.typed, sub)
 	}
 }
 
@@ -259,40 +378,8 @@ func tokenStart(s string, i int) int {
 	return i
 }
 
-// closeFrame returns the candidates of a closed object (name/value pair) or
-// array (secret split between strings).
-func closeFrame(f *jsonFrame, b *budget) []candidate {
-	var out []candidate
-	if f == nil {
-		return nil
-	}
-	if f.obj && f.hasName && sensitivePairName(f.pairName) {
-		for _, v := range f.values {
-			if !exemptGeneric(f.pairName, v.dec) && v.start < v.end {
-				out = append(out, candidate{start: v.start, end: v.end, prio: prioOf(KindSensitiveVar)})
-			}
-		}
-	}
-	if len(f.strs) > 1 {
-		var cat strings.Builder
-		for _, l := range f.strs {
-			cat.WriteString(l.dec)
-		}
-		if b.spend(cat.Len()) {
-			if ms := findBudget(cat.String(), b); len(ms) > 0 {
-				for _, l := range f.strs {
-					if l.start < l.end {
-						out = append(out, candidate{start: l.start, end: l.end, prio: prioOf(ms[0].Kind)})
-					}
-				}
-			}
-		}
-	}
-	return out
-}
-
 // yamlCandidates walks s as a YAML stream when every document of it has a
-// mapping or a sequence at its root.
+// mapping or a sequence at its root. A bound reached masks the whole text.
 func yamlCandidates(s string, b *budget) []candidate {
 	if strings.TrimSpace(s) == "" || !b.spend(len(s)) {
 		return nil
@@ -312,8 +399,8 @@ func yamlCandidates(s string, b *budget) []candidate {
 			return nil
 		}
 		w := yamlWalker{s: s, lines: lines, ascii: ascii, b: b}
-		if !w.walk(doc.Content[0], 0) {
-			return nil
+		if !w.walk(doc.Content[0], 0, "") {
+			return []candidate{mask(0, len(s), KindSensitiveVar)}
 		}
 		out = append(out, w.out...)
 	}
@@ -325,56 +412,67 @@ type yamlWalker struct {
 	lines []int
 	ascii []bool
 	b     *budget
-	nodes int
 	out   []candidate
 }
 
-// walk visits n; false when a bound is reached. Aliases are never followed.
-func (w *yamlWalker) walk(n *yaml.Node, depth int) bool {
-	if w.nodes++; w.nodes > MaxStructuredNodes || depth > MaxStructuredDepth || w.b.left < 0 {
+// walk visits n; sens is the Kind every scalar below is masked as ("" for
+// none). It returns false when a bound is reached. Aliases are never followed.
+func (w *yamlWalker) walk(n *yaml.Node, depth int, sens Kind) bool {
+	if depth > MaxStructuredDepth || !w.b.spend(yamlNodeCost) {
 		return false
 	}
 	switch n.Kind {
 	case yaml.MappingNode:
-		name, hasName := "", false
-		var values []*yaml.Node
+		var name string
+		var hasName, isSecret, sensTrue bool
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k, v := n.Content[i], n.Content[i+1]
-			if v.Kind == yaml.ScalarNode && k.Kind == yaml.ScalarNode {
-				if st, en, ok := w.span(v); ok {
-					if c, ok := keyCandidate(k.Value, v.Value, st, en); ok {
-						w.out = append(w.out, c)
-					}
-				}
-				switch {
-				case strings.EqualFold(k.Value, "name") || strings.EqualFold(k.Value, "key"):
-					name, hasName = v.Value, true
-				case strings.EqualFold(k.Value, "value"):
-					values = append(values, v)
-				}
+			if v.Kind != yaml.ScalarNode {
+				continue
 			}
-			if !w.walk(v, depth+1) {
-				return false
+			switch {
+			case pairNameKeys.MatchString(k.Value):
+				name, hasName = v.Value, true
+			case strings.EqualFold(k.Value, "kind") && v.Value == "Secret":
+				isSecret = true
+			case strings.EqualFold(k.Value, "sensitive") && v.Tag == "!!bool" && strings.EqualFold(v.Value, "true"):
+				sensTrue = true
 			}
 		}
-		if hasName && sensitivePairName(name) {
-			for _, v := range values {
-				if st, en, ok := w.span(v); ok && !exemptGeneric(name, v.Value) {
-					w.out = append(w.out, candidate{start: st, end: en, prio: prioOf(KindSensitiveVar)})
-				}
+		pair := hasName && sensitivePairName(name)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			child := sens
+			if kind, ok := sensitiveKey(k.Value, v.Value); ok && child == "" {
+				child = kind
+			}
+			switch {
+			case child != "":
+			case pairValueKeys.MatchString(k.Value) && (sensTrue || pair && !exemptGeneric(name, v.Value)):
+				child = KindSensitiveVar
+			case typedKeys.MatchString(k.Value) && isSecret:
+				child = KindSensitiveVar
+			}
+			if !w.walk(v, depth+1, child) {
+				return false
 			}
 		}
 	case yaml.SequenceNode:
 		for _, c := range n.Content {
-			if !w.walk(c, depth+1) {
+			if !w.walk(c, depth+1, sens) {
 				return false
 			}
 		}
 	case yaml.ScalarNode:
-		if st, en, ok := w.span(n); ok {
-			if c, ok := leafCandidate(w.s[st:en], n.Value, st, en, w.b); ok {
-				w.out = append(w.out, c)
-			}
+		st, en, ok := w.span(n)
+		if !ok {
+			return true
+		}
+		if sens != "" {
+			w.out = append(w.out, mask(st, en, sens))
+		}
+		if c, ok := leafCandidate(w.s[st:en], n.Value, st, en, w.b); ok {
+			w.out = append(w.out, c)
 		}
 	}
 	return true
@@ -444,8 +542,11 @@ func (w *yamlWalker) span(n *yaml.Node) (int, int, bool) {
 }
 
 // block returns the content of the block scalar whose indicator is on line
-// (1-based): its more indented lines, from the indentation of the first.
+// (1-based): the following lines more indented than that line, from the
+// indentation of the first.
 func (w *yamlWalker) block(line int) (int, int, bool) {
+	head := w.s[w.lines[line-1]:w.lineEnd(line-1)]
+	keyIndent := len(head) - len(strings.TrimLeft(head, " \t"))
 	start, end, indent := -1, -1, -1
 	for li := line; li < len(w.lines); li++ {
 		ls, le := w.lines[li], w.lineEnd(li)
@@ -454,10 +555,11 @@ func (w *yamlWalker) block(line int) (int, int, bool) {
 			continue
 		}
 		ind := len(text) - len(strings.TrimLeft(text, " \t"))
+		if ind <= keyIndent || indent >= 0 && ind < indent {
+			break // content is more indented than the line of its indicator
+		}
 		if indent < 0 {
 			indent, start = ind, ls+ind
-		} else if ind < indent {
-			break
 		}
 		end = len(strings.TrimRight(w.s[:le], " \t\r"))
 	}
@@ -482,12 +584,13 @@ func quotedEnd(s string, start int) (int, bool) {
 	return 0, false
 }
 
-// placeholderLike: a placeholder, known kind or not, closed or not.
+// placeholderLike: a placeholder, known kind or not, closed.
 var placeholderLike = regexp.MustCompile(`\[REDACTED:([^\]\s\x00]{0,64})\]`)
 
 // DisarmPlaceholders rewrites every placeholder of untrusted data so that no
 // forged placeholder is taken for an existing redaction (T38): "[REDACTED:k]"
-// becomes "(REDACTED:k)", and any other "[REDACTED:" becomes "(REDACTED:".
+// becomes "(REDACTED:k)" (same length), and any other "[REDACTED:" becomes
+// "(REDACTED:".
 func DisarmPlaceholders(s string) string {
 	if !strings.Contains(s, "[REDACTED:") {
 		return s

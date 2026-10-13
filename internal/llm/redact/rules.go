@@ -19,6 +19,8 @@ type rule struct {
 	re    *regexp.Regexp
 	keyed bool
 	pairs bool
+	// whole: the key names of a keyed rule, whole key (structured pass).
+	whole *regexp.Regexp
 	// blocked: every candidate is exempt. The rule reads the whole value of a
 	// shape whose strict rule stops earlier (at a byte that JSON escapes): it
 	// is masked only where it overlaps another candidate, and so extends the
@@ -47,9 +49,10 @@ const (
 	// A lone '\' is not a boundary: in a JSON-encoded text, the letter of an
 	// escape would otherwise start a new token.
 	boundary = `(?:^|[^A-Za-z0-9_\]\\\x00]|\\[nrt]|` + jsonEscape + `)`
-	// keyPrefix: start of text, a delimiter, an escaped newline or tab, or a
-	// JSON escape of '&', '<' or '>'. ':' and ']' are deliberately absent.
-	keyPrefix = "(?:^|[\\s\"'`{}(\\[,;?&|<>$]|\\\\[nrt]|" + jsonEscape + ")"
+	// keyPrefix: start of text, a delimiter (')' included: the end of a
+	// disarmed placeholder, T38), an escaped newline or tab, or a JSON escape of
+	// '&', '<' or '>'. ':' and ']' are deliberately absent.
+	keyPrefix = "(?:^|[\\s\"'`{}()\\[,;?&|<>$]|\\\\[nrt]|" + jsonEscape + ")"
 	// Separators never consume the blanks that follow them: a blank may be the
 	// prefix of the next key. A bare ':' (group c) needs a blank after it.
 	sepAny  = `[ \t]*(?::=|=>|[:=])`
@@ -189,7 +192,7 @@ func shape(k Kind, expr string) rule {
 // keyed builds a rule for keys named by keyNames (case-insensitive, whole
 // key), quoted, single-quoted, escaped-quoted or bare.
 func keyed(k Kind, keyNames string, exempt func(key, value string) bool) rule {
-	return rule{kind: k, re: keyRe(keyNames), keyed: true, exempt: exempt}
+	return rule{kind: k, re: keyRe(keyNames), keyed: true, exempt: exempt, whole: regexp.MustCompile(`(?i)^(?:` + keyNames + `)$`)}
 }
 
 // keyRe matches a key named by keyNames (group k) and its separator.
