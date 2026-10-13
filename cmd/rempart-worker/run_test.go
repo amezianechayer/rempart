@@ -63,7 +63,7 @@ func TestRunRefusesFakeWithoutDev(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			var stdout bytes.Buffer
-			err := run(ctx, cfg, &stdout)
+			err := run(ctx, cfg, testSealer(t), &stdout)
 			if !errors.Is(err, ErrFakeRequiresDev) {
 				t.Errorf("run = %v, want ErrFakeRequiresDev", err)
 			}

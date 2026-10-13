@@ -88,7 +88,7 @@ func badTargets() []struct{ name, addr, ns string } {
 // writes to stdout) and an opaque identity, random per call, without host
 // name or pid.
 func TestClientOptions(t *testing.T) {
-	opts, err := clientOptions(demoConfig())
+	opts, err := clientOptions(demoConfig(), testSealer(t))
 	if err != nil {
 		t.Fatalf("clientOptions(demo) = %v", err)
 	}
@@ -105,7 +105,7 @@ func TestClientOptions(t *testing.T) {
 	if host != "" && strings.Contains(opts.Identity, host) || strings.Contains(opts.Identity, strconv.Itoa(os.Getpid())+"@") {
 		t.Errorf("Identity %q carries the host name or the pid", opts.Identity)
 	}
-	again, err := clientOptions(demoConfig())
+	again, err := clientOptions(demoConfig(), testSealer(t))
 	if err != nil || again.Identity == opts.Identity {
 		t.Errorf("second identity %q, %v; want another random identity than %q", again.Identity, err, opts.Identity)
 	}
@@ -113,7 +113,7 @@ func TestClientOptions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := demoConfig()
 			cfg.TemporalAddress, cfg.Namespace = tc.addr, tc.ns
-			opts, err := clientOptions(cfg)
+			opts, err := clientOptions(cfg, testSealer(t))
 			if !errors.Is(err, ErrConfig) {
 				t.Errorf("clientOptions(%q, %q) = %v, want ErrConfig", tc.addr, tc.ns, err)
 			}
@@ -144,7 +144,7 @@ func TestRunRefusesNonLoopback(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			var stdout bytes.Buffer
-			if err := run(ctx, cfg, &stdout); !errors.Is(err, ErrConfig) {
+			if err := run(ctx, cfg, testSealer(t), &stdout); !errors.Is(err, ErrConfig) {
 				t.Errorf("run(%q, %q) = %v, want ErrConfig before any file or network access", tc.addr, tc.ns, err)
 			}
 			if stdout.Len() != 0 {
@@ -156,7 +156,7 @@ func TestRunRefusesNonLoopback(t *testing.T) {
 		addr, conns := countingListener(t)
 		cfg := demoConfig()
 		cfg.TemporalAddress, cfg.Namespace = addr, "Rempart"
-		if err := run(t.Context(), cfg, &bytes.Buffer{}); !errors.Is(err, ErrConfig) {
+		if err := run(t.Context(), cfg, testSealer(t), &bytes.Buffer{}); !errors.Is(err, ErrConfig) {
 			t.Errorf("run = %v, want ErrConfig", err)
 		}
 		time.Sleep(50 * time.Millisecond) // let a late accept be counted
@@ -178,7 +178,7 @@ func TestRunDialFailureOpaque(t *testing.T) {
 		cfg.TemporalAddress = addr
 		var stdout bytes.Buffer
 		start := time.Now()
-		err := run(ctx, cfg, &stdout)
+		err := run(ctx, cfg, testSealer(t), &stdout)
 		if d := time.Since(start); d > limit {
 			t.Errorf("run returned after %v, want less than %v", d, limit)
 		}
@@ -218,8 +218,10 @@ func TestRealMainDialFailure(t *testing.T) {
 	addr, _ := countingListener(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	args := withFlag("temporal-address", "-temporal-address="+addr)
+	args = append(slices.DeleteFunc(args, func(a string) bool { return strings.HasPrefix(a, "-openbao-addr=") }), "-openbao-addr="+fakeOpenBao(t))
 	var stdout, stderr bytes.Buffer
-	code := realMain(ctx, withFlag("temporal-address", "-temporal-address="+addr), &stdout, &stderr)
+	code := realMain(ctx, args, strings.NewReader(testWrapping+"\n"), &stdout, &stderr)
 	if code != 1 || stderr.String() != "rempart-worker: rempart-worker: Temporal unavailable\n" || stdout.Len() != 0 {
 		t.Errorf("realMain = %d, stderr %q, stdout %q; want 1, the fixed message, nothing", code, stderr.String(), stdout.String())
 	}

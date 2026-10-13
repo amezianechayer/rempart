@@ -20,6 +20,7 @@ const (
 	demoAddress = "127.0.0.1:7233"
 	demoNS      = "rempart"
 	demoScript  = "internal/loops/demo/testdata/scripts/converge.json"
+	demoOpenBao = "http://127.0.0.1:8200"
 	canary      = "sk-ant-api03-EXAMPLEEXAMPLE"
 )
 
@@ -28,12 +29,13 @@ func demoArgs() []string {
 	return []string{
 		"-dev", "-demo-once", "-llm=fake", "-tenant=" + demoTenant,
 		"-temporal-address=" + demoAddress, "-namespace=" + demoNS, "-fake-script=" + demoScript,
+		"-openbao-addr=" + demoOpenBao,
 	}
 }
 
 func demoConfig() Config {
 	return Config{
-		TemporalAddress: demoAddress, Namespace: demoNS, LLMProvider: "fake", FakeScript: demoScript,
+		TemporalAddress: demoAddress, Namespace: demoNS, LLMProvider: "fake", FakeScript: demoScript, OpenBaoAddress: demoOpenBao,
 		Dev: true, DemoOnce: true, Tenant: tenancy.ID(demoTenant),
 	}
 }
@@ -250,7 +252,7 @@ func TestConfigNeverPrintsSecrets(t *testing.T) {
 
 	t.Run("canary_never_quoted", func(t *testing.T) {
 		var lines [][]string
-		for _, name := range []string{"temporal-address", "namespace", "llm", "fake-script", "tenant", "dev", "demo-once"} {
+		for _, name := range []string{"temporal-address", "namespace", "llm", "fake-script", "tenant", "dev", "demo-once", "openbao-addr"} {
 			lines = append(lines, withFlag(name, "-"+name+"="+canary))
 		}
 		lines = append(lines,
@@ -277,7 +279,7 @@ func TestConfigNeverPrintsSecrets(t *testing.T) {
 				t.Errorf("LoadConfig(%q) wrote %q on the process stderr, want nothing", args, printed)
 			}
 			var stdout, stderr bytes.Buffer
-			code := realMain(context.Background(), args, &stdout, &stderr)
+			code := realMain(context.Background(), args, strings.NewReader(""), &stdout, &stderr)
 			if code != 2 || stdout.Len() != 0 {
 				t.Errorf("realMain(%q) = %d, stdout %q; want 2 and an empty stdout", args, code, stdout.String())
 			}
@@ -290,7 +292,7 @@ func TestConfigNeverPrintsSecrets(t *testing.T) {
 	t.Run("config_fields", func(t *testing.T) {
 		want := []string{
 			"TemporalAddress string", "Namespace string", "LLMProvider string", "FakeScript string",
-			"Dev bool", "DemoOnce bool", "Tenant tenancy.ID",
+			"Dev bool", "DemoOnce bool", "Tenant tenancy.ID", "OpenBaoAddress string",
 		}
 		typ := reflect.TypeFor[Config]()
 		var got []string
@@ -309,7 +311,7 @@ func TestConfigNeverPrintsSecrets(t *testing.T) {
 // TestProductionConfigHasNoFake (D3, threat T41): among every combination of
 // -dev, -demo-once and -llm, only -dev -demo-once -llm=fake is accepted.
 func TestProductionConfigHasNoFake(t *testing.T) {
-	rest := []string{"-tenant=" + demoTenant, "-temporal-address=" + demoAddress, "-namespace=" + demoNS, "-fake-script=" + demoScript}
+	rest := []string{"-tenant=" + demoTenant, "-temporal-address=" + demoAddress, "-namespace=" + demoNS, "-fake-script=" + demoScript, "-openbao-addr=" + demoOpenBao}
 	accepted := 0
 	for _, dev := range []string{"", "-dev", "-dev=false"} {
 		for _, once := range []string{"", "-demo-once", "-demo-once=false"} {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ type Config struct {
 	TemporalAddress, Namespace, LLMProvider, FakeScript string
 	Dev, DemoOnce                                       bool
 	Tenant                                              tenancy.ID
+	OpenBaoAddress                                      string // M1-T02 D9: http on loopback only
 }
 
 // once is a string flag that refuses a second occurrence (D2).
@@ -62,7 +64,7 @@ func (o *onceBool) Set(s string) error {
 func LoadConfig(args []string) (Config, error) {
 	set := flag.NewFlagSet("rempart-worker", flag.ContinueOnError)
 	set.SetOutput(io.Discard) // flag errors quote values
-	var addr, ns, provider, script, tenant once
+	var addr, ns, provider, script, tenant, bao once
 	var dev, demoOnce onceBool
 	var cfg Config
 	set.Var(&addr, "temporal-address", "")
@@ -70,6 +72,7 @@ func LoadConfig(args []string) (Config, error) {
 	set.Var(&provider, "llm", "")
 	set.Var(&script, "fake-script", "")
 	set.Var(&tenant, "tenant", "")
+	set.Var(&bao, "openbao-addr", "")
 	set.Var(&dev, "dev", "")
 	set.Var(&demoOnce, "demo-once", "")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 {
@@ -96,7 +99,11 @@ func LoadConfig(args []string) (Config, error) {
 	if !loopbackAddr(addr.v) || !validNamespace(ns.v) || !fs.ValidPath(script.v) || path.Ext(script.v) != ".json" {
 		return Config{}, fmt.Errorf("%w: -temporal-address, -namespace or -fake-script", ErrConfig)
 	}
+	if !openBaoAddr(bao.v) {
+		return Config{}, fmt.Errorf("%w: -openbao-addr", ErrConfig)
+	}
 	cfg.TemporalAddress, cfg.Namespace, cfg.LLMProvider, cfg.FakeScript, cfg.Tenant = addr.v, ns.v, provider.v, script.v, id
+	cfg.OpenBaoAddress = bao.v
 	return cfg, nil
 }
 
@@ -105,6 +112,14 @@ func loopbackAddr(a string) bool {
 	ip := net.ParseIP(host)
 	p, perr := strconv.Atoi(port)
 	return err == nil && ip != nil && ip.IsLoopback() && perr == nil && p > 0 && p < 65536 && strconv.Itoa(p) == port
+}
+
+// openBaoAddr admits http://127.0.0.1:<port> or http://[::1]:<port> only.
+func openBaoAddr(a string) bool {
+	u, err := url.Parse(a)
+	return err == nil && u.Scheme == "http" && u.User == nil && u.Path == "" && u.RawQuery == "" && !u.ForceQuery &&
+		u.Fragment == "" && u.Opaque == "" && "http://"+u.Host == a && loopbackAddr(u.Host) &&
+		(u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")
 }
 
 func validNamespace(s string) bool {

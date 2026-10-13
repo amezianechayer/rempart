@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,6 +18,10 @@ import (
 
 	"go.temporal.io/sdk/client"
 	tlog "go.temporal.io/sdk/log"
+
+	"github.com/amezianechayer/rempart/internal/secrets/adapters/openbao"
+	"github.com/amezianechayer/rempart/internal/secrets/envelope"
+	"github.com/amezianechayer/rempart/internal/secrets/secret"
 )
 
 var (
@@ -46,12 +51,49 @@ func captureStdout(t *testing.T, f func()) string {
 	return string(<-done)
 }
 
+// stackSealer seals over the Transit of make dev, with a worker token obtained
+// as make demo does (D9, O5): wrapping token from dev-bootstrap.sh, never shown.
+func stackSealer(t *testing.T, ctx context.Context) *envelope.Sealer {
+	t.Helper()
+	out, err := exec.CommandContext(ctx, "bash", "scripts/dev-bootstrap.sh", "worker-token").Output()
+	if err != nil {
+		t.Fatalf("dev-bootstrap.sh worker-token failed (%d bytes)", len(out))
+	}
+	wrapping, err := readWrappingToken(bytes.NewReader(out))
+	clear(out)
+	if err != nil {
+		t.Fatalf("readWrappingToken: %v", err)
+	}
+	tok, err := openbao.UnwrapWorkerToken(ctx, demoOpenBao, wrapping)
+	if err != nil {
+		t.Fatalf("UnwrapWorkerToken: %v", err)
+	}
+	return newSealer(t, tok)
+}
+
+func newSealer(t *testing.T, tok secret.Value) *envelope.Sealer {
+	t.Helper()
+	c, err := openbao.NewClient(openbao.Config{Addr: demoOpenBao, Token: tok})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := openbao.NewTransit(c, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := envelope.NewSealer(tr, envelope.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
 // TestRunDemoOnceEndToEnd (M0 criterion 4, risks 2 and 4): run with the
 // configuration of make demo, against the dev server, from the repository
 // root. TEMPORAL_* variables pointing elsewhere are ignored (D1). Output: one
 // JSON document, converged, timed_out, not committed, opaque workflow id; the
 // execution runs on a task queue of its own (D7, T79), bounded to 228 s (c),
-// and its history never carries the tenant.
+// and its history is sealed: the target never shows in clear (M1-T02).
 func TestRunDemoOnceEndToEnd(t *testing.T) {
 	t.Chdir("../..")
 	t.Setenv("TEMPORAL_ADDRESS", "10.255.255.1:1")
@@ -64,7 +106,8 @@ func TestRunDemoOnceEndToEnd(t *testing.T) {
 	defer cancel()
 	var out bytes.Buffer
 	var runErr error
-	leaked := captureStdout(t, func() { runErr = run(ctx, cfg, &out) })
+	s := stackSealer(t, ctx)
+	leaked := captureStdout(t, func() { runErr = run(ctx, cfg, s, &out) })
 	if runErr != nil {
 		t.Fatalf("run: %v", runErr)
 	}
@@ -129,10 +172,10 @@ func TestRunDemoOnceEndToEnd(t *testing.T) {
 		}
 		b.WriteString(ev.String())
 	}
-	if !strings.Contains(b.String(), "bonjour") {
-		t.Fatal("history text does not show the target: the tenant check would prove nothing")
+	if !strings.Contains(b.String(), "rempart-envelope-v1") {
+		t.Fatal("history holds no sealed payload: the plaintext check would prove nothing")
 	}
-	if strings.Contains(b.String(), demoTenant) {
-		t.Errorf("history carries the tenant %s", demoTenant)
+	if strings.Contains(b.String(), "bonjour") {
+		t.Error("history shows the target in clear")
 	}
 }

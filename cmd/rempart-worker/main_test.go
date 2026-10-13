@@ -24,7 +24,7 @@ func TestRealMainExitCodes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			code := realMain(context.Background(), tc.args, &stdout, &stderr)
+			code := realMain(context.Background(), tc.args, strings.NewReader(""), &stdout, &stderr)
 			if code != 2 {
 				t.Errorf("realMain(%q) = %d, want 2", tc.args, code)
 			}

@@ -84,9 +84,9 @@ dev: dev-preflight
 # tenant de démo fixe. Sortie standard : un seul document JSON.
 demo:
 	@$(MAKE) -f Makefile --no-print-directory dev >&2
-	@go run ./cmd/rempart-worker -dev -demo-once -llm=fake -tenant=0d3e0000-0000-4000-8000-000000000001 \
-		-temporal-address=127.0.0.1:7233 -namespace=rempart \
-		-fake-script=internal/loops/demo/testdata/scripts/converge.json
+	@bash scripts/dev-bootstrap.sh worker-token | go run ./cmd/rempart-worker -dev -demo-once -llm=fake \
+		-tenant=0d3e0000-0000-4000-8000-000000000001 -temporal-address=127.0.0.1:7233 -namespace=rempart \
+		-openbao-addr=http://127.0.0.1:8200 -fake-script=internal/loops/demo/testdata/scripts/converge.json
 
 # Vérifie Docker Engine, le plugin compose v2 et l'accès au démon, sans rien démarrer.
 dev-preflight:

@@ -13,17 +13,23 @@ import (
 	"go.temporal.io/sdk/client"
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/amezianechayer/rempart/internal/llm"
 	lldomain "github.com/amezianechayer/rempart/internal/llm/domain"
 	llmfake "github.com/amezianechayer/rempart/internal/llm/fake"
 	"github.com/amezianechayer/rempart/internal/loops"
+	"github.com/amezianechayer/rempart/internal/loops/codec"
 	"github.com/amezianechayer/rempart/internal/loops/demo"
 	"github.com/amezianechayer/rempart/internal/loops/demo/activities"
+	"github.com/amezianechayer/rempart/internal/secrets/envelope"
 	"github.com/amezianechayer/rempart/internal/tenancy"
 )
 
-var ErrTemporalUnavailable = errors.New("rempart-worker: Temporal unavailable")
+var (
+	ErrTemporalUnavailable = errors.New("rempart-worker: Temporal unavailable")
+	ErrConverterRequired   = errors.New("rempart-worker: Temporal options without the Rempart converters")
+)
 
 const workerIdentityPrefix = "rempart-worker"
 
@@ -47,11 +53,11 @@ type demoResult struct {
 	demo.Output
 }
 
-func run(ctx context.Context, cfg Config, stdout io.Writer) error {
+func run(ctx context.Context, cfg Config, s *envelope.Sealer, stdout io.Writer) error {
 	if !cfg.Dev || cfg.LLMProvider != "fake" || !cfg.DemoOnce { // T41, even if LoadConfig is bypassed
 		return ErrFakeRequiresDev
 	}
-	opts, err := clientOptions(cfg)
+	opts, err := clientOptions(cfg, s)
 	if err != nil {
 		return err
 	}
@@ -73,7 +79,7 @@ func run(ctx context.Context, cfg Config, stdout io.Writer) error {
 	}
 	defer tc.Close()
 	w := worker.New(tc, queue, worker.Options{})
-	if err := demo.Register(w, &activities.Activities{LLM: cl, Tenant: cfg.Tenant}, denyAll{}); err != nil {
+	if err := registerDemo(w, opts, &activities.Activities{LLM: cl, Tenant: cfg.Tenant}, denyAll{}); err != nil {
 		return err
 	}
 	if err := w.Start(); err != nil {
@@ -84,6 +90,9 @@ func run(ctx context.Context, cfg Config, stdout io.Writer) error {
 	timeout := demo.ExecutionTimeout(in.ApprovalTimeout)
 	rctx, cancel := context.WithTimeout(ctx, timeout+runGrace)
 	defer cancel()
+	if rctx, err = tenancy.WithTenant(rctx, cfg.Tenant); err != nil { // header rempart-tenant (D5)
+		return err
+	}
 	wr, err := tc.ExecuteWorkflow(rctx, client.StartWorkflowOptions{ID: id, TaskQueue: queue, WorkflowExecutionTimeout: timeout}, demo.WorkflowName, in)
 	if err != nil {
 		return err
@@ -95,8 +104,9 @@ func run(ctx context.Context, cfg Config, stdout io.Writer) error {
 	return json.NewEncoder(stdout).Encode(demoResult{WorkflowID: id, Output: out})
 }
 
-// clientOptions checks the address again (bh, T14); opaque identity: no host name, no pid.
-func clientOptions(cfg Config) (client.Options, error) {
+// clientOptions checks the address again (bh, T14); opaque identity: no host
+// name, no pid; payloads sealed under the tenant of the process (ADR 0009).
+func clientOptions(cfg Config, s *envelope.Sealer) (client.Options, error) {
 	if !loopbackAddr(cfg.TemporalAddress) || !validNamespace(cfg.Namespace) {
 		return client.Options{}, fmt.Errorf("%w: -temporal-address or -namespace", ErrConfig)
 	}
@@ -104,9 +114,19 @@ func clientOptions(cfg Config) (client.Options, error) {
 	if err != nil {
 		return client.Options{}, err
 	}
+	dc, err := codec.NewDataConverter(s, cfg.Tenant)
+	if err != nil {
+		return client.Options{}, fmt.Errorf("%w: %w", ErrConfig, err)
+	}
+	fc, err := codec.NewFailureConverter(dc)
+	if err != nil {
+		return client.Options{}, fmt.Errorf("%w: %w", ErrConfig, err)
+	}
 	return client.Options{
 		HostPort: cfg.TemporalAddress, Namespace: cfg.Namespace, Identity: identity,
-		Logger: tlog.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))),
+		DataConverter: dc, FailureConverter: fc,
+		ContextPropagators: []workflow.ContextPropagator{codec.NewTenantPropagator()},
+		Logger:             tlog.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))),
 	}, nil
 }
 
@@ -132,4 +152,13 @@ func fakeClient(cfg Config) (*llm.Client, error) {
 		return nil, err
 	}
 	return llm.NewClient(prov, res, nil, llm.Config{MaxTokensPerCall: activities.MaxTokensPerCall, AllowFakeRoute: cfg.Dev})
+}
+
+// registerDemo registers the demo only on a client whose options carry the
+// converters of Rempart (§4.1 of the threat model): nothing in clear.
+func registerDemo(r demo.Registry, o client.Options, a *activities.Activities, v demo.ApprovalVerifier) error {
+	if codec.Check(o.DataConverter, o.FailureConverter, o.ContextPropagators) != nil {
+		return ErrConverterRequired
+	}
+	return demo.Register(r, a, v)
 }

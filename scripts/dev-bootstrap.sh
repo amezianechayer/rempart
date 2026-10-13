@@ -3,6 +3,15 @@
 set -euo pipefail
 compose=(bash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml)
 tcli() { "${compose[@]}" exec -T temporal temporal "$@" --address temporal:7233 >/dev/null 2>&1; }
+# M1-T01 (D7) : le jeton root entre par l'environnement, jamais en argument ; sorties de bao muettes.
+bao() { "${compose[@]}" exec -T -e OPENBAO_DEV_ROOT_TOKEN openbao sh -c 'BAO_TOKEN="$OPENBAO_DEV_ROOT_TOKEN" BAO_ADDR=http://127.0.0.1:8200 exec bao "$@"' bao "$@"; }
+# M1-T02 (D9, O5) : jeton d'emballage à usage unique (60 s) d'un jeton orphelin rempart-worker (10 min),
+# écrit sur la sortie standard pour un tube vers rempart-worker, jamais sur disque ni en argument.
+if [[ ${1:-} == worker-token ]]; then
+  bao token create -orphan -policy=rempart-worker -no-default-policy -ttl=10m -explicit-max-ttl=10m \
+    -wrap-ttl=60s -field=wrapping_token 2>/dev/null || { echo "dev-bootstrap : jeton du worker non émis." >&2; exit 2; }
+  exit 0
+fi
 ok=
 for _ in $(seq 1 60); do
   # Un namespace créé met quelques secondes à atteindre le cache : on réessaie la mise à jour (V1).
@@ -13,8 +22,6 @@ done
 [[ -n $ok ]] || { echo "dev-bootstrap : namespace Temporal rempart indisponible." >&2; exit 2; }
 "${compose[@]}" exec -T openbao bao status -address=http://127.0.0.1:8200 >/dev/null \
   || { echo "dev-bootstrap : OpenBao scellé ou injoignable." >&2; exit 2; }
-# M1-T01 (D7) : le jeton root entre par l'environnement, jamais en argument ; sorties de bao muettes.
-bao() { "${compose[@]}" exec -T -e OPENBAO_DEV_ROOT_TOKEN openbao sh -c 'BAO_TOKEN="$OPENBAO_DEV_ROOT_TOKEN" BAO_ADDR=http://127.0.0.1:8200 exec bao "$@"' bao "$@"; }
 mounts=$(bao secrets list -format=json 2>/dev/null) || mounts=
 [[ $mounts == *'"transit/"'* ]] || bao secrets enable transit >/dev/null 2>&1 \
   || { echo "dev-bootstrap : moteur Transit non monté." >&2; exit 2; }

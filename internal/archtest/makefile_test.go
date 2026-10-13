@@ -1318,9 +1318,13 @@ func demoRunFlags() []string {
 	return []string{
 		"-dev", "-demo-once", "-llm=fake", "-tenant=0d3e0000-0000-4000-8000-000000000001",
 		"-temporal-address=127.0.0.1:7233", "-namespace=rempart",
-		"-fake-script=internal/loops/demo/testdata/scripts/converge.json",
+		"-fake-script=internal/loops/demo/testdata/scripts/converge.json", "-openbao-addr=http://127.0.0.1:8200",
 	}
 }
+
+// demoTokenPipe starts the go run line of demo: the single-use wrapping token
+// of the worker, by a pipe only (M1-T02 D9, option O5).
+var demoTokenPipe = []string{"bash", "scripts/dev-bootstrap.sh", "worker-token", "|"}
 
 // demoRecipeLines returns the logical recipe lines of the rule "demo:", tabs
 // and prefixes kept.
@@ -1373,6 +1377,11 @@ func checkDemoTarget(mf parsedMakefile) []string {
 		problems.addf("Makefile: first demo recipe line %q, want %q", r.Recipe[0], want)
 	}
 	fields := strings.Fields(r.Recipe[1])
+	if len(fields) < len(demoTokenPipe) || !slices.Equal(fields[:len(demoTokenPipe)], demoTokenPipe) {
+		problems.addf("Makefile: second demo recipe line %q does not start with %q", r.Recipe[1], strings.Join(demoTokenPipe, " "))
+		return problems
+	}
+	fields = fields[len(demoTokenPipe):]
 	if len(fields) < 3 || !slices.Equal(fields[:3], []string{"go", "run", "./cmd/rempart-worker"}) {
 		problems.addf("Makefile: second demo recipe line %q does not start with \"go run ./cmd/rempart-worker\"", r.Recipe[1])
 		return problems
@@ -1392,9 +1401,9 @@ func checkDemoTarget(mf parsedMakefile) []string {
 func TestMakefileDemoTarget(t *testing.T) {
 	const (
 		devLine = "\t@" + subMakePrefix + "dev >&2\n"
-		runHead = "\t@go run ./cmd/rempart-worker -dev -demo-once -llm=fake -tenant=0d3e0000-0000-4000-8000-000000000001 \\\n"
-		runTail = "\t\t-temporal-address=127.0.0.1:7233 -namespace=rempart \\\n" +
-			"\t\t-fake-script=internal/loops/demo/testdata/scripts/converge.json\n"
+		runHead = "\t@bash scripts/dev-bootstrap.sh worker-token | go run ./cmd/rempart-worker -dev -demo-once -llm=fake \\\n"
+		runTail = "\t\t-tenant=0d3e0000-0000-4000-8000-000000000001 -temporal-address=127.0.0.1:7233 -namespace=rempart \\\n" +
+			"\t\t-openbao-addr=http://127.0.0.1:8200 -fake-script=internal/loops/demo/testdata/scripts/converge.json\n"
 	)
 	valid := ".PHONY: dev demo\n\ndev:\n\t@echo dev\n\n# Demo.\ndemo:\n" + devLine + runHead + runTail
 	cases := []struct {
@@ -1412,7 +1421,9 @@ func TestMakefileDemoTarget(t *testing.T) {
 			name: "dev_without_file", src: mustReplace(t, valid, devLine, "\t@$(MAKE) --no-print-directory dev >&2\n"),
 			want: []string{"first demo recipe line"},
 		},
-		{name: "echoed_line", src: mustReplace(t, valid, "\t@go run", "\tgo run"), want: []string{"not silenced by @"}},
+		{name: "echoed_line", src: mustReplace(t, valid, "\t@bash scripts", "\tbash scripts"), want: []string{"not silenced by @"}},
+		{name: "no_token_pipe", src: mustReplace(t, valid, "bash scripts/dev-bootstrap.sh worker-token | ", ""), want: []string{"does not start with"}},
+		{name: "remote_openbao", src: mustReplace(t, valid, "http://127.0.0.1:8200", "http://10.0.0.1:8200"), want: []string{"demo runs the worker with"}},
 		{name: "anthropic", src: mustReplace(t, valid, "-llm=fake", "-llm=anthropic"), want: []string{"demo runs the worker with"}},
 		{name: "without_dev", src: mustReplace(t, valid, " -dev -demo-once", " -demo-once"), want: []string{"demo runs the worker with"}},
 		{

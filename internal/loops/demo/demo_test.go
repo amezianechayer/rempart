@@ -851,48 +851,6 @@ func TestDemoRegisterTypedNilVerifierFailsClosed(t *testing.T) {
 	}
 }
 
-// TestDemoInputDecodingFrozen (T78): the workflow input is decoded by the
-// default data converter, as encoding/json does: an unknown field is ignored,
-// a key matches its field case-insensitively and the last duplicate wins. This
-// test freezes that behaviour for M0; M1 inverts it (closed input decoding).
-// The tenant stays the worker's (tenant B has no route: honouring the input
-// field would escalate).
-func TestDemoInputDecodingFrozen(t *testing.T) {
-	const rest = `"author":"alice","approval_timeout":5000000000`
-	cases := []struct{ name, raw string }{
-		{"extra_tenant", `{"target":"bonjour",` + rest + `,"tenant":"` + string(tenantB) + `"}`},
-		{"upper_case_key", `{"TARGET":"bonjour",` + rest + `}`},
-		{"duplicate_key", `{"target":"salut","target":"bonjour",` + rest + `}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(t, tenantA, []llmfake.Step{answer(greetBonjour)})
-			out := mustRun(t, h, json.RawMessage(tc.raw))
-			if out.Loop.Status != loops.StatusConverged || out.Loop.Iterations != 1 {
-				t.Fatalf("loop = %s, %d iterations; want converged, 1", out.Loop.Status, out.Loop.Iterations)
-			}
-			if out.Approval.Outcome != loops.OutcomeTimedOut || out.Committed {
-				t.Errorf("approval %q, committed %v; want timed_out, false", out.Approval.Outcome, out.Committed)
-			}
-			calls := h.prov.Calls()
-			if len(calls) != 1 {
-				t.Fatalf("%d provider calls, want 1", len(calls))
-			}
-			var blocks []string
-			for _, m := range calls[0].Request.Messages {
-				for _, p := range m.Parts {
-					if p.Untrusted != nil {
-						blocks = append(blocks, p.Untrusted.Content)
-					}
-				}
-			}
-			if !slices.Equal(blocks, []string{target}) {
-				t.Errorf("untrusted blocks %q, want exactly [%q]", blocks, target)
-			}
-		})
-	}
-}
-
 // TestDemoExecutionTimeout (c, D16): the execution timeout of one demo run is
 // the bound of RunLoop, the approval wait, one late verification, the commit
 // and a fixed margin: 228 s for the 5 s wait of make demo.
