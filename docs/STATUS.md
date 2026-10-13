@@ -669,3 +669,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-10-13 22:31 [harnais] PHASE FREE (discipline TDD suspendue) : M1-T02 worker codec wiring done; remaining: make demo glue, checked against the stack
 
 - 2026-10-13 22:31 [harnais] phase : tests -> free
+
+- 2026-10-13 23:10 [harnais] phase : free -> tests
+
+- 2026-10-13 23:11 [harnais] phase : tests -> impl
