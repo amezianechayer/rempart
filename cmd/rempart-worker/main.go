@@ -5,7 +5,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -51,7 +50,7 @@ func realMain(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 // a final newline admitted; the error never quotes the input (T95).
 func readWrappingToken(r io.Reader) (secret.Value, error) {
 	buf := make([]byte, maxWrappingToken+2)
-	n, err := io.ReadFull(bufio.NewReader(io.LimitReader(r, maxWrappingToken+2)), buf)
+	n, err := io.ReadFull(io.LimitReader(r, maxWrappingToken+2), buf) // no intermediate buffer keeps a copy
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return secret.Value{}, ErrWrappingToken
 	}

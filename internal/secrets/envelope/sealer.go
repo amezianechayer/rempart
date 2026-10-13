@@ -203,11 +203,15 @@ func (s *Sealer) lead(ctx context.Context, tenant tenancy.ID, f *dekFlight, now 
 	if err != nil {
 		return err
 	}
+	s.install(tenant, d, now)
+	return nil
+}
+
+func (s *Sealer) install(tenant tenancy.ID, d *currentDEK, now time.Time) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.current[tenant] = d
 	s.cache.put(cacheKey{tenant, d.id}, d.aead, now, 0)
-	s.mu.Unlock()
-	return nil
 }
 
 // Open decrypts a payload sealed for the tenant of ctx.
