@@ -673,3 +673,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-10-13 23:10 [harnais] phase : free -> tests
 
 - 2026-10-13 23:11 [harnais] phase : tests -> impl
+
+- 2026-10-13 23:33 [harnais] RETOUR EN PHASE TESTS depuis impl : M1-T08: tests of the ADR 0007 additions (typed secrets, propagation, forged escapes)
+
+- 2026-10-13 23:33 [harnais] phase : impl -> tests
+
+- 2026-10-13 23:34 [harnais] PHASE FREE (discipline TDD suspendue) : M1-T08 code and tests done, security review pending
+
+- 2026-10-13 23:34 [harnais] phase : tests -> free

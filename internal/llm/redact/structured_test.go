@@ -163,3 +163,23 @@ func TestStructuredDecodeBounded(t *testing.T) {
 	bounded(t, "unbalanced", strings.Repeat(`{"a":"`, 20000)+"token: abcdef123456", "abcdef123456")
 	bounded(t, "nested_arrays", strings.Repeat("[", 5000)+`"x"`+strings.Repeat("]", 5000)+" token: abcdef123456", "abcdef123456")
 }
+
+// TestRedactTypedSecrets (ADR 0007): typed secrets, sensitive context
+// propagated below a sensitive key, every keyed rule name in pairs, forged
+// placeholders written with escapes, a key glued after a disarmed placeholder.
+func TestRedactTypedSecrets(t *testing.T) {
+	out := hides(t, `{"apiVersion":"v1","data":{"tls.key":"c2VjcmV0LWtleS1ieXRlcw==","user":"YWRtaW4="},"kind":"Secret"}`,
+		"c2VjcmV0LWtleS1ieXRlcw==", "YWRtaW4=")
+	keeps(t, out, `"kind":"Secret"`)
+	hides(t, "apiVersion: v1\nkind: Secret\ndata:\n  tls.key: c2VjcmV0LWtleS1ieXRlcw==\n", "c2VjcmV0LWtleS1ieXRlcw==")
+	hides(t, `{"variables":{"db_password":{"value":"Tf-s3cret-pw","type":"string"}}}`, "Tf-s3cret-pw")
+	hides(t, `{"outputs":{"conn":{"sensitive":true,"value":"tofu-output-val"}}}`, "tofu-output-val")
+	hides(t, "outputs:\n  conn:\n    sensitive: true\n    value: tofu-output-val\n", "tofu-output-val")
+	hides(t, `{"name":"OVH_CONSUMER_KEY","value":"a{b}cd1234"}`, "a{b}cd1234")
+	hides(t, `{"Parameters":[{"ParameterKey":"DbPassword","ParameterValue":"cfn-s3cret"}]}`, "cfn-s3cret")
+	hides(t, `{"log":"`+"\\"+"u"+`005bREDACTED:sensitive_variable]sk-proj-abcdefghijklmnopqrstuvwx"}`, "abcdefghijklmnopqrstuvwx")
+	hides(t, DisarmPlaceholders("[REDACTED:ipsec_psk]password=hunter2xyz"), "hunter2xyz")
+	if s := DisarmPlaceholders("[REDACTED:ipsec_psk]"); len(s) != len("[REDACTED:ipsec_psk]") {
+		t.Errorf("DisarmPlaceholders changed the length: %q", s)
+	}
+}
