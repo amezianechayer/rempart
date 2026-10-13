@@ -18,9 +18,9 @@ Propositions à appliquer par toi si ce n'est pas encore fait (le harnais est pr
 |---|---|---|---|
 | Python 3 (`python3`) | 3.8+ | M0 (hooks) | python.org ou paquet système |
 | Git, make, bash, jq | récents | M0 | paquets système |
-| Go | version de la directive `go` de `go.mod` (1.27.1 au 2026-09-23) ; un Go 1.21+ local télécharge cette chaîne via `GOTOOLCHAIN=auto` | M0 | go.dev/dl |
+| Go | version de la directive `go` de `go.mod` (1.27.2 au 2026-10-13) ; un Go 1.21+ local télécharge cette chaîne via `GOTOOLCHAIN=auto` | M0 | go.dev/dl |
 | Docker Engine + plugin compose v2 | 28 ou plus, démon local (socket unix) | M0 (`make dev`) | docs.docker.com/engine/install. Docker Desktop est payant pour les entreprises de plus de 250 salariés ou 10 M$ de chiffre d'affaires |
-| golangci-lint | v2.13.2 (épinglée ; CI en M0-T04), compilée avec Go 1.27 ou plus : `GOTOOLCHAIN=go1.27.1 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2` ou binaire officiel | M0 | golangci-lint.run |
+| golangci-lint | v2.14.0 (épinglée ; CI en M0-T04), compilée avec Go 1.27 ou plus : `GOTOOLCHAIN=go1.27.2 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0` ou binaire officiel | M0 | golangci-lint.run |
 | govulncheck | v1.8.0, épinglée par la directive `tool` de `go.mod` et lancée par `go tool govulncheck` ; binaire séparé facultatif | M0 | `go install golang.org/x/vuln/cmd/govulncheck@v1.8.0` |
 | gofumpt | récent | M0 | `go install mvdan.cc/gofumpt@latest` |
 | OPA | 1.x | M0 (si `policies/` existe) | openpolicyagent.org |

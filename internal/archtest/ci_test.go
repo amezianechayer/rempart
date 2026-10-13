@@ -62,7 +62,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
       - name: Docker preflight
         run: make -f Makefile dev-preflight
       - name: make verify
@@ -318,14 +318,14 @@ func TestCIRunsMakeVerify(t *testing.T) {
 		t.Fatalf("docs/SETUP.md: no golangci-lint@v2.x.y (%v)", err)
 	}
 	runCI(t,
-		func(wf ciWorkflow, _ string) problemList { return checkCIVerify(wf, "v2.13.2") },
+		func(wf ciWorkflow, _ string) problemList { return checkCIVerify(wf, "v2.14.0") },
 		func(wf ciWorkflow, _ string) problemList { return checkCIVerify(wf, m[1]) },
 		"make -f Makefile verify\n", "make verify\n", "steps",
 		"ubuntu-24.04", "ubuntu-latest", "runs-on",
 		"        if: always()\n", "", "always()",
 		ciBase, "${{ github.head_ref }}", "env map[EVAL_BASE",
 		"dev-preflight\n", "dev-preflight ${{ github.head_ref }}\n", "template injection",
-		"@v2.13.2", "@v2.13.1", "steps",
+		"@v2.14.0", "@v2.13.1", "steps",
 		"      GOTOOLCHAIN: local\n", "      GOTOOLCHAIN: local\n      MAKEFILES: x.mk\n", "job env",
 		"          persist-credentials: false\n", "", "checkout with")
 }
@@ -543,7 +543,7 @@ func TestNoShadowMakefile(t *testing.T) {
 func allCIChecks(wf ciWorkflow, src string) (p problemList) {
 	for _, check := range []func(ciWorkflow, string) problemList{
 		checkCITriggers, checkCIPermissions, checkCIPinned, checkCINoSecrets, checkCIGoVersion,
-		func(wf ciWorkflow, _ string) problemList { return checkCIVerify(wf, "v2.13.2") },
+		func(wf ciWorkflow, _ string) problemList { return checkCIVerify(wf, "v2.14.0") },
 	} {
 		p = append(p, check(wf, src)...)
 	}
