@@ -40,6 +40,8 @@ const (
 	// nestedCost: work units per byte of a nested pass (the regular
 	// expressions and the structured pass on a decoded leaf).
 	nestedCost = 64
+	// leafCost: fixed work units of one nested pass (decoders, expressions).
+	leafCost = 2048
 )
 
 // budget bounds the work of the structured pass on one input (T81).
@@ -108,34 +110,97 @@ func mask(start, end int, k Kind) candidate {
 	return candidate{start: start, end: end, prio: prioOf(k)}
 }
 
-// leafCandidate masks a whole leaf [start, end) of raw form raw and decoded
-// form dec when dec holds a secret that the redaction of raw leaves in its
-// decoded form. When the regular expressions on raw suffice, their precise
-// masks are kept.
+// safeEscape reports whether the JSON escape that starts at raw[i] ('\\') is
+// one the regular expressions read in raw form: quote, backslash, slash,
+// tab, line breaks, and the escapes of '<', '>' and '&' of json.Marshal. It
+// returns the length of the escape.
+func safeEscape(raw string, i int) (int, bool) {
+	if i+1 >= len(raw) {
+		return 0, false
+	}
+	switch raw[i+1] {
+	case '"', '\\', '/', 't', 'n', 'r':
+		return 2, true
+	case 'u':
+		if i+6 <= len(raw) {
+			switch strings.ToLower(raw[i+2 : i+6]) {
+			case "003c", "003e", "0026":
+				return 6, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// onlySafeEscapes reports whether every escape of raw is a safe one.
+func onlySafeEscapes(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		n, ok := safeEscape(raw, i)
+		if !ok {
+			return false
+		}
+		i += n - 1
+	}
+	return true
+}
+
+// jsonLeafCandidate masks a whole JSON string [start, end) of raw content raw
+// and decoded value dec when dec holds a secret the regular expressions on
+// raw do not mask (fail closed by default, second review of M1-T08):
+//   - a placeholder that appears only in dec was forged by escapes (T38);
+//   - with safe escapes only, a value without structure nor line break is
+//     read by the regular expressions as is; otherwise raw is redacted, then
+//     decoded, and any secret left masks the whole leaf;
+//   - with any other escape (\b, \f, \uXXXX), any secret of dec masks the
+//     whole leaf.
 //
-// The regular expressions read the JSON escapes of raw ("\n", "\t", "\"",
-// "\\"): a leaf is decoded again only when it may hide something they
-// cannot read (a structure, a "\u" or "\/" escape). A placeholder that
-// appears only in the decoded form was forged by escapes (T38): the leaf is
-// masked whole, as when the nesting or the budget is exhausted (T83).
-func leafCandidate(raw, dec string, start, end int, b *budget) (candidate, bool) {
+// Nesting or budget exhausted masks the whole leaf (T83).
+func jsonLeafCandidate(raw, dec string, start, end int, b *budget) (candidate, bool) {
 	if raw == dec || start >= end {
 		return candidate{}, false
 	}
-	forged := strings.Count(dec, "[REDACTED:") > strings.Count(raw, "[REDACTED:")
-	if !forged && !strings.ContainsAny(dec, "{[") && !strings.Contains(raw, `\u`) && !strings.Contains(raw, `\/`) {
+	whole := mask(start, end, KindSensitiveVar)
+	if strings.Count(dec, "[REDACTED:") > strings.Count(raw, "[REDACTED:") {
+		return whole, true
+	}
+	safe := onlySafeEscapes(raw)
+	if safe && !strings.ContainsAny(dec, "{[\n\r") && !strings.ContainsAny(raw, "\n\r") {
+		return candidate{}, false
+	}
+	if b.depth >= maxNesting || !b.spend(leafCost+nestedCost*len(raw)) {
+		return whole, true
+	}
+	probe := dec
+	if safe {
+		if json.Unmarshal([]byte(`"`+redactRules(raw)+`"`), &probe) != nil {
+			return whole, true
+		}
+	}
+	return nestedPass(probe, whole, b)
+}
+
+// yamlLeafCandidate masks a whole YAML scalar whose source differs from its
+// value (escapes, folding, quotes) when the value holds a secret.
+func yamlLeafCandidate(raw, dec string, start, end int, b *budget) (candidate, bool) {
+	if raw == dec || start >= end {
 		return candidate{}, false
 	}
 	whole := mask(start, end, KindSensitiveVar)
-	if forged || b.depth >= maxNesting || !b.spend(nestedCost*len(raw)) {
+	if strings.Count(dec, "[REDACTED:") > strings.Count(raw, "[REDACTED:") ||
+		b.depth >= maxNesting || !b.spend(leafCost+nestedCost*len(raw)) {
 		return whole, true
 	}
-	var again string
-	if json.Unmarshal([]byte(`"`+redactRules(raw)+`"`), &again) != nil {
-		return whole, true
-	}
+	return nestedPass(dec, whole, b)
+}
+
+// nestedPass runs the whole redaction on a decoded leaf: whole if it finds a
+// secret.
+func nestedPass(s string, whole candidate, b *budget) (candidate, bool) {
 	b.depth++
-	ms := findBudget(again, b)
+	ms := findBudget(s, b)
 	b.depth--
 	if len(ms) == 0 {
 		return candidate{}, false
@@ -168,7 +233,11 @@ func structured(s string, b *budget) (out []candidate) {
 		}
 	}()
 	out = jsonCandidates(s, b)
-	return append(out, yamlCandidates(s, b)...)
+	out = append(out, yamlCandidates(s, b)...)
+	if b.left < 0 { // any bound reached masks, whatever the pass (T81, T98)
+		return []candidate{mask(0, len(s), KindSensitiveVar)}
+	}
+	return out
 }
 
 // jsonLeaf is a string value of a JSON document: the bounds of its content
@@ -234,6 +303,11 @@ func (w *jsonWalk) document(at int) int {
 		tok, err := dec.Token()
 		off := int(dec.InputOffset())
 		if err != nil {
+			// The containers still open are evaluated: their pairs and
+			// names were read before the failure.
+			for i := len(stack) - 1; i >= 0; i-- {
+				w.close(stack[i], stack[:i+1])
+			}
 			var se *json.SyntaxError
 			switch {
 			case errors.As(err, &se) && int(se.Offset) > 0:
@@ -266,11 +340,16 @@ func (w *jsonWalk) document(at int) int {
 			if top == nil {
 				return at + off
 			}
+			start := tokenStart(w.s, at+prev) + 1
 			if top.obj && top.expectKey {
 				top.key, top.expectKey = t, false
+				if end := at + off - 1; start <= end && end <= len(w.s) {
+					if c, ok := jsonLeafCandidate(w.s[start:end], t, start, end, w.b); ok {
+						w.out = append(w.out, c)
+					}
+				}
 				continue
 			}
-			start := tokenStart(w.s, at+prev) + 1
 			w.value(top, jsonLeaf{start: start, end: at + off - 1, dec: t})
 		default:
 			if top == nil {
@@ -333,7 +412,7 @@ func (w *jsonWalk) value(top *jsonFrame, l jsonLeaf) {
 	} else {
 		top.strs = append(top.strs, idx)
 	}
-	if c, ok := leafCandidate(w.s[l.start:l.end], l.dec, l.start, l.end, w.b); ok {
+	if c, ok := jsonLeafCandidate(w.s[l.start:l.end], l.dec, l.start, l.end, w.b); ok {
 		w.out = append(w.out, c)
 	}
 }
@@ -397,48 +476,106 @@ func tokenStart(s string, i int) int {
 	return i
 }
 
-// yamlCandidates walks s as a YAML stream when every document of it has a
-// mapping or a sequence at its root. A bound reached masks the whole text.
+// yamlCandidates walks s as a YAML stream when its documents have a mapping
+// or a sequence at their root. Any bound reached, and any position that does
+// not match the source, masks the whole text (fail closed, T98).
 func yamlCandidates(s string, b *budget) []candidate {
-	if strings.TrimSpace(s) == "" || !b.spend(len(s)) {
+	if strings.TrimSpace(s) == "" {
 		return nil
 	}
-	lines, ascii := lineStarts(s)
+	if !b.spend(len(s)) {
+		return []candidate{mask(0, len(s), KindSensitiveVar)}
+	}
+	lines := newLines(s)
 	dec := yaml.NewDecoder(strings.NewReader(s))
 	var out []candidate
 	for docs := 0; ; docs++ {
-		if docs == maxYAMLDocuments { // a bound reached masks the whole text
+		if docs == maxYAMLDocuments {
 			return []candidate{mask(0, len(s), KindSensitiveVar)}
 		}
 		var doc yaml.Node
 		if err := dec.Decode(&doc); err != nil {
-			if errors.Is(err, io.EOF) {
-				return out
-			}
-			return nil
+			return out // io.EOF, or not YAML: the other passes read the text
 		}
 		if len(doc.Content) != 1 || (doc.Content[0].Kind != yaml.MappingNode && doc.Content[0].Kind != yaml.SequenceNode) {
-			return nil
+			return out
 		}
-		w := yamlWalker{s: s, lines: lines, ascii: ascii, b: b}
-		if !w.walk(doc.Content[0], 0, "") {
+		w := yamlWalker{s: s, l: lines, b: b}
+		if !w.walk(doc.Content[0], 0, "", -1) {
 			return []candidate{mask(0, len(s), KindSensitiveVar)}
 		}
 		out = append(out, w.out...)
 	}
 }
 
+// yamlLines splits the text like the YAML decoder: line breaks "\r\n", "\r",
+// "\n", U+0085, U+2028, U+2029; a leading byte order mark is not a column.
+type yamlLines struct {
+	starts, ends []int
+	ascii        []bool // a column is then a byte offset
+}
+
+const byteOrderMark = "\xef\xbb\xbf"
+
+func newLines(s string) yamlLines {
+	l := yamlLines{starts: []int{0}, ascii: []bool{true}}
+	if strings.HasPrefix(s, byteOrderMark) {
+		l.starts[0] = len(byteOrderMark)
+	}
+	for i := l.starts[0]; i < len(s); {
+		n := lineBreak(s, i)
+		if n == 0 {
+			if s[i] >= utf8.RuneSelf {
+				l.ascii[len(l.ascii)-1] = false
+			}
+			i++
+			continue
+		}
+		l.ends = append(l.ends, i)
+		i += n
+		l.starts, l.ascii = append(l.starts, i), append(l.ascii, true)
+	}
+	l.ends = append(l.ends, len(s))
+	return l
+}
+
+// lineBreak returns the length of the YAML line break at s[i], 0 if none.
+func lineBreak(s string, i int) int {
+	switch {
+	case strings.HasPrefix(s[i:], "\r\n"), strings.HasPrefix(s[i:], "\xc2\x85"):
+		return 2
+	case s[i] == '\r', s[i] == '\n':
+		return 1
+	case strings.HasPrefix(s[i:], "\xe2\x80\xa8"), strings.HasPrefix(s[i:], "\xe2\x80\xa9"):
+		return 3
+	}
+	return 0
+}
+
+// indent returns the indentation of line li (0-based).
+func (l yamlLines) indent(s string, li int) int {
+	text := s[l.starts[li]:l.ends[li]]
+	return len(text) - len(strings.TrimLeft(text, " \t"))
+}
+
+// trimmedEnd returns the end of line li without trailing blanks.
+func (l yamlLines) trimmedEnd(s string, li int) int {
+	return len(strings.TrimRight(s[:l.ends[li]], " \t"))
+}
+
 type yamlWalker struct {
-	s     string
-	lines []int
-	ascii []bool
-	b     *budget
-	out   []candidate
+	s   string
+	l   yamlLines
+	b   *budget
+	out []candidate
 }
 
 // walk visits n; sens is the Kind every scalar below is masked as ("" for
-// none). It returns false when a bound is reached. Aliases are never followed.
-func (w *yamlWalker) walk(n *yaml.Node, depth int, sens Kind) bool {
+// none), ref the indentation of the line of its key (-1 for none). It returns
+// false when a bound is reached or a position does not match the source.
+// Aliases are never followed; the anchor of a scalar alias under a sensitive
+// key is masked where it is defined.
+func (w *yamlWalker) walk(n *yaml.Node, depth int, sens Kind, ref int) bool {
 	if depth > MaxStructuredDepth || !w.b.spend(yamlNodeCost) {
 		return false
 	}
@@ -464,6 +601,15 @@ func (w *yamlWalker) walk(n *yaml.Node, depth int, sens Kind) bool {
 		pair := hasName && sensitivePairName(name)
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k, v := n.Content[i], n.Content[i+1]
+			keyRef := -1
+			if k.Kind == yaml.ScalarNode {
+				if !w.scalar(k, "", -1) {
+					return false
+				}
+				if k.Line >= 1 && k.Line <= len(w.l.starts) {
+					keyRef = w.l.indent(w.s, k.Line-1)
+				}
+			}
 			child := sens
 			if kind, ok := sensitiveKey(k.Value, v.Value); ok && child == "" {
 				child = kind
@@ -475,152 +621,178 @@ func (w *yamlWalker) walk(n *yaml.Node, depth int, sens Kind) bool {
 			case typedKeys.MatchString(k.Value) && isSecret:
 				child = KindSensitiveVar
 			}
-			if !w.walk(v, depth+1, child) {
+			if !w.walk(v, depth+1, child, keyRef) {
 				return false
 			}
 		}
 	case yaml.SequenceNode:
 		for _, c := range n.Content {
-			if !w.walk(c, depth+1, sens) {
+			if !w.walk(c, depth+1, sens, -1) {
 				return false
 			}
 		}
 	case yaml.AliasNode:
-		// The anchor of an alias under a sensitive key is masked where it is
-		// defined: the model could resolve the alias.
 		if a := n.Alias; sens != "" && a != nil && a.Kind == yaml.ScalarNode {
-			if st, en, ok := w.span(a); ok {
-				w.out = append(w.out, mask(st, en, sens))
-			}
+			return w.scalar(a, sens, -1)
 		}
 	case yaml.ScalarNode:
-		st, en, ok := w.span(n)
-		if !ok {
-			return true
-		}
-		if sens != "" {
-			w.out = append(w.out, mask(st, en, sens))
-		}
-		if c, ok := leafCandidate(w.s[st:en], n.Value, st, en, w.b); ok {
-			w.out = append(w.out, c)
-		}
+		return w.scalar(n, sens, ref)
 	}
 	return true
 }
 
-// lineStarts returns the byte offset of the start of every line of s, and
-// whether each line is ASCII (a column is then a byte offset).
-func lineStarts(s string) ([]int, []bool) {
-	starts, ascii := []int{0}, []bool{true}
-	for i := 0; i < len(s); i++ {
-		switch {
-		case s[i] == '\n':
-			starts, ascii = append(starts, i+1), append(ascii, true)
-		case s[i] >= utf8.RuneSelf:
-			ascii[len(ascii)-1] = false
-		}
+// scalar masks the scalar n as sens (if any) and checks its value as a leaf.
+func (w *yamlWalker) scalar(n *yaml.Node, sens Kind, ref int) bool {
+	st, en, status := w.span(n, ref)
+	switch status {
+	case spanBad:
+		return false
+	case spanEmpty:
+		return true
 	}
-	return starts, ascii
+	if sens != "" {
+		w.out = append(w.out, mask(st, en, sens))
+	}
+	leaf := yamlLeafCandidate
+	if n.Style&yaml.DoubleQuotedStyle != 0 {
+		leaf = jsonLeafCandidate // JSON escapes are YAML double-quoted escapes: same reading
+	}
+	if c, ok := leaf(w.s[st:en], n.Value, st, en, w.b); ok {
+		w.out = append(w.out, c)
+	}
+	return true
 }
 
-// lineEnd returns the offset of the end of line li (0-based), before '\n'.
-func (w *yamlWalker) lineEnd(li int) int {
-	if li+1 < len(w.lines) {
-		return w.lines[li+1] - 1
+const (
+	spanOK = iota
+	spanEmpty
+	spanBad // the position does not match the source: mask the whole text
+)
+
+// column returns the offset of the 1-based column col of line li.
+func (w *yamlWalker) column(li, col int) (int, bool) {
+	ls, le := w.l.starts[li], w.l.ends[li]
+	if w.l.ascii[li] {
+		return ls + col - 1, ls+col-1 <= le
 	}
-	return len(w.s)
+	if !w.b.spend(col) { // a column counts runes: walk the line
+		return 0, false
+	}
+	start := ls
+	for range col - 1 {
+		if start >= le {
+			return 0, false
+		}
+		_, size := utf8.DecodeRuneInString(w.s[start:le])
+		start += size
+	}
+	return start, true
 }
 
-// span returns the bytes of a scalar node: its value for a plain scalar
-// written as is, the content between the quotes for a quoted scalar, the
-// lines of a block scalar after their indentation; otherwise from its start
-// to the end of its line.
-func (w *yamlWalker) span(n *yaml.Node) (int, int, bool) {
-	if n.Line < 1 || n.Line > len(w.lines) || n.Column < 1 {
-		return 0, 0, false
+// span returns the bytes of a scalar node, checked against the source: the
+// content between the quotes of a quoted scalar, the content lines of a
+// block scalar, the value of a plain scalar, continued on the following
+// lines more indented than ref (or than its own line) when it is folded.
+func (w *yamlWalker) span(n *yaml.Node, ref int) (int, int, int) {
+	li := n.Line - 1
+	if li < 0 || li >= len(w.l.starts) || n.Column < 1 {
+		return 0, 0, spanBad
 	}
-	ls, le := w.lines[n.Line-1], w.lineEnd(n.Line-1)
-	start := ls + n.Column - 1
-	if !w.ascii[n.Line-1] {
-		if !w.b.spend(n.Column) { // a column counts runes: walk the line
-			return 0, 0, false
-		}
-		start = ls
-		for range n.Column - 1 {
-			if start >= le {
-				return 0, 0, false
-			}
-			_, size := utf8.DecodeRuneInString(w.s[start:])
-			start += size
-		}
+	start, ok := w.column(li, n.Column)
+	if !ok {
+		return 0, 0, spanBad
 	}
-	if start > le {
-		return 0, 0, false
-	}
-	// Tags and anchors before the value ("!!str", "&a").
-	for start < le && (w.s[start] == '!' || w.s[start] == '&') {
-		for start < le && w.s[start] != ' ' && w.s[start] != '\t' {
+	// Tags and anchors before the value ("!!str", "&a"), perhaps alone on
+	// their line.
+	for start < w.l.ends[li] && (w.s[start] == '!' || w.s[start] == '&') {
+		for start < w.l.ends[li] && w.s[start] != ' ' && w.s[start] != '\t' && w.s[start] != '"' && w.s[start] != '\'' {
 			start++
 		}
-		start = afterBlanks(w.s[:le], start)
-	}
-	switch {
-	case n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0 && start < len(w.s):
-		if end, ok := quotedEnd(w.s, start); ok {
-			return start + 1, end, start+1 < end
+		start = afterBlanks(w.s[:w.l.ends[li]], start)
+		for start >= w.l.ends[li] && li+1 < len(w.l.starts) {
+			li++
+			start = w.l.starts[li] + w.l.indent(w.s, li)
 		}
-	case n.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0:
-		return w.block(n.Line)
-	case n.Value != "" && strings.HasPrefix(w.s[start:], n.Value):
-		return start, start + len(n.Value), true
-	case n.Style == 0:
-		return start, w.continued(n.Line, start), true
 	}
-	end := len(strings.TrimRight(w.s[start:le], " \t\r")) + start
-	return start, end, start < end
+	quoted := n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0
+	block := n.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0
+	switch {
+	case quoted:
+		q := byte('"')
+		if n.Style&yaml.SingleQuotedStyle != 0 {
+			q = '\''
+		}
+		if start >= len(w.s) || w.s[start] != q {
+			return 0, 0, spanBad
+		}
+		end, ok := quotedEnd(w.s, start)
+		if !ok {
+			return 0, 0, spanBad
+		}
+		if start+1 == end {
+			return 0, 0, spanEmpty
+		}
+		return start + 1, end, spanOK
+	case block:
+		if start >= len(w.s) || (w.s[start] != '|' && w.s[start] != '>') {
+			return 0, 0, spanBad
+		}
+		st, en, ok := w.block(li, ref)
+		if !ok {
+			return 0, 0, spanEmpty
+		}
+		return st, en, spanOK
+	case n.Value == "":
+		return 0, 0, spanEmpty
+	case start >= len(w.s) || w.s[start] != n.Value[0]:
+		return 0, 0, spanBad
+	case strings.HasPrefix(w.s[start:w.l.ends[li]], n.Value):
+		return start, start + len(n.Value), spanOK
+	}
+	return start, max(w.continued(li, ref), start+1), spanOK
 }
 
-// continued returns the end of a plain scalar that starts at start on line
-// (1-based) and continues on the following lines more indented than that
-// line.
-func (w *yamlWalker) continued(line, start int) int {
-	head := w.s[w.lines[line-1]:w.lineEnd(line-1)]
-	indent := len(head) - len(strings.TrimLeft(head, " \t"))
-	end := len(strings.TrimRight(w.s[:w.lineEnd(line-1)], " \t\r"))
-	for li := line; li < len(w.lines); li++ {
-		text := w.s[w.lines[li]:w.lineEnd(li)]
-		if strings.TrimSpace(text) == "" {
+// continued returns the end of a folded plain scalar that starts on line li
+// (0-based): the following lines more indented than ref (or than line li).
+func (w *yamlWalker) continued(li, ref int) int {
+	indent := ref
+	if indent < 0 {
+		indent = w.l.indent(w.s, li)
+	}
+	end := w.l.trimmedEnd(w.s, li)
+	for lj := li + 1; lj < len(w.l.starts); lj++ {
+		if strings.TrimSpace(w.s[w.l.starts[lj]:w.l.ends[lj]]) == "" {
 			continue
 		}
-		if len(text)-len(strings.TrimLeft(text, " \t")) <= indent {
+		if w.l.indent(w.s, lj) <= indent {
 			break
 		}
-		end = len(strings.TrimRight(w.s[:w.lineEnd(li)], " \t\r"))
+		end = w.l.trimmedEnd(w.s, lj)
 	}
-	return max(end, start)
+	return end
 }
 
 // block returns the content of the block scalar whose indicator is on line
-// (1-based): the following lines more indented than that line, from the
-// indentation of the first.
-func (w *yamlWalker) block(line int) (int, int, bool) {
-	head := w.s[w.lines[line-1]:w.lineEnd(line-1)]
-	keyIndent := len(head) - len(strings.TrimLeft(head, " \t"))
+// li (0-based): the following lines more indented than ref (or than line li),
+// from the indentation of the first.
+func (w *yamlWalker) block(li, ref int) (int, int, bool) {
+	keyIndent := ref
+	if keyIndent < 0 {
+		keyIndent = w.l.indent(w.s, li)
+	}
 	start, end, indent := -1, -1, -1
-	for li := line; li < len(w.lines); li++ {
-		ls, le := w.lines[li], w.lineEnd(li)
-		text := w.s[ls:le]
-		if strings.TrimSpace(text) == "" {
+	for lj := li + 1; lj < len(w.l.starts); lj++ {
+		if strings.TrimSpace(w.s[w.l.starts[lj]:w.l.ends[lj]]) == "" {
 			continue
 		}
-		ind := len(text) - len(strings.TrimLeft(text, " \t"))
+		ind := w.l.indent(w.s, lj)
 		if ind <= keyIndent || indent >= 0 && ind < indent {
-			break // content is more indented than the line of its indicator
+			break // content is more indented than the line of its key
 		}
 		if indent < 0 {
-			indent, start = ind, ls+ind
+			indent, start = ind, w.l.starts[lj]+ind
 		}
-		end = len(strings.TrimRight(w.s[:le], " \t\r"))
+		end = w.l.trimmedEnd(w.s, lj)
 	}
 	return start, end, start >= 0 && start < end
 }

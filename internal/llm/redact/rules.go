@@ -50,9 +50,9 @@ const (
 	// escape would otherwise start a new token.
 	boundary = `(?:^|[^A-Za-z0-9_\]\\\x00]|\\[nrt]|` + jsonEscape + `)`
 	// keyPrefix: start of text, a delimiter (')' included: the end of a
-	// disarmed placeholder, T38), an escaped newline or tab, or a JSON escape of
+	// disarmed placeholder, T38; a control byte other than NUL), an escaped newline or tab, or a JSON escape of
 	// '&', '<' or '>'. ':' and ']' are deliberately absent.
-	keyPrefix = "(?:^|[\\s\"'`{}()\\[,;?&|<>$]|\\\\[nrt]|" + jsonEscape + ")"
+	keyPrefix = "(?:^|[\\s\"'`{}()\\[,;?&|<>$\\x01-\\x08\\x0b\\x0e-\\x1f\\x7f]|\\\\[nrt]|" + jsonEscape + ")"
 	// Separators never consume the blanks that follow them: a blank may be the
 	// prefix of the next key. A bare ':' (group c) needs a blank after it.
 	sepAny  = `[ \t]*(?::=|=>|[:=])`

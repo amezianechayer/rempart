@@ -239,3 +239,65 @@ func TestRedactReviewFindings(t *testing.T) {
 		hides(t, `{"msg":"token=`+"\\"+"u"+`005bREDACTED:sensitive_variable]hunter2xyz"}`, "hunter2xyz")
 	})
 }
+
+// TestRedactSecondReview: probes of the second security review of M1-T08
+// (fail closed by default: any doubt masks the whole leaf or text).
+func TestRedactSecondReview(t *testing.T) {
+	const tok = "sk-proj-abcdefghijklmnopqrstuvwx"
+	const tail = "abcdefghijklmnopqrstuvwx"
+	sec := "c2VjcmV0LWtleS1ieXRlcw=="
+	ls, nel, bom := string(rune(0x2028)), string(rune(0x85)), string(rune(0xFEFF))
+	for name, c := range map[string]struct {
+		in      string
+		secrets []string
+	}{
+		// JSON escapes the regular expressions do not read.
+		"json_f_token":     {`{"m":"x` + "\\" + `f` + tok + `"}`, []string{tail}},
+		"json_b_token":     {`{"m":"x` + "\\" + `b` + tok + `"}`, []string{tail}},
+		"json_f_key":       {`{"m":"x` + "\\" + `fpassword=hunter2xyz"}`, []string{"hunter2xyz"}},
+		"json_b_aws":       {`{"m":"x` + "\\" + `bAWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"}`, []string{"wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"}},
+		"json_b_in_value":  {`{"m":"password=hunt` + "\\" + `ber2xyz"}`, []string{"er2xyz"}},
+		"json_f_postgres":  {`{"m":"x` + "\\" + `fpostgres://u:pw-s3cret@db"}`, []string{"pw-s3cret"}},
+		"json_yaml_inside": {`{"log":"password:` + "\\" + `n  hunter2-yaml-value"}`, []string{"hunter2-yaml-value"}},
+		"json_key_u":       {`{"` + "\\" + `u0073k-proj-abcdefghijklmnopqrstuvwx":1}`, []string{tail}},
+		"json_open_frame":  {`{"name":"DB_PASSWORD","value":"hunter2xyz","note":"set {x}`, []string{"hunter2xyz"}},
+		// YAML escapes and folding.
+		"yaml_x73":        {"m: \"x \\x73k-proj-abcdefghijklmnopqrstuvwx\"\n", []string{tail}},
+		"yaml_x41":        {"m: \"\\x41KIAIOSFODNN7EXAMPLE\"\n", []string{"IOSFODNN7EXAMPLE"}},
+		"yaml_U":          {"m: \"\\U00000073k-proj-abcdefghijklmnopqrstuvwx\"\n", []string{tail}},
+		"yaml_esc_nl":     {"m: \"sk-proj-abcdefghij\\\n  klmnopqrstuvwx\"\n", []string{"klmnopqrstuvwx"}},
+		"yaml_x_key":      {"m: \"pass\\x77ord=hunter2xyz\"\n", []string{"hunter2xyz"}},
+		"yaml_e_key":      {"m: \"x\\epassword=hunter2xyz\"\n", []string{"hunter2xyz"}},
+		"yaml_N":          {"m: \"x\\N" + tok + "\"\n", []string{tail}},
+		"yaml_quote_dup":  {"m: 'password=''hunter2xyz'''\n", []string{"hunter2xyz"}},
+		"yaml_dq_folded":  {"m: \"password=\n  hunter2xyz\"\n", []string{"hunter2xyz"}},
+		"yaml_key_x":      {"\"\\x73k-proj-abcdefghijklmnopqrstuvwx\": 1\n", []string{tail}},
+		"yaml_multi_key":  {"password:\n  hunter2-first\n  hunter2-second\n", []string{"hunter2-first", "hunter2-second"}},
+		"yaml_tag_nl":     {"password: !!str\n  \"hunter2-tq\"\n", []string{"hunter2-tq"}},
+		"yaml_flow_pair":  {"env: [{name: DB_PASSWORD, value: !!str hunter2-flow}]\n", []string{"hunter2-flow"}},
+		"yaml_anchor_tag": {"password: &a !!str 'hunter2-t2'\nother: *a\n", []string{"hunter2-t2"}},
+		// Line breaks of the YAML decoder and the BOM (position drift).
+		"yaml_cr":         {"kind: Secret\rdata:\r  tls.key: " + sec + "\r", []string{sec}},
+		"yaml_cr_shift":   {"kind: Secret\nnote: \"a\rb\"\ndata:\n  tls.key: " + sec + "\n", []string{sec}},
+		"yaml_ls_shift":   {"kind: Secret\nnote: \"a" + ls + "b\"\ndata:\n  tls.key: " + sec + "\n", []string{sec}},
+		"yaml_nel_shift":  {"kind: Secret\nnote: \"a" + nel + "b\"\ndata:\n  tls.key: " + sec + "\n", []string{sec}},
+		"yaml_pair_shift": {"note: \"a" + ls + "b\"\nenv:\n- name: DB_PASSWORD\n  value: !!str hunter2-shift\n", []string{"hunter2-shift"}},
+		"yaml_bom":        {bom + "password: \"hunter2 bom\"\n", []string{"hunter2", "bom"}},
+	} {
+		t.Run(name, func(t *testing.T) { hides(t, c.in, c.secrets...) })
+	}
+	t.Run("yaml_budget_padding", func(t *testing.T) {
+		inner := `"{\"k\":\"` + strings.Repeat(`\\u0041`, 200) + `\"}"`
+		items := strings.TrimSuffix(strings.Repeat(inner+",", 150), ",")
+		in := "kind: Secret\ndata:\n  tls.key: " + sec + "\nx: [" + items + "]\npad: " + strings.Repeat("a", 258<<10) + "\n"
+		hides(t, in, sec)
+	})
+	t.Run("tiny_leaves_bounded", func(t *testing.T) {
+		in := "[" + strings.Repeat(`"\u0041",`, (1<<20)/10) + `"x"]`
+		start := time.Now()
+		New().Redact(in)
+		if d := time.Since(start); d > 8*time.Second {
+			t.Errorf("1 MiB of tiny escaped leaves redacted in %v, want less than 8s", d)
+		}
+	})
+}
