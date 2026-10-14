@@ -720,3 +720,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-10-14 12:13 [harnais] phase : free -> tests
 
 - 2026-10-14 12:15 [harnais] phase : tests -> impl
+
+- 2026-10-14 12:18 [harnais] PHASE FREE (discipline TDD suspendue) : M1-T08 third review fixes done, fourth review running
+
+- 2026-10-14 12:18 [harnais] phase : impl -> free
