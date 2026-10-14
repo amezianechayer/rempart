@@ -10,7 +10,7 @@ import (
 
 // M0-T20, plan docs/plans/M0-worker-demo.md section 5.1: obligations (at),
 // (au), (aw), (ax), the ignored directory imports (decision 7 of M0-T19d) and
-// the anthropic-unwired-m0 rule. Threat T73 (bypass of the source rules),
+// the llm-adapters-evals-cli-only rule (formerly anthropic-unwired-m0). Threat T73 (bypass of the source rules),
 // T41 (unwired real adapter).
 
 // beforeRun inserts code in the fixture workflow, before the RunLoop call.
@@ -204,24 +204,27 @@ func TestIgnoredDirImportRefused(t *testing.T) {
 	})
 }
 
-// TestAnthropicAdapterUnwired (T41, T20 section 3.1): until M0-T20b hardens the
-// Anthropic adapter, no package of the module but the adapter itself imports
-// it, cmd included.
-func TestAnthropicAdapterUnwired(t *testing.T) {
+// TestLLMAdaptersEvalsCLIOnly (ADR 0008 D7, T41, T20): in M1 the model
+// adapters and the key reader are imported by cmd/rempart-evals and by the
+// adapters themselves only; no worker, no loop, no other command.
+func TestLLMAdaptersEvalsCLIOnly(t *testing.T) {
 	const (
-		m       = modulePath
-		rule    = "anthropic-unwired-m0"
-		adapter = m + "/internal/llm/adapters/anthropic"
+		m        = modulePath
+		rule     = "llm-adapters-evals-cli-only"
+		adapters = m + "/internal/llm/adapters"
+		apikey   = m + "/internal/llm/apikey"
 	)
 	rules := DefaultRules(m)
 	i := slices.IndexFunc(rules, func(r Rule) bool { return r.Name == rule })
 	if i < 0 {
 		t.Fatalf("DefaultRules has no rule %s", rule)
 	}
-	if r := rules[i]; r.Kind != Confine || !slices.Equal(r.AllowedFrom, []string{adapter + "/..."}) ||
-		!slices.Equal(r.Targets, []string{adapter + "/..."}) {
-		t.Fatalf("%s: kind %d, Targets %q, AllowedFrom %q; want Confine on %s/... allowed from the adapter only",
-			rule, r.Kind, r.Targets, r.AllowedFrom, adapter)
+	if r := rules[i]; r.Kind != Confine || !slices.Equal(r.Targets, []string{adapters + "/...", apikey + "/..."}) ||
+		!slices.Equal(r.AllowedFrom, []string{m + "/cmd/rempart-evals", adapters + "/..."}) {
+		t.Fatalf("%s: kind %d, Targets %q, AllowedFrom %q", rule, r.Kind, r.Targets, r.AllowedFrom)
+	}
+	if slices.ContainsFunc(rules, func(r Rule) bool { return r.Name == "anthropic-unwired-m0" }) {
+		t.Error("anthropic-unwired-m0 is still a rule: llm-adapters-evals-cli-only replaces it")
 	}
 	only := func(vs []Violation) []Violation {
 		var out []Violation
@@ -232,23 +235,20 @@ func TestAnthropicAdapterUnwired(t *testing.T) {
 		}
 		return out
 	}
-	t.Run("from_cmd", func(t *testing.T) {
-		got := Check(m, []Package{{ImportPath: m + "/cmd/rempart-worker", Imports: []string{adapter, m + "/internal/llm"}}}, rules)
-		expectViolations(t, got, []Violation{{Rule: rule, Importer: m + "/cmd/rempart-worker", Imported: adapter}})
+	t.Run("from_worker", func(t *testing.T) {
+		got := Check(m, []Package{{ImportPath: m + "/cmd/rempart-worker", Imports: []string{adapters + "/openaicompat", m + "/internal/llm"}}}, rules)
+		expectViolations(t, only(got), []Violation{{Rule: rule, Importer: m + "/cmd/rempart-worker", Imported: adapters + "/openaicompat"}})
 	})
-	t.Run("from_internal", func(t *testing.T) {
-		got := Check(m, []Package{{ImportPath: m + "/internal/llm/wire", Imports: []string{adapter + "/stream"}}}, rules)
-		expectViolations(t, only(got), []Violation{{Rule: rule, Importer: m + "/internal/llm/wire", Imported: adapter + "/stream"}})
+	t.Run("from_loop", func(t *testing.T) {
+		got := Check(m, []Package{{ImportPath: m + "/internal/loops/demo/activities", Imports: []string{apikey}}}, rules)
+		expectViolations(t, only(got), []Violation{{Rule: rule, Importer: m + "/internal/loops/demo/activities", Imported: apikey}})
 	})
-	t.Run("none", func(t *testing.T) {
+	t.Run("from_evals", func(t *testing.T) {
 		got := Check(m, []Package{
-			{ImportPath: adapter, Imports: []string{
-				"context", "github.com/anthropics/anthropic-sdk-go", adapter + "/internal/wire",
-				m + "/internal/llm/domain", m + "/internal/llm/ports",
-			}},
-			{ImportPath: adapter + "/internal/wire", Imports: []string{"encoding/json"}},
-			{ImportPath: m + "/cmd/rempart-worker", Imports: []string{m + "/internal/llm", m + "/internal/llm/fake"}},
+			{ImportPath: m + "/cmd/rempart-evals", Imports: []string{adapters + "/openaicompat", apikey, m + "/internal/llm"}},
+			{ImportPath: adapters + "/openaicompat", Imports: []string{adapters + "/transport", m + "/internal/llm/domain"}},
+			{ImportPath: adapters + "/anthropic", Imports: []string{adapters + "/transport"}},
 		}, rules)
-		expectViolations(t, got, nil)
+		expectViolations(t, only(got), nil)
 	})
 }

@@ -182,10 +182,10 @@ func DefaultRules(module string) []Rule {
 			Name: "loops-fake-tests-only", Kind: Confine,
 			Targets: []string{m("internal/loops/fake/...")},
 		},
-		{ // M0-T20, lifted after M0-T20b: the real adapter has no importer outside itself (T41)
-			Name: "anthropic-unwired-m0", Kind: Confine,
-			Targets:     []string{m("internal/llm/adapters/anthropic/...")},
-			AllowedFrom: []string{m("internal/llm/adapters/anthropic/...")},
+		{ // ADR 0008 D7, replaces anthropic-unwired-m0: in M1 the model adapters and the key reader are wired by the evals command only (T41, T20)
+			Name: "llm-adapters-evals-cli-only", Kind: Confine,
+			Targets:     []string{m("internal/llm/adapters/..."), m("internal/llm/apikey/...")},
+			AllowedFrom: []string{m("cmd/rempart-evals"), m("internal/llm/adapters/...")},
 		},
 		{ // M1-T02, obligation (cw): the fake KeyWrapper (fixed seed), evaluation command only
 			Name: "secrets-fake-dev-only", Kind: Confine,

@@ -20,6 +20,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 
+	llmtransport "github.com/amezianechayer/rempart/internal/llm/adapters/transport"
 	"github.com/amezianechayer/rempart/internal/llm/domain"
 	"github.com/amezianechayer/rempart/internal/llm/ports"
 	"github.com/amezianechayer/rempart/internal/secrets/secret"
@@ -106,15 +107,18 @@ func New(cfg Config) (*Provider, error) {
 	return &Provider{msgs: c.Messages}, nil
 }
 
-func transport(rt http.RoundTripper) (http.RoundTripper, bool) { // T47
-	if rt == nil {
-		return noProxy(), true
-	}
-	t, ok := rt.(*http.Transport)
-	if !ok || t == nil || t.Proxy != nil {
+// transport hardens the injected transport with the shared rules (ADR 0008
+// D6, obligation (ay), T47): no proxy, dialer, TLS configuration or protocol
+// hook; an injected transport is cloned.
+func transport(rt http.RoundTripper) (http.RoundTripper, bool) {
+	h, err := llmtransport.Harden(rt)
+	if err != nil {
 		return nil, false
 	}
-	return t.Clone(), true
+	if t, ok := h.(*http.Transport); ok && rt != nil {
+		return t.Clone(), true
+	}
+	return h, true
 }
 
 type capped struct{ rt http.RoundTripper } // T49
@@ -155,15 +159,6 @@ func (b *cappedBody) Read(p []byte) (int, error) {
 }
 
 func (b *cappedBody) Close() error { return b.rc.Close() }
-
-func noProxy() http.RoundTripper {
-	if t, ok := http.DefaultTransport.(*http.Transport); ok {
-		c := t.Clone()
-		c.Proxy = nil
-		return c
-	}
-	return &http.Transport{}
-}
 
 func refuse(*http.Request, []*http.Request) error { return ErrRedirectRefused }
 

@@ -19,3 +19,9 @@
 		"github.com/amezianechayer/rempart/internal/llm/adapters/anthropic"
 	]
 }
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/loops/demo/activities",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/llm/apikey"
+	]
+}

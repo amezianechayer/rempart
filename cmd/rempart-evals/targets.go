@@ -60,9 +60,17 @@ func (denyAll) VerifyApproval(context.Context, loops.Approval) (loops.ApprovalCh
 }
 
 // demoTarget runs rempart.demo.v1 in a fresh in-process test environment per run (D1).
-type demoTarget struct{ log io.Writer }
+type demoTarget struct {
+	log  io.Writer
+	real *realModel // nil: the fake provider scripted by the case (D4, D5)
+}
 
-func (demoTarget) Identity() Identity { return Identity{Platform: "fake", Model: demoModel} }
+func (t demoTarget) Identity() Identity {
+	if t.real != nil {
+		return Identity{Platform: string(lldomain.PlatformOpenRouter), Model: t.real.model}
+	}
+	return Identity{Platform: "fake", Model: demoModel}
+}
 
 func (demoTarget) Check(c evals.Case) error {
 	_, _, err := demoInput(c.Input)
@@ -108,6 +116,9 @@ func (t demoTarget) Run(ctx context.Context, c evals.Case, _ int) (o evals.Outco
 		return evals.Outcome{}, err
 	}
 	cl, err := demoClient(replies)
+	if t.real != nil {
+		cl, err = t.real.client()
+	}
 	if err != nil {
 		return evals.Outcome{}, err
 	}

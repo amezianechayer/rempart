@@ -685,3 +685,19 @@ Préalables humains (étape H0 du plan) :
 - 2026-10-13 23:37 [harnais] phase : free -> tests
 
 - 2026-10-13 23:39 [harnais] phase : tests -> impl
+
+- 2026-10-14 11:23 [harnais] PHASE FREE (discipline TDD suspendue) : M1-T08 review fixes done, second review running
+
+- 2026-10-14 11:23 [harnais] phase : impl -> free
+
+- 2026-10-14 11:23 [harnais] phase : free -> tests
+
+- 2026-10-14 11:29 [harnais] phase : tests -> impl
+
+- 2026-10-14 11:34 [harnais] RETOUR EN PHASE TESTS depuis impl : M1-T09: lint fixes in the new test files (gosec, staticcheck, usestdlibvars)
+
+- 2026-10-14 11:34 [harnais] phase : impl -> tests
+
+- 2026-10-14 11:36 [harnais] PHASE FREE (discipline TDD suspendue) : M1-T09 code and tests done, security review next
+
+- 2026-10-14 11:36 [harnais] phase : tests -> free

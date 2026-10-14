@@ -450,7 +450,7 @@ func defaultRuleNames() []string {
 	return []string{
 		"domain-pure", "adapters-edge", "sdk-confine-anthropic", "sdk-confine-temporal",
 		"sdk-confine-sql", "loops-agnostic", "fakes-wired-in-cmd", "loops-fake-tests-only",
-		"anthropic-unwired-m0", "secrets-fake-dev-only",
+		"llm-adapters-evals-cli-only", "secrets-fake-dev-only",
 	}
 }
 
@@ -661,10 +661,11 @@ func TestRuleDetectsViolation(t *testing.T) {
 			v("loops-fake-tests-only", m+"/cmd/rempart-evals", m+"/internal/loops/fake"),
 			v("loops-fake-tests-only", m+"/cmd/rempart-worker", m+"/internal/loops/fake"),
 		}},
-		{"anthropic-unwired-m0", []Violation{
+		{"llm-adapters-evals-cli-only", []Violation{
 			// M0-T20: the real adapter has no importer until M0-T20b (T41).
-			v("anthropic-unwired-m0", m+"/cmd/rempart", m+"/internal/llm/adapters/anthropic/stream"),
-			v("anthropic-unwired-m0", m+"/cmd/rempart-worker", m+"/internal/llm/adapters/anthropic"),
+			v("llm-adapters-evals-cli-only", m+"/cmd/rempart", m+"/internal/llm/adapters/anthropic/stream"),
+			v("llm-adapters-evals-cli-only", m+"/cmd/rempart-worker", m+"/internal/llm/adapters/anthropic"),
+			v("llm-adapters-evals-cli-only", m+"/internal/loops/demo/activities", m+"/internal/llm/apikey"),
 		}},
 		{"secrets-fake-dev-only", []Violation{
 			// M1-T02 D11, obligation (cw): the fake KeyWrapper (fixed seed) is
@@ -676,11 +677,12 @@ func TestRuleDetectsViolation(t *testing.T) {
 		t.Fatalf("%d rule cases, want %d", len(cases), len(defaultRuleNames()))
 	}
 	for _, c := range cases {
-		// anthropic-unwired-m0 is temporary (lifted after M0-T20b): the other
-		// fixtures keep describing the target architecture, where cmd wires
-		// the Anthropic adapter, and are checked without it.
+		// llm-adapters-evals-cli-only confines the adapters to
+		// cmd/rempart-evals in M1 (ADR 0008 D7): the other fixtures keep
+		// describing the target architecture, where cmd wires the adapters,
+		// and are checked without it.
 		rules := slices.DeleteFunc(DefaultRules(m), func(r Rule) bool {
-			return r.Name == "anthropic-unwired-m0" && c.rule != r.Name
+			return r.Name == "llm-adapters-evals-cli-only" && c.rule != r.Name
 		})
 		t.Run(c.rule, func(t *testing.T) {
 			t.Run("violation", func(t *testing.T) {

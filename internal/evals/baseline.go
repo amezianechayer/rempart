@@ -83,10 +83,20 @@ func BaselinePath(suite, platform, model string) (string, error) {
 		return "", ErrInvalidName
 	case platform == "" && model == "":
 		return path.Join("evals", suite, "baseline.json"), nil
-	case !token(platform, 32, nameSet) || !token(model, 128, lower+"0123456789-_.:@") ||
-		!strings.Contains(alnum, model[len(model)-1:]):
+	case !token(platform, 32, nameSet) || !token(model, 128, lower+"0123456789-_.:@/") ||
+		!strings.Contains(alnum, model[len(model)-1:]) || !modelSlashes(platform, model):
 		return "", ErrInvalidName
 	}
-	file := strings.NewReplacer(":", "%3a", "@", "%40").Replace(model) + ".json"
+	file := strings.NewReplacer(":", "%3a", "@", "%40", "/", "%2f").Replace(model) + ".json"
 	return path.Join("evals", suite, "baseline", platform, file), nil
+}
+
+// modelSlashes: an OpenRouter model is <publisher>/<model>, exactly one '/'
+// between two non-empty parts (ADR 0008 D4); no other platform has one.
+func modelSlashes(platform, model string) bool {
+	n := strings.Count(model, "/")
+	if platform != "openrouter" {
+		return n == 0
+	}
+	return n == 1 && !strings.HasPrefix(model, "/") && !strings.HasSuffix(model, "/")
 }

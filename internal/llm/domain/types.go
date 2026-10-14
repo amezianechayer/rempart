@@ -15,6 +15,12 @@ const (
 	PlatformVertex     Platform = "vertex"
 	PlatformSelfHosted Platform = "selfhosted"
 	PlatformFake       Platform = "fake"
+	// ADR 0008: only openrouter is wired in M1; openai, deepseek and qwen are
+	// declared for the policy and refused by the adapter.
+	PlatformOpenRouter Platform = "openrouter"
+	PlatformOpenAI     Platform = "openai"
+	PlatformDeepSeek   Platform = "deepseek"
+	PlatformQwen       Platform = "qwen"
 )
 
 // Route is the effective model route. Model is an exact pinned identifier, never an alias.

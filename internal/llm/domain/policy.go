@@ -81,7 +81,9 @@ func CheckPolicy(p TenantPolicy, caps Capabilities) error {
 
 func routeShapeError(r Route) string {
 	switch r.Platform {
-	case PlatformAnthropic, PlatformFake:
+	case PlatformOpenAI, PlatformDeepSeek, PlatformQwen:
+		return "platform declared but not wired (ADR 0008 D1)"
+	case PlatformAnthropic, PlatformFake, PlatformOpenRouter:
 		if r.Region != "" {
 			return "region must be empty for this platform"
 		}
@@ -117,6 +119,9 @@ func modelPinned(r Route) bool {
 		return datedMatch(bedrockModel, r.Model)
 	case PlatformVertex:
 		return datedMatch(vertexModel, r.Model)
+	case PlatformOpenRouter:
+		_, listed := openRouterModels[r.Model] // ADR 0008 D4, O1: closed list, exact
+		return listed
 	default:
 		return genericModel.MatchString(r.Model)
 	}

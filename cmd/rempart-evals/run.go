@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/amezianechayer/rempart/internal/evals"
+	"github.com/amezianechayer/rempart/internal/llm/apikey"
+	"github.com/amezianechayer/rempart/internal/llm/domain"
 )
 
 // Exit codes (D8).
@@ -38,7 +40,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return codeUsage
 	}
 	defer func() { _ = repo.Close() }()
-	return runWith(ctx, env{repo: repo, git: execGit, targets: targets(), environ: os.Environ()}, args, stdout, stderr)
+	environ := os.Environ()
+	_ = os.Unsetenv(apikey.EnvOpenRouter) // read once from environ, never inherited by git (ADR 0008 D5)
+	return runWith(ctx, env{repo: repo, git: execGit, targets: targets(), environ: environ}, args, stdout, stderr)
 }
 
 // counted is a flag value that remembers how many times it was set (D12).
@@ -58,15 +62,19 @@ func (c *counted) IsBoolFlag() bool { return c.bool }
 type options struct {
 	suite, base string
 	write       bool
+	llm, model  string // real mode (ADR 0008): openrouter and a model of the closed list
 }
 
 func parseArgs(args []string, stderr io.Writer) (options, bool) {
 	fs := flag.NewFlagSet("rempart-evals", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	suite, base, write := &counted{}, &counted{}, &counted{bool: true}
+	llmFlag, model := &counted{}, &counted{}
 	fs.Var(suite, "suite", "suite name, all or changed")
 	fs.Var(base, "base", "base commit (with changed)")
 	fs.Var(write, "write-baseline", "write the baseline (humans only)")
+	fs.Var(llmFlag, "llm", "real model platform: openrouter (key in "+apikey.EnvOpenRouter+")")
+	fs.Var(model, "model", "model of the closed list of ADR 0008 (with --llm)")
 	if fs.Parse(args) != nil {
 		return options{}, false
 	}
@@ -77,10 +85,14 @@ func parseArgs(args []string, stderr io.Writer) (options, bool) {
 	case named && nameErr != nil:
 	case (suite.value == "changed") != (base.n == 1):
 	case write.n == 1 && (!named || write.value != "true"):
+	case llmFlag.n > 1 || model.n > 1 || llmFlag.n != model.n:
+	case llmFlag.n == 1 && (!named || llmFlag.value != string(domain.PlatformOpenRouter)):
+	case model.n == 1 && !listed(model.value):
 	default:
-		return options{suite: suite.value, base: base.value, write: write.n == 1}, true
+		return options{suite: suite.value, base: base.value, write: write.n == 1, llm: llmFlag.value, model: model.value}, true
 	}
-	say(stderr, "evals : usage : --suite <nom|all|changed> [--base <sha> avec changed] [--write-baseline avec une suite nommée].")
+	say(stderr, "evals : usage : --suite <nom|all|changed> [--base <sha> avec changed] [--write-baseline avec une suite nommée]"+
+		" [--llm openrouter --model <modèle de la liste fermée> avec une suite nommée].")
 	return options{}, false
 }
 
@@ -88,6 +100,14 @@ func runWith(ctx context.Context, e env, args []string, stdout, stderr io.Writer
 	opts, ok := parseArgs(args, stderr)
 	if !ok {
 		return codeUsage
+	}
+	if opts.llm != "" {
+		ts, err := realTargets(e.environ, opts.llm, opts.model)
+		if err != nil {
+			say(stderr, "evals : mode réel refusé : "+err.Error())
+			return codeUsage
+		}
+		e.targets = ts
 	}
 	for _, kv := range e.environ {
 		if k, _, _ := strings.Cut(kv, "="); k == "TEMPORAL_DEBUG" || strings.HasPrefix(k, "TEMPORAL_SDK_FLAG_") {
