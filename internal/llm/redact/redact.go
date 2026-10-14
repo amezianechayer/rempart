@@ -115,7 +115,9 @@ func findBudget(s string, b *budget) []Match {
 	protected := placeholderRe.FindAllStringIndex(s, -1)
 	cs := ruleCandidates(s, protected)
 	for _, c := range structured(s, b) {
-		if c.end > c.start && !inside(protected, c.start) {
+		// The mask of the whole text is kept even when the text starts with
+		// a placeholder: it is the answer of a bound reached (T98).
+		if c.end > c.start && (c.start == 0 && c.end == len(s) || !inside(protected, c.start)) {
 			cs = append(cs, c)
 		}
 	}

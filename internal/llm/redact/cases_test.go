@@ -55,7 +55,7 @@ var positiveCases = []posCase{
 	{
 		"l01_aws_secret_key_env_json_escaped", 1,
 		`{"env":"DEBUG=1\nAWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"}`,
-		`{"env":"DEBUG=1\nAWS_SECRET_ACCESS_KEY=[REDACTED:aws_secret_key]\n"}`,
+		`{"env":"[REDACTED:aws_secret_key]"}`, // M1-T08: escaped leaf masked whole (fail closed)
 		[]Kind{KindAWSSecretKey},
 	},
 	{
@@ -114,7 +114,7 @@ var positiveCases = []posCase{
 	{
 		"l03_azure_sas_json_marshal", 3,
 		`{"sas":"https://fakeaccount.blob.core.windows.net/c/b?sv=2022-11-02\u0026sp=r\u0026sig=FAKEEXAMPLE0000000000000000000000000000%3D"}`,
-		`{"sas":"https://fakeaccount.blob.core.windows.net/c/b?sv=2022-11-02\u0026sp=r\u0026sig=[REDACTED:azure_secret]"}`,
+		`{"sas":"[REDACTED:azure_secret]"}`, // M1-T08: escaped leaf masked whole (fail closed)
 		[]Kind{KindAzureSecret},
 	},
 
@@ -172,7 +172,7 @@ var positiveCases = []posCase{
 	{
 		"l05_pem_json_escaped_no_key", 5,
 		`{"log":"-----BEGIN RSA PRIVATE KEY-----\nFAKEEXAMPLEMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\n"}`,
-		`{"log":"[REDACTED:private_key]\n"}`,
+		`{"log":"[REDACTED:private_key]"}`, // M1-T08: escaped leaf masked whole (fail closed)
 		[]Kind{KindPrivateKey},
 	},
 	{
@@ -209,7 +209,7 @@ var positiveCases = []posCase{
 	{
 		"l05_pgp_armor_json_escaped", 5,
 		`{"key":"-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: FAKE 2.7.4\n\nxcLYBGFAKEEXAMPLE0000\n-----END PGP PRIVATE KEY BLOCK-----\n"}`,
-		`{"key":"[REDACTED:private_key]\n"}`,
+		`{"key":"[REDACTED:private_key]"}`, // M1-T08: escaped leaf masked whole (fail closed)
 		[]Kind{KindPrivateKey},
 	},
 
@@ -274,7 +274,7 @@ var positiveCases = []posCase{
 	{
 		"l07_llm_key_json_escaped_angle_brackets", 7,
 		`{"note":"\u003csk-proj-FAKEEXAMPLE000000000000\u003e"}`,
-		`{"note":"\u003c[REDACTED:llm_api_key]\u003e"}`,
+		`{"note":"[REDACTED:llm_api_key]"}`, // M1-T08: escaped leaf masked whole (fail closed)
 		[]Kind{KindLLMAPIKey},
 	},
 
@@ -398,13 +398,13 @@ var positiveCases = []posCase{
 	{
 		"l11_yaml_block_scalar_json_escaped", 11,
 		`{"file":"password: |\n  FAKE-line-one\n  FAKE-line-two\nuser: admin"}`,
-		`{"file":"password: |\n  [REDACTED:sensitive_variable]\nuser: admin"}`,
+		`{"file":"[REDACTED:sensitive_variable]"}`, // M1-T08: escaped leaf masked whole (fail closed)
 		[]Kind{KindSensitiveVar},
 	},
 	{
 		"l11_escaped_quotes_in_json_log", 11,
 		`{"msg":"set password = \"FAKEhunter2\" on db"}`,
-		`{"msg":"set password = \"[REDACTED:sensitive_variable]\" on db"}`,
+		`{"msg":"[REDACTED:sensitive_variable]"}`, // M1-T08: escaped leaf masked whole (fail closed)
 		[]Kind{KindSensitiveVar},
 	},
 	{
@@ -468,7 +468,7 @@ var positiveCases = []posCase{
 	{
 		"l11_helm_values_yaml_in_json", 11,
 		`{"values":["env:\n- name: DB_PASSWORD\n  value: FAKEk8sEXAMPLE\n"]}`,
-		`{"values":["env:\n- name: DB_PASSWORD\n  value: [REDACTED:sensitive_variable]\n"]}`,
+		`{"values":["[REDACTED:sensitive_variable]"]}`, // M1-T08: escaped leaf masked whole (fail closed)
 		[]Kind{KindSensitiveVar},
 	},
 	{
@@ -519,7 +519,7 @@ var positiveCases = []posCase{
 	{
 		"l11_json_marshal_ampersand_password", 11,
 		`{"url":"https://api.example.com/login?user=bob\u0026password=FAKEpassEXAMPLE\u0026lang=fr"}`,
-		`{"url":"https://api.example.com/login?user=bob\u0026password=[REDACTED:sensitive_variable]\u0026lang=fr"}`,
+		`{"url":"[REDACTED:sensitive_variable]"}`, // M1-T08: escaped leaf masked whole (fail closed)
 		[]Kind{KindSensitiveVar},
 	},
 	// V2 F9: "pass" as a whole key segment; the exact key "auth".

@@ -104,8 +104,8 @@ const (
 	reSlack  = `xox[abeoprs]-[A-Za-z0-9-]{10,}|https://hooks\.slack\.com/(?:services|workflows)/[A-Za-z0-9/_-]+`
 	reLLM    = `sk-ant-[A-Za-z0-9_-]{20,}|` + boundary + `(?P<v>sk-[A-Za-z0-9_-]{20,})`
 	reB64PEM = `LS0tLS1CRUdJTi[A-Za-z0-9+/=]*`
-	reDB     = boundary + `(?i:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|sqlserver|mssql|clickhouse|cockroachdb|jdbc:[a-z0-9]+)://` + userinfo
-	reURL    = boundary + `[A-Za-z][A-Za-z0-9+.-]*://` + userinfo
+	reDB     = boundary + `(?i:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|sqlserver|mssql|clickhouse|cockroachdb|jdbc:[a-z0-9]+):\\?/\\?/` + userinfo
+	reURL    = boundary + `[A-Za-z][A-Za-z0-9+.-]*:\\?/\\?/` + userinfo // "\/" escapes of PHP JSON and YAML read too
 	// reAuthz: a one-line array of header values, masked whole from its '['
 	// to its ']' or to the end of the line, or a header value, which stops
 	// like that of rePSKLine; reAuthzRelaxed reads the whole value.

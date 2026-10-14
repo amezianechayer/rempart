@@ -110,81 +110,13 @@ func mask(start, end int, k Kind) candidate {
 	return candidate{start: start, end: end, prio: prioOf(k)}
 }
 
-// safeEscape reports whether the JSON escape that starts at raw[i] ('\\') is
-// one the regular expressions read in raw form: quote, backslash, slash,
-// tab, line breaks, and the escapes of '<', '>' and '&' of json.Marshal. It
-// returns the length of the escape.
-func safeEscape(raw string, i int) (int, bool) {
-	if i+1 >= len(raw) {
-		return 0, false
-	}
-	switch raw[i+1] {
-	case '"', '\\', '/', 't', 'n', 'r':
-		return 2, true
-	case 'u':
-		if i+6 <= len(raw) {
-			switch strings.ToLower(raw[i+2 : i+6]) {
-			case "003c", "003e", "0026":
-				return 6, true
-			}
-		}
-	}
-	return 0, false
-}
-
-// onlySafeEscapes reports whether every escape of raw is a safe one.
-func onlySafeEscapes(raw string) bool {
-	for i := 0; i < len(raw); i++ {
-		if raw[i] != '\\' {
-			continue
-		}
-		n, ok := safeEscape(raw, i)
-		if !ok {
-			return false
-		}
-		i += n - 1
-	}
-	return true
-}
-
-// jsonLeafCandidate masks a whole JSON string [start, end) of raw content raw
-// and decoded value dec when dec holds a secret the regular expressions on
-// raw do not mask (fail closed by default, second review of M1-T08):
-//   - a placeholder that appears only in dec was forged by escapes (T38);
-//   - with safe escapes only, a value without structure nor line break is
-//     read by the regular expressions as is; otherwise raw is redacted, then
-//     decoded, and any secret left masks the whole leaf;
-//   - with any other escape (\b, \f, \uXXXX), any secret of dec masks the
-//     whole leaf.
-//
-// Nesting or budget exhausted masks the whole leaf (T83).
-func jsonLeafCandidate(raw, dec string, start, end int, b *budget) (candidate, bool) {
-	if raw == dec || start >= end {
-		return candidate{}, false
-	}
-	whole := mask(start, end, KindSensitiveVar)
-	if strings.Count(dec, "[REDACTED:") > strings.Count(raw, "[REDACTED:") {
-		return whole, true
-	}
-	safe := onlySafeEscapes(raw)
-	if safe && !strings.ContainsAny(dec, "{[\n\r") && !strings.ContainsAny(raw, "\n\r") {
-		return candidate{}, false
-	}
-	if b.depth >= maxNesting || !b.spend(leafCost+nestedCost*len(raw)) {
-		return whole, true
-	}
-	probe := dec
-	if safe {
-		if json.Unmarshal([]byte(`"`+redactRules(raw)+`"`), &probe) != nil {
-			return whole, true
-		}
-	}
-	return nestedPass(probe, whole, b)
-}
-
-// yamlLeafCandidate masks a whole YAML scalar whose source differs from its
-// value (escapes, folding, quotes) when the value holds a secret.
-func yamlLeafCandidate(raw, dec string, start, end int, b *budget) (candidate, bool) {
+// leafCandidate masks a whole JSON string or YAML scalar [start, end) whose
+// source raw differs from its value dec (escapes, folding, quotes) when the
+// value holds a secret, or when a placeholder appears only in the value
+// (forged by escapes, T38): fail closed by default (third review of M1-T08),
+// whatever escapes or encoder produced raw. Nesting or budget exhausted
+// masks the whole leaf (T83).
+func leafCandidate(raw, dec string, start, end int, b *budget) (candidate, bool) {
 	if raw == dec || start >= end {
 		return candidate{}, false
 	}
@@ -207,21 +139,6 @@ func nestedPass(s string, whole candidate, b *budget) (candidate, bool) {
 	}
 	whole.prio = prioOf(ms[0].Kind)
 	return whole, true
-}
-
-// redactRules is Redact with the regular expressions only.
-func redactRules(s string) string {
-	s = denul(s)
-	ms := findRules(s)
-	var out strings.Builder
-	prev := 0
-	for _, m := range ms {
-		out.WriteString(s[prev:m.Start])
-		out.WriteString(Placeholder(m.Kind))
-		prev = m.End
-	}
-	out.WriteString(s[prev:])
-	return out.String()
 }
 
 // structured returns the candidates of the structured pass on s; a panic of a
@@ -344,7 +261,7 @@ func (w *jsonWalk) document(at int) int {
 			if top.obj && top.expectKey {
 				top.key, top.expectKey = t, false
 				if end := at + off - 1; start <= end && end <= len(w.s) {
-					if c, ok := jsonLeafCandidate(w.s[start:end], t, start, end, w.b); ok {
+					if c, ok := leafCandidate(w.s[start:end], t, start, end, w.b); ok {
 						w.out = append(w.out, c)
 					}
 				}
@@ -412,7 +329,7 @@ func (w *jsonWalk) value(top *jsonFrame, l jsonLeaf) {
 	} else {
 		top.strs = append(top.strs, idx)
 	}
-	if c, ok := jsonLeafCandidate(w.s[l.start:l.end], l.dec, l.start, l.end, w.b); ok {
+	if c, ok := leafCandidate(w.s[l.start:l.end], l.dec, l.start, l.end, w.b); ok {
 		w.out = append(w.out, c)
 	}
 }
@@ -495,10 +412,14 @@ func yamlCandidates(s string, b *budget) []candidate {
 		}
 		var doc yaml.Node
 		if err := dec.Decode(&doc); err != nil {
+			if !errors.Is(err, io.EOF) && typedMarker.MatchString(s) {
+				// A typed secret in a stream the decoder cannot read: mask all.
+				return []candidate{mask(0, len(s), KindSensitiveVar)}
+			}
 			return out // io.EOF, or not YAML: the other passes read the text
 		}
 		if len(doc.Content) != 1 || (doc.Content[0].Kind != yaml.MappingNode && doc.Content[0].Kind != yaml.SequenceNode) {
-			return out
+			continue // an empty, scalar or prose document: the next ones are read
 		}
 		w := yamlWalker{s: s, l: lines, b: b}
 		if !w.walk(doc.Content[0], 0, "", -1) {
@@ -507,6 +428,10 @@ func yamlCandidates(s string, b *budget) []candidate {
 		out = append(out, w.out...)
 	}
 }
+
+// typedMarker: a typed secret of a YAML stream (Kubernetes Secret, OpenTofu
+// sensitive value, SSM SecureString).
+var typedMarker = regexp.MustCompile(`(?im)^[ \t-]*(?:kind:[ \t]*["']?Secret["']?[ \t]*$|sensitive:[ \t]*true|type:[ \t]*["']?SecureString)`)
 
 // yamlLines splits the text like the YAML decoder: line breaks "\r\n", "\r",
 // "\n", U+0085, U+2028, U+2029; a leading byte order mark is not a column.
@@ -653,11 +578,7 @@ func (w *yamlWalker) scalar(n *yaml.Node, sens Kind, ref int) bool {
 	if sens != "" {
 		w.out = append(w.out, mask(st, en, sens))
 	}
-	leaf := yamlLeafCandidate
-	if n.Style&yaml.DoubleQuotedStyle != 0 {
-		leaf = jsonLeafCandidate // JSON escapes are YAML double-quoted escapes: same reading
-	}
-	if c, ok := leaf(w.s[st:en], n.Value, st, en, w.b); ok {
+	if c, ok := leafCandidate(w.s[st:en], n.Value, st, en, w.b); ok {
 		w.out = append(w.out, c)
 	}
 	return true

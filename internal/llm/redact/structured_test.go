@@ -301,3 +301,43 @@ func TestRedactSecondReview(t *testing.T) {
 		}
 	})
 }
+
+// TestRedactThirdReview: probes of the third security review of M1-T08. An
+// escaped leaf is decoded whatever its escapes (PHP "\/", Go "<"); a
+// YAML document without mapping or sequence root never stops the stream; the
+// mask of the whole text survives a leading placeholder.
+func TestRedactThirdReview(t *testing.T) {
+	bs := "\\"
+	sec := "c2VjcmV0LWtleS1ieXRlcw=="
+	secret := "kind: Secret\ndata:\n  tls.key: " + sec + "\n"
+	for name, c := range map[string]struct {
+		in      string
+		secrets []string
+	}{
+		"json_slash_pg":     {`{"log":"postgres:` + bs + `/` + bs + `/u:pw-s3cret@db"}`, []string{"pw-s3cret"}},
+		"json_slash_https":  {`{"log":"https:` + bs + `/` + bs + `/admin:Adm1nPw0rd@host"}`, []string{"Adm1nPw0rd"}},
+		"json_slash_aws":    {`{"log":"aws_secret_access_key=wJalrXUtnFEMI` + bs + `/K7MDENG` + bs + `/bPxRfiCYEXAMPLEKEY"}`, []string{"K7MDENG", "bPxRfiCYEXAMPLEKEY"}},
+		"json_tab_eq":       {`{"m":"password` + bs + `t=hunter2xyz"}`, []string{"hunter2xyz"}},
+		"json_tab_colon":    {`{"m":"token:` + bs + `thunter2xyz"}`, []string{"hunter2xyz"}},
+		"json_quote_val":    {`{"m":"password=` + bs + `"hunter2xyz"}`, []string{"hunter2xyz"}},
+		"json_u003c_xml":    {`{"m":"x` + bs + `u003cpassword` + bs + `u003ehunter2xyz` + bs + `u003c/password` + bs + `u003e"}`, []string{"hunter2xyz"}},
+		"yaml_dq_slash":     {"m: \"postgres:\\/\\/u:pw-s3cret@db\"\n", []string{"pw-s3cret"}},
+		"yaml_dq_tab":       {"m: \"password\\t=hunter2xyz\"\n", []string{"hunter2xyz"}},
+		"doc_scalar_first":  {"Applying manifests now\n---\n" + secret, []string{sec}},
+		"doc_empty_first":   {"---\n---\n" + secret, []string{sec}},
+		"doc_null_first":    {"~\n---\n" + secret, []string{sec}},
+		"doc_quoted_first":  {"\"note\"\n---\n" + secret, []string{sec}},
+		"doc_prose_typed":   {"Some log: a: b\n" + secret, []string{sec}},
+		"helm_empty_doc":    {"---\n# Source: app/templates/empty.yaml\n---\n# Source: app/templates/secret.yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db\ntype: Opaque\ndata:\n  config.json: " + sec + "\n", []string{sec}},
+		"pair_after_scalar": {"ok\n---\nenv:\n- name: DB_PASSWORD\n  value: !!str hunter2-shift\n", []string{"hunter2-shift"}},
+	} {
+		t.Run(name, func(t *testing.T) { hides(t, c.in, c.secrets...) })
+	}
+	t.Run("placeholder_prefix_bound", func(t *testing.T) {
+		leaf := `"{` + bs + `"k` + bs + `":` + bs + `"` + strings.Repeat(bs+bs+"u0041", 200) + bs + `"}"`
+		bomb := "[" + strings.TrimSuffix(strings.Repeat(leaf+",", 400), ",") + "]"
+		doc := `{"kind":"Secret","data":{"tls.key":"` + sec + `"}} `
+		hides(t, "[REDACTED:aws_access_key] "+doc+bomb, sec)
+		hides(t, "[REDACTED:aws_access_key] "+doc, sec)
+	})
+}
