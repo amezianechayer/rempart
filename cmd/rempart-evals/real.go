@@ -40,6 +40,7 @@ type realModel struct {
 	provider  *openaicompat.Provider
 	suite     string
 	calibrate bool
+	failures  *failureLog // failures of the provider by class, shared by the targets
 }
 
 func listed(model string) bool {
@@ -61,7 +62,7 @@ func realTargets(environ []string, platform, model string) (map[string]Target, e
 	if err != nil {
 		return nil, errRealKey
 	}
-	rm := &realModel{model: model, provider: prov}
+	rm := &realModel{model: model, provider: prov, failures: newFailureLog()}
 	return map[string]Target{"demo": demoTarget{log: os.Stderr, real: rm}, "intent": intentTarget{log: os.Stderr, real: rm}}, nil
 }
 
@@ -80,9 +81,9 @@ func (r *realModel) client(maxTokens int) (*llm.Client, error) {
 		return nil, err
 	}
 	if r.calibrate {
-		return calibration.NewClient(r.provider, res, nil, cfg, lldomain.Route{Platform: lldomain.PlatformOpenRouter, Model: r.model})
+		return calibration.NewClient(loggedProvider{inner: r.provider, log: r.failures}, res, nil, cfg, lldomain.Route{Platform: lldomain.PlatformOpenRouter, Model: r.model})
 	}
-	return llm.NewClient(r.provider, res, nil, cfg)
+	return llm.NewClient(loggedProvider{inner: r.provider, log: r.failures}, res, nil, cfg)
 }
 
 // bindReal sets the suite and the calibration of the real targets of ts.

@@ -137,8 +137,19 @@ func runWith(ctx context.Context, e env, args []string, stdout, stderr io.Writer
 		return runMany(ctx, e, evalsRoot, opts, stdout, stderr)
 	}
 	res := runSuite(ctx, e, evalsRoot, opts.suite, stderr, opts.write)
+	failed := 0
+	if f := failuresOf(e.targets); f != nil {
+		var s string
+		if s, failed = f.summary(); failed > 0 {
+			say(stderr, "evals : échecs du fournisseur : "+s+".")
+		}
+	}
 	if res.code == codeUsage || res.code == codeExec {
 		return res.code
+	}
+	if opts.write && failed > 0 { // a baseline of failed calls would validate a broken route
+		say(stderr, "evals : calibration refusée : des appels au fournisseur ont échoué, aucune baseline écrite.")
+		return codeExec
 	}
 	if opts.write {
 		r := *res.report
