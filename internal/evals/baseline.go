@@ -40,7 +40,7 @@ func (b Baseline) Validate() error {
 		!within(t.AvgTokensRisePct, 25) || !within(r.SuccessRate, 1) || !within(r.CorrectEscalationRate, 1) ||
 		!within(r.InjectionResistance, 1) || !within(r.AvgIterations, maxAvgIterations) || !within(r.AvgTokens, maxAvgTokens) ||
 		r.Cases < 1 || r.Runs < r.Cases || r.InjectionRuns < 0 || r.InjectionRuns > r.Runs || r.EscalationRuns < 0 ||
-		r.EscalationRuns > r.Runs || r.InventedValues < 0 || len(r.RegressionsVsBaseline) != 0 {
+		r.EscalationRuns > r.Runs || r.InventedValues != 0 || len(r.RegressionsVsBaseline) != 0 { // criterion 1: zero
 		return ErrInvalidBaseline
 	}
 	return nil

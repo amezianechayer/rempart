@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -68,6 +69,10 @@ func TestIntentTargetRunsCase(t *testing.T) {
 	}
 	if err := json.Unmarshal(o.Output, &out); err != nil || out.IR.TenantID != string(demoTenant) {
 		t.Errorf("output %s, %v; want the IR of the evaluation tenant", o.Output, err)
+	}
+	var top map[string]json.RawMessage // the grader reads max_open_questions at the top level
+	if err := json.Unmarshal(o.Output, &top); err != nil || string(top["open_questions"]) != "[]" {
+		t.Errorf("output %s: open_questions at the top level %q, want []", o.Output, top["open_questions"])
 	}
 	obey := intentFixture(t, "drafts/c4-obey-managed-db.json")
 	c4 := intentCase(t, string(intentFixture(t, "c4-request.txt")), obey, obey, obey, obey)
@@ -141,6 +146,33 @@ func TestWriteBaselineRequiresTTY(t *testing.T) {
 	e.confirm = nil
 	if code, _, _ := runArgs(t, e, "--suite", "intent", "--llm", "openrouter", "--model", "deepseek/deepseek-chat", "--write-baseline"); code != codeUsage {
 		t.Errorf("no confirmation available: code %d, want %d", code, codeUsage)
+	}
+}
+
+// TestRealModeRefusedForAgentsAndCI (review of M1-T06): the real mode and
+// any baseline write are refused when the environment is the one of an agent
+// (Claude Code) or of a CI, before any confirmation or call.
+func TestRealModeRefusedForAgentsAndCI(t *testing.T) {
+	for _, v := range []string{"CLAUDECODE=1", "AI_AGENT=1", "CI=true", "GITHUB_ACTIONS=true"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(dir+"/go.mod", []byte("module x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		e := newEnv(t, dir, noGit(t))
+		e.environ = append(e.environ, apikey.EnvOpenRouter+"="+realKey, v)
+		asked := false
+		e.confirm = func(string) bool { asked = true; return true }
+		if code, stdout, _ := runArgs(t, e, "--suite", "intent", "--llm", "openrouter", "--model", "deepseek/deepseek-chat"); code != codeUsage || stdout != "" || asked {
+			t.Errorf("%s, real mode: code %d, stdout %q, asked %v; want %d before any confirmation", v, code, stdout, asked, codeUsage)
+		}
+	}
+	dir := copyFixture(t, "missing")
+	before := snapshot(t, dir)
+	e := newEnv(t, dir, noGit(t))
+	e.environ = append(e.environ, "CLAUDECODE=1")
+	e.confirm = func(string) bool { return true }
+	if code, _, _ := runArgs(t, e, "--suite", "demo", "--write-baseline"); code != codeUsage || !reflect.DeepEqual(snapshot(t, dir), before) {
+		t.Errorf("baseline write under an agent: code %d, want %d and nothing written", code, codeUsage)
 	}
 }
 

@@ -104,6 +104,16 @@ func runWith(ctx context.Context, e env, args []string, stdout, stderr io.Writer
 	if !ok {
 		return codeUsage
 	}
+	for _, kv := range e.environ {
+		if k, _, _ := strings.Cut(kv, "="); k == "TEMPORAL_DEBUG" || strings.HasPrefix(k, "TEMPORAL_SDK_FLAG_") {
+			say(stderr, "evals : variable TEMPORAL_DEBUG ou TEMPORAL_SDK_FLAG_* présente : refus (T84).")
+			return codeUsage
+		}
+	}
+	if (opts.llm != "" || opts.write) && agentOrCI(e.environ) { // review of M1-T06
+		say(stderr, "evals : mode réel et écriture de référence réservés au terminal de l'humain (agent ou CI détecté).")
+		return codeUsage
+	}
 	if opts.llm != "" {
 		ts, err := realTargets(e.environ, opts.llm, opts.model)
 		if err != nil {
@@ -117,12 +127,6 @@ func runWith(ctx context.Context, e env, args []string, stdout, stderr io.Writer
 			return codeUsage
 		}
 		e.targets = ts
-	}
-	for _, kv := range e.environ {
-		if k, _, _ := strings.Cut(kv, "="); k == "TEMPORAL_DEBUG" || strings.HasPrefix(k, "TEMPORAL_SDK_FLAG_") {
-			say(stderr, "evals : variable TEMPORAL_DEBUG ou TEMPORAL_SDK_FLAG_* présente : refus (T84).")
-			return codeUsage
-		}
 	}
 	evalsRoot, ok := openEvals(e.repo, stderr)
 	if !ok {
@@ -322,3 +326,16 @@ func emit(w io.Writer, v any) bool {
 }
 
 func say(w io.Writer, msg string) { _, _ = fmt.Fprintln(w, msg) }
+
+// agentOrCI reports an environment of an agent (Claude Code) or of a CI: the
+// real mode and the baseline writes belong to the terminal of the human
+// (review of M1-T06; a pseudo-terminal could answer the confirmation).
+func agentOrCI(environ []string) bool {
+	for _, kv := range environ {
+		k, v, _ := strings.Cut(kv, "=")
+		if v != "" && (k == "CLAUDECODE" || k == "AI_AGENT" || k == "CI" || k == "GITHUB_ACTIONS") {
+			return true
+		}
+	}
+	return false
+}

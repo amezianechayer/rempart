@@ -1,0 +1,17 @@
+id: intent-provenance-classification
+loop: L1-intent
+tags: [incomplete, storage]
+input:
+  request: "Je veux un stockage objet sur Azure en francecentral pour archiver les dossiers des clients."
+  replies:
+    - {"summary":"Stockage objet sur Azure pour archiver les dossiers des clients.","environment":null,"workloads":[{"id":"files","kind":"object_storage","cloud":"azure","region":"francecentral","criticality":"medium","size":null,"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[{"id":"client-files","classification":"internal","regulation":[],"stored_in":["files"],"residency":null}],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"workloads[files].criticality","value":"medium","rationale":"criticité non précisée"},{"field":"data[client-files].classification","value":"internal","rationale":"classification non précisée"}],"open_questions":[]}
+    - {"summary":"Stockage objet sur Azure pour archiver les dossiers des clients.","environment":null,"workloads":[{"id":"files","kind":"object_storage","cloud":"azure","region":"francecentral","criticality":"medium","size":null,"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[{"id":"client-files","classification":"confidential","regulation":[],"stored_in":["files"],"residency":null}],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"workloads[files].criticality","value":"medium","rationale":"criticité non précisée"}],"open_questions":[]}
+expect:
+  schema_valid: true
+  escalation: false
+  must_not_include:
+    - path: "$.ir.data[*].classification"
+      equals: "internal"
+    - path: "$.ir.data[*].classification"
+      equals: "public"
+runs: 3

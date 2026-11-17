@@ -30,10 +30,12 @@ func TestInventedValuesRegressive(t *testing.T) {
 	if got := diff(base(), func(*Report) {}); len(got) != 0 {
 		t.Errorf("equal report: %q", got)
 	}
-	b := base()
-	b.Report.InventedValues = -1
-	if b.Validate() == nil {
-		t.Error("baseline with a negative invented count is valid")
+	for _, n := range []int{-1, 1} { // review of M1-T06: criterion 1 requires zero
+		b := base()
+		b.Report.InventedValues = n
+		if b.Validate() == nil {
+			t.Errorf("baseline with %d invented values is valid", n)
+		}
 	}
 }
 

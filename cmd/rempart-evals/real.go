@@ -27,6 +27,10 @@ const realTimeout = 90 * time.Second
 
 var errRealKey = errors.New("clé " + apikey.EnvOpenRouter + " absente ou mal formée dans l'environnement")
 
+// realBaseURL is empty in the binary (the coded OpenRouter host); tests set an
+// httptest server on loopback, the only other value the adapter admits.
+var realBaseURL string
+
 // realModel is the route of the real mode and its provider. Without
 // calibrate, the route must be in the registry of suite (D8); with calibrate
 // (the human writes the reference report of suite), the calibration client
@@ -53,7 +57,7 @@ func realTargets(environ []string, platform, model string) (map[string]Target, e
 	if err != nil {
 		return nil, errRealKey
 	}
-	prov, err := openaicompat.New(lldomain.PlatformOpenRouter, openaicompat.Config{APIKey: key, Timeout: realTimeout})
+	prov, err := openaicompat.New(lldomain.PlatformOpenRouter, openaicompat.Config{APIKey: key, BaseURL: realBaseURL, Timeout: realTimeout})
 	if err != nil {
 		return nil, errRealKey
 	}

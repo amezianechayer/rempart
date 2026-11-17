@@ -131,7 +131,8 @@ type intentProjection struct {
 	Reason         string                       `json:"reason"`
 	IR             *intentdomain.IR             `json:"ir,omitempty"`
 	Contradictions []intentdomain.Contradiction `json:"contradictions"`
-	Remaining      []string                     `json:"remaining"` // codes of the findings left at an escalation
+	OpenQuestions  []intentdomain.Question      `json:"open_questions"` // read by the grader max_open_questions
+	Remaining      []string                     `json:"remaining"`      // codes of the findings left at an escalation
 	Iterations     int                          `json:"iterations"`
 	Tokens         int                          `json:"tokens"`
 }
@@ -181,7 +182,10 @@ func (t intentTarget) Run(ctx context.Context, c evals.Case, _ int) (o evals.Out
 	}
 	proj := intentProjection{
 		Status: out.Status, Reason: out.Reason, IR: out.IR, Contradictions: out.Contradictions,
-		Remaining: []string{}, Iterations: out.Loop.Iterations, Tokens: out.Loop.Tokens,
+		OpenQuestions: []intentdomain.Question{}, Remaining: []string{}, Iterations: out.Loop.Iterations, Tokens: out.Loop.Tokens,
+	}
+	if out.IR != nil && out.IR.OpenQuestions != nil {
+		proj.OpenQuestions = out.IR.OpenQuestions
 	}
 	for _, f := range out.Loop.Remaining {
 		proj.Remaining = append(proj.Remaining, f.Code)
@@ -193,7 +197,7 @@ func (t intentTarget) Run(ctx context.Context, c evals.Case, _ int) (o evals.Out
 	o.Status, o.Escalated = out.Status, out.Status == l1.StatusEscalated
 	o.Iterations, o.Tokens = out.Loop.Iterations, out.Loop.Tokens
 	if out.IR != nil {
-		o.Invented = intentdomain.InventedValues(in.request, *out.IR, in.context)
+		o.Invented = inventedValues(in.request, *out.IR) // oracle independent of internal/intent
 	}
 	return o, nil
 }

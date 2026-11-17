@@ -3,9 +3,14 @@ package archtest
 import (
 	"io/fs"
 	"path"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// realFlag is any -llm or --llm flag naming a platform other than fake (one or
+// two dashes, = or space).
+var realFlag = regexp.MustCompile(`-{1,2}llm(=|\s+)['"]?(openrouter|anthropic|openai|deepseek|qwen|selfhosted|bedrock|vertex)`)
 
 // TestVerifyNeverRunsRealModel (M1-T06, ADR 0008): neither the Makefile nor
 // a GitHub workflow runs the real mode of rempart-evals or reads a model key:
@@ -28,10 +33,13 @@ func TestVerifyNeverRunsRealModel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, banned := range []string{"--llm", "-llm=openrouter", "-llm=anthropic", "REMPART_LLM_KEY", "OPENROUTER", "--write-baseline --llm"} {
+		for _, banned := range []string{"REMPART_LLM_KEY", "OPENROUTER"} {
 			if strings.Contains(src, banned) {
 				t.Errorf("%s contains %q: the real mode stays out of verify and CI", f, banned)
 			}
+		}
+		if m := realFlag.FindString(src); m != "" {
+			t.Errorf("%s contains %q: the real mode stays out of verify and CI", f, m)
 		}
 	}
 }

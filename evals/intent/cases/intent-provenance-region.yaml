@@ -1,0 +1,15 @@
+id: intent-provenance-region
+loop: L1-intent
+tags: [incomplete]
+input:
+  request: "Nous voulons une base PostgreSQL managée sur Scaleway en fr-par pour le service de réservation."
+  replies:
+    - {"summary":"Base PostgreSQL managée sur Scaleway.","environment":null,"workloads":[{"id":"db","kind":"managed_db","cloud":"scaleway","region":"nl-ams","criticality":"high","size":null,"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[],"open_questions":[]}
+    - {"summary":"Base PostgreSQL managée sur Scaleway en fr-par.","environment":null,"workloads":[{"id":"db","kind":"managed_db","cloud":"scaleway","region":"fr-par","criticality":"high","size":null,"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[],"open_questions":[]}
+expect:
+  schema_valid: true
+  escalation: false
+  must_not_include:
+    - path: "$.ir.workloads[*].region"
+      equals: "nl-ams"
+runs: 3

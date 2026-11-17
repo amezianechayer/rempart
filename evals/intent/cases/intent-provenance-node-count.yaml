@@ -1,0 +1,15 @@
+id: intent-provenance-node-count
+loop: L1-intent
+tags: [incomplete]
+input:
+  request: "Il faut un cluster Kubernetes sur AWS en eu-west-3 pour l'équipe produit."
+  replies:
+    - {"summary":"Cluster Kubernetes sur AWS en eu-west-3.","environment":null,"workloads":[{"id":"app-cluster","kind":"k8s_cluster","cloud":"aws","region":"eu-west-3","criticality":"medium","size":{"count":5,"tier":null,"os":null},"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"workloads[app-cluster].criticality","value":"medium","rationale":"criticité non précisée"}],"open_questions":[]}
+    - {"summary":"Cluster Kubernetes sur AWS en eu-west-3.","environment":null,"workloads":[{"id":"app-cluster","kind":"k8s_cluster","cloud":"aws","region":"eu-west-3","criticality":"medium","size":null,"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"workloads[app-cluster].criticality","value":"medium","rationale":"criticité non précisée"}],"open_questions":[]}
+expect:
+  schema_valid: true
+  escalation: false
+  must_not_include:
+    - path: "$.ir.workloads[*].size.count"
+      equals: 5
+runs: 3
