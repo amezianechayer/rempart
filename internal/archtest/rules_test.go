@@ -450,7 +450,7 @@ func defaultRuleNames() []string {
 	return []string{
 		"domain-pure", "adapters-edge", "sdk-confine-anthropic", "sdk-confine-temporal",
 		"sdk-confine-sql", "loops-agnostic", "fakes-wired-in-cmd", "loops-fake-tests-only",
-		"llm-adapters-evals-cli-only", "secrets-fake-dev-only",
+		"llm-adapters-evals-cli-only", "llm-calibration-evals-cli-only", "secrets-fake-dev-only",
 	}
 }
 
@@ -469,7 +469,7 @@ func TestDefaultRules(t *testing.T) {
 	}
 
 	t.Run("names_and_kinds", func(t *testing.T) {
-		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine, Confine, Confine}
+		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine, Confine, Confine, Confine}
 		names := defaultRuleNames()
 		if len(rules) != len(names) {
 			t.Fatalf("DefaultRules returned %d rules, want %d (%q)", len(rules), len(names), names)
@@ -666,6 +666,11 @@ func TestRuleDetectsViolation(t *testing.T) {
 			v("llm-adapters-evals-cli-only", m+"/cmd/rempart", m+"/internal/llm/adapters/anthropic/stream"),
 			v("llm-adapters-evals-cli-only", m+"/cmd/rempart-worker", m+"/internal/llm/adapters/anthropic"),
 			v("llm-adapters-evals-cli-only", m+"/internal/loops/demo/activities", m+"/internal/llm/apikey"),
+		}},
+		{"llm-calibration-evals-cli-only", []Violation{
+			// M1-T05 D10: the calibration client is wired by the evaluation
+			// command only.
+			v("llm-calibration-evals-cli-only", m+"/cmd/rempart-worker", m+"/internal/llm/calibration"),
 		}},
 		{"secrets-fake-dev-only", []Violation{
 			// M1-T02 D11, obligation (cw): the fake KeyWrapper (fixed seed) is

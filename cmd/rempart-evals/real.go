@@ -5,9 +5,11 @@ import (
 	"os"
 	"time"
 
+	registry "github.com/amezianechayer/rempart/evals"
 	"github.com/amezianechayer/rempart/internal/llm"
 	"github.com/amezianechayer/rempart/internal/llm/adapters/openaicompat"
 	"github.com/amezianechayer/rempart/internal/llm/apikey"
+	"github.com/amezianechayer/rempart/internal/llm/calibration"
 	lldomain "github.com/amezianechayer/rempart/internal/llm/domain"
 	llmfake "github.com/amezianechayer/rempart/internal/llm/fake"
 	"github.com/amezianechayer/rempart/internal/loops/demo/activities"
@@ -23,10 +25,15 @@ const realTimeout = 90 * time.Second
 
 var errRealKey = errors.New("clé " + apikey.EnvOpenRouter + " absente ou mal formée dans l'environnement")
 
-// realModel is the route of the real mode and its provider.
+// realModel is the route of the real mode and its provider. Without
+// calibrate, the route must be in the registry of suite (D8); with calibrate
+// (the human writes the reference report of suite), the calibration client
+// admits exactly this route in addition (D10).
 type realModel struct {
-	model    string
-	provider *openaicompat.Provider
+	model     string
+	provider  *openaicompat.Provider
+	suite     string
+	calibrate bool
 }
 
 func listed(model string) bool {
@@ -61,5 +68,21 @@ func (r *realModel) client() (*llm.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return llm.NewClient(r.provider, res, nil, llm.Config{MaxTokensPerCall: activities.MaxTokensPerCall})
+	cfg := llm.Config{MaxTokensPerCall: activities.MaxTokensPerCall}
+	if cfg.ValidatedPairs, err = registry.RealPairs(r.suite); err != nil {
+		return nil, err
+	}
+	if r.calibrate {
+		return calibration.NewClient(r.provider, res, nil, cfg, lldomain.Route{Platform: lldomain.PlatformOpenRouter, Model: r.model})
+	}
+	return llm.NewClient(r.provider, res, nil, cfg)
+}
+
+// bindReal sets the suite and the calibration of the real targets of ts.
+func bindReal(ts map[string]Target, suite string, calibrate bool) {
+	for _, t := range ts {
+		if d, ok := t.(demoTarget); ok && d.real != nil {
+			d.real.suite, d.real.calibrate = suite, calibrate
+		}
+	}
 }

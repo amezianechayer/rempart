@@ -183,7 +183,7 @@ func viaService(t *testing.T, p *anthropic.Provider, res domain.Residency, withT
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := llm.NewClient(p, rr, fsys, llm.Config{MaxTokensPerCall: 256})
+	c, err := llm.NewClient(p, rr, fsys, llm.Config{MaxTokensPerCall: 256, ValidatedPairs: []llm.Pair{{Platform: routeA.Platform, Model: routeA.Model}}}) // M1-T05, D8
 	if err != nil {
 		t.Fatal(err)
 	}

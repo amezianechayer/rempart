@@ -114,7 +114,7 @@ type Question struct {
 
 // TenantContext is the authenticated context of the tenant.
 type TenantContext struct {
-	AllowedRegions  []string // empty: no restriction from the tenant
-	ForbiddenClouds []string
-	Compliance      []string
+	AllowedRegions  []string `json:"allowed_regions"` // empty: no restriction from the tenant
+	ForbiddenClouds []string `json:"forbidden_clouds"`
+	Compliance      []string `json:"compliance"`
 }

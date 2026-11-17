@@ -82,7 +82,10 @@ func call0(t *testing.T) Call {
 
 // configK is K.
 func configK() Config {
-	return Config{MaxCorrections: 0, MaxTokensPerCall: 256, AllowFakeRoute: true}
+	return Config{MaxCorrections: 0, MaxTokensPerCall: 256, AllowFakeRoute: true, ValidatedPairs: []Pair{ // M1-T05, D8
+		{Platform: domain.PlatformBedrock, Model: modelB3},
+		{Platform: domain.PlatformAnthropic, Model: "claude-sonnet-4-20250514"},
+	}}
 }
 
 func routePA() domain.Route {

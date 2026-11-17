@@ -1326,9 +1326,9 @@ func demoRunFlags() []string {
 // of the worker, by a pipe only (M1-T02 D9, option O5).
 var demoTokenPipe = []string{"bash", "scripts/dev-bootstrap.sh", "worker-token", "|"}
 
-// demoRecipeLines returns the logical recipe lines of the rule "demo:", tabs
+// recipeLines returns the logical recipe lines of the rule "target:", tabs
 // and prefixes kept.
-func demoRecipeLines(mf parsedMakefile) []string {
+func recipeLines(mf parsedMakefile, target string) []string {
 	var out []string
 	in := false
 	for _, l := range mf.Lines {
@@ -1339,7 +1339,7 @@ func demoRecipeLines(mf parsedMakefile) []string {
 			}
 		case makeTrim(l.Text) == "" || isMakeComment(l):
 		default:
-			in = strings.HasPrefix(l.Text, "demo:")
+			in = strings.HasPrefix(l.Text, target+":")
 		}
 	}
 	return out
@@ -1349,51 +1349,91 @@ func demoRecipeLines(mf parsedMakefile) []string {
 // on stderr, recipe lines silenced by @), runs the worker with exactly the
 // flags of section 4.4, and make interpolates nothing but $(MAKE) (T8).
 func checkDemoTarget(mf parsedMakefile) []string {
+	return checkWorkerTarget(mf, "demo", demoRunFlags())
+}
+
+// checkWorkerTarget checks a target that runs the worker once, as demo
+// (M1-T05: also l1-demo).
+func checkWorkerTarget(mf parsedMakefile, target string, wantFlags []string) []string {
 	var problems problemList
-	r, ok := mf.Rules["demo"]
+	r, ok := mf.Rules[target]
 	if !ok {
-		problems.addf("Makefile: target demo is not defined")
+		problems.addf("Makefile: target %s is not defined", target)
 		return problems
 	}
-	if !mf.Phony["demo"] {
-		problems.addf("Makefile: target demo is not declared .PHONY")
+	if !mf.Phony[target] {
+		problems.addf("Makefile: target %s is not declared .PHONY", target)
 	}
 	if len(r.Prereqs) != 0 {
-		problems.addf("Makefile line %d: target demo has prerequisites %q: dev runs in the recipe, its stdout sent to stderr", r.Line, r.Prereqs)
+		problems.addf("Makefile line %d: target %s has prerequisites %q: dev runs in the recipe, its stdout sent to stderr", r.Line, target, r.Prereqs)
 	}
-	for _, l := range demoRecipeLines(mf) {
+	for _, l := range recipeLines(mf, target) {
 		if !strings.HasPrefix(l, "\t@") {
-			problems.addf("Makefile: demo recipe line %q is not silenced by @ (make would echo it on stdout)", l)
+			problems.addf("Makefile: %s recipe line %q is not silenced by @ (make would echo it on stdout)", target, l)
 		}
 		if strings.Contains(strings.ReplaceAll(l, "$(MAKE)", ""), "$(") || strings.Contains(l, "${") {
-			problems.addf("Makefile: demo recipe line %q interpolates a make variable other than $(MAKE)", l)
+			problems.addf("Makefile: %s recipe line %q interpolates a make variable other than $(MAKE)", target, l)
 		}
 	}
 	if len(r.Recipe) != 2 {
-		problems.addf("Makefile: demo recipe has %d lines, want 2 (dev, then go run)", len(r.Recipe))
+		problems.addf("Makefile: %s recipe has %d lines, want 2 (dev, then go run)", target, len(r.Recipe))
 		return problems
 	}
 	if want := subMakePrefix + "dev >&2"; r.Recipe[0] != want {
-		problems.addf("Makefile: first demo recipe line %q, want %q", r.Recipe[0], want)
+		problems.addf("Makefile: first %s recipe line %q, want %q", target, r.Recipe[0], want)
 	}
 	fields := strings.Fields(r.Recipe[1])
 	if len(fields) < len(demoTokenPipe) || !slices.Equal(fields[:len(demoTokenPipe)], demoTokenPipe) {
-		problems.addf("Makefile: second demo recipe line %q does not start with %q", r.Recipe[1], strings.Join(demoTokenPipe, " "))
+		problems.addf("Makefile: second %s recipe line %q does not start with %q", target, r.Recipe[1], strings.Join(demoTokenPipe, " "))
 		return problems
 	}
 	fields = fields[len(demoTokenPipe):]
 	if len(fields) < 3 || !slices.Equal(fields[:3], []string{"go", "run", "./cmd/rempart-worker"}) {
-		problems.addf("Makefile: second demo recipe line %q does not start with \"go run ./cmd/rempart-worker\"", r.Recipe[1])
+		problems.addf("Makefile: second %s recipe line %q does not start with \"go run ./cmd/rempart-worker\"", target, r.Recipe[1])
 		return problems
 	}
 	flags := slices.Clone(fields[3:])
-	want := demoRunFlags()
+	want := slices.Clone(wantFlags)
 	slices.Sort(flags)
 	slices.Sort(want)
 	if !slices.Equal(flags, want) {
-		problems.addf("Makefile: demo runs the worker with %q, want exactly %q", fields[3:], demoRunFlags())
+		problems.addf("Makefile: %s runs the worker with %q, want exactly %q", target, fields[3:], wantFlags)
 	}
 	return problems
+}
+
+// l1RunFlags are the flags of go run in the l1-demo recipe (M1-T05): those of
+// demo, -l1-once for -demo-once, the L1 script and the reference request.
+func l1RunFlags() []string {
+	return []string{
+		"-dev", "-l1-once", "-llm=fake", "-tenant=0d3e0000-0000-4000-8000-000000000001",
+		"-temporal-address=127.0.0.1:7233", "-namespace=rempart", "-openbao-addr=http://127.0.0.1:8200",
+		"-fake-script=internal/loops/l1/testdata/scripts/converge.json",
+		"-l1-request=internal/intent/testdata/reference-request.txt",
+	}
+}
+
+// TestMakefileL1DemoTarget (M1-T05, criterion 4): l1-demo runs the worker
+// once like demo, with the flags of L1; the checker is the one of demo.
+func TestMakefileL1DemoTarget(t *testing.T) {
+	_, fsys := repoRoot(t)
+	src, err := readRepoFile(fsys, "Makefile", "created by M0-T01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mf, err := parseMakefile(src)
+	if err != nil {
+		t.Fatalf("Makefile: %v", err)
+	}
+	reportProblems(t, checkWorkerTarget(mf, "l1-demo", l1RunFlags()))
+	for _, f := range []string{"internal/loops/l1/testdata/scripts/converge.json", "internal/intent/testdata/reference-request.txt"} {
+		if _, err := readRepoFile(fsys, f, "M1-T05"); err != nil {
+			t.Errorf("file of make l1-demo: %v", err)
+		}
+	}
+	if slices.Contains(reachableTargets(mf, "verify-quick"), "l1-demo") {
+		t.Error("target l1-demo is reachable from verify-quick (it needs the dev stack)")
+	}
 }
 
 // TestMakefileDemoTarget (M0-T20, criterion 8): the demo target of the

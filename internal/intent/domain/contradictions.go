@@ -4,9 +4,9 @@ import "slices"
 
 // Contradiction is a contradiction of the request, turned into a question.
 type Contradiction struct {
-	Code    string // CONTRA-RESIDENCY, CONTRA-REGION-NOT-ALLOWED, CONTRA-FORBIDDEN-CLOUD, CONTRA-RUNS-ON-NOT-CLUSTER
-	Field   string // path (plan P3)
-	Default string // safe default, never empty
+	Code    string `json:"code"`    // CONTRA-RESIDENCY, CONTRA-REGION-NOT-ALLOWED, CONTRA-FORBIDDEN-CLOUD, CONTRA-RUNS-ON-NOT-CLUSTER
+	Field   string `json:"field"`   // path (plan P3)
+	Default string `json:"default"` // safe default, never empty
 }
 
 // Contradiction codes (plan section 6.4).

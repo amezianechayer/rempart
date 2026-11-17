@@ -2,7 +2,7 @@ package prompts
 
 import "embed"
 
-//go:embed demo.greeting.v1
+//go:embed demo.greeting.v1 intent.extract.v1
 var builtin embed.FS
 
 func Load(id string) (Prompt, error) { return LoadFS(builtin, id) }

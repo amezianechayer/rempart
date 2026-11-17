@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 
 	"github.com/amezianechayer/rempart/internal/llm/domain"
 	"github.com/amezianechayer/rempart/internal/llm/ports"
@@ -26,6 +27,9 @@ var (
 	ErrModelMismatch    = errors.New("llm: response model differs from route")
 	ErrProviderFailed   = errors.New("llm: provider call failed")
 	ErrUnknownTool      = errors.New("llm: tool call names an unknown tool")
+	// ErrRouteWithoutBaseline: a real route absent from Config.ValidatedPairs
+	// (D8, ADR 0006); refused before any provider call.
+	ErrRouteWithoutBaseline = errors.New("llm: route without a validated baseline")
 )
 
 const (
@@ -39,6 +43,16 @@ type Config struct {
 	MaxCorrections   int  // 0 to 3, taken as is
 	MaxTokensPerCall int  // 1 to MaxTokensLimit, no default
 	AllowFakeRoute   bool // tests and the -dev root only (T41)
+	// ValidatedPairs are the real routes with a baseline (registry embedded by
+	// evals, injected by cmd/, D8): any other real route is refused. The fake
+	// route is governed by AllowFakeRoute alone.
+	ValidatedPairs []Pair
+}
+
+// Pair is a (platform, model) couple validated by a baseline.
+type Pair struct {
+	Platform domain.Platform
+	Model    string
 }
 
 // Call names a pinned prompt: PromptHash must equal the loaded prompt hash.
@@ -82,6 +96,10 @@ func NewClient(p ports.ModelProvider, rr ports.RouteResolver, promptFS fs.FS, cf
 	if cfg.MaxTokensPerCall < 1 || cfg.MaxTokensPerCall > MaxTokensLimit {
 		return nil, fmt.Errorf("%w: token budget out of range", ErrInvalidConfig)
 	}
+	if slices.ContainsFunc(cfg.ValidatedPairs, func(p Pair) bool { return p.Platform == "" || p.Platform == domain.PlatformFake || p.Model == "" }) {
+		return nil, fmt.Errorf("%w: invalid validated pair", ErrInvalidConfig)
+	}
+	cfg.ValidatedPairs = slices.Clone(cfg.ValidatedPairs)
 	return &Client{provider: p, resolver: rr, promptFS: promptFS, cfg: cfg}, nil
 }
 
@@ -230,6 +248,9 @@ func (c *Client) checkedRoute(ctx context.Context, tenant tenancy.ID) (domain.Ro
 	}
 	if err := domain.CheckPolicy(pol, c.provider.Capabilities(pol.Route)); err != nil {
 		return domain.Route{}, err
+	}
+	if pol.Route.Platform != domain.PlatformFake && !slices.Contains(c.cfg.ValidatedPairs, Pair{pol.Route.Platform, pol.Route.Model}) {
+		return domain.Route{}, ErrRouteWithoutBaseline // D8: after the policy, before any call
 	}
 	return pol.Route, nil
 }

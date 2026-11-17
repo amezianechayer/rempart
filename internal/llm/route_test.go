@@ -185,7 +185,7 @@ func TestTraceCarriesRoute(t *testing.T) {
 		t.Run(m.name, func(t *testing.T) {
 			s := &spy{}
 			rr := countingStatic(t, map[tenancy.ID]domain.TenantPolicy{tenantA: policyB3()})
-			c := mustClient(t, s, rr, Config{MaxTokensPerCall: 256})
+			c := mustClient(t, s, rr, Config{MaxTokensPerCall: 256, ValidatedPairs: configK().ValidatedPairs})
 			o := m.run(c, ctxFor(t, tenantA), call0(t))
 			assertOK(t, o)
 			want := Trace{
@@ -298,7 +298,7 @@ func TestServicePassesCheckedRoute(t *testing.T) {
 
 // Test 13 (threat T41).
 func TestFakeRouteRefusedByDefault(t *testing.T) {
-	noFake := Config{MaxTokensPerCall: 256}
+	noFake := Config{MaxTokensPerCall: 256, ValidatedPairs: configK().ValidatedPairs} // M1-T05, D8
 	for _, m := range bothMethods() {
 		t.Run("fake route refused, "+m.name, func(t *testing.T) {
 			e := newEnv(t, noFake, policyPA(), stepV())

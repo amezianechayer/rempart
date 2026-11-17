@@ -107,6 +107,7 @@ func runWith(ctx context.Context, e env, args []string, stdout, stderr io.Writer
 			say(stderr, "evals : mode réel refusé : "+err.Error())
 			return codeUsage
 		}
+		bindReal(ts, opts.suite, opts.write) // D8, D10
 		e.targets = ts
 	}
 	for _, kv := range e.environ {

@@ -23,7 +23,7 @@ override GOFLAGS := -mod=readonly
 export GOFLAGS
 
 .PHONY: verify-quick verify opa-test arch-test evals update-baseline
-.PHONY: dev dev-preflight dev-down demo sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
+.PHONY: dev dev-preflight dev-down demo l1-demo sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
 
 # Menace T32 : sans règle explicite pour lui, GNU make referait le Makefile par une règle
 # implicite intégrée (Makefile.sh, Makefile,v, RCS/, SCCS/) avant toute recette, même sous -n.
@@ -87,6 +87,15 @@ demo:
 	@bash scripts/dev-bootstrap.sh worker-token | go run ./cmd/rempart-worker -dev -demo-once -llm=fake \
 		-tenant=0d3e0000-0000-4000-8000-000000000001 -temporal-address=127.0.0.1:7233 -namespace=rempart \
 		-openbao-addr=http://127.0.0.1:8200 -fake-script=internal/loops/demo/testdata/scripts/converge.json
+
+# Boucle L1 de bout en bout (M1-T05) : demande de référence, Intent IR puis graphe,
+# faux LLM derrière -dev, tenant de démo fixe. Sortie standard : un seul document JSON.
+l1-demo:
+	@$(MAKE) -f Makefile --no-print-directory dev >&2
+	@bash scripts/dev-bootstrap.sh worker-token | go run ./cmd/rempart-worker -dev -l1-once -llm=fake \
+		-tenant=0d3e0000-0000-4000-8000-000000000001 -temporal-address=127.0.0.1:7233 -namespace=rempart \
+		-openbao-addr=http://127.0.0.1:8200 -fake-script=internal/loops/l1/testdata/scripts/converge.json \
+		-l1-request=internal/intent/testdata/reference-request.txt
 
 # Vérifie Docker Engine, le plugin compose v2 et l'accès au démon, sans rien démarrer.
 dev-preflight:

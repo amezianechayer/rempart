@@ -187,6 +187,11 @@ func DefaultRules(module string) []Rule {
 			Targets:     []string{m("internal/llm/adapters/..."), m("internal/llm/apikey/...")},
 			AllowedFrom: []string{m("cmd/rempart-evals"), m("internal/llm/adapters/...")},
 		},
+		{ // M1-T05, D10: the calibration client, the only one that runs a route without baseline, evaluation command only
+			Name: "llm-calibration-evals-cli-only", Kind: Confine,
+			Targets:     []string{m("internal/llm/calibration/...")},
+			AllowedFrom: []string{m("cmd/rempart-evals")},
+		},
 		{ // M1-T02, obligation (cw): the fake KeyWrapper (fixed seed), evaluation command only
 			Name: "secrets-fake-dev-only", Kind: Confine,
 			Targets:     []string{m("internal/secrets/fake/...")},
