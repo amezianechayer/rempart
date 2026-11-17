@@ -1,0 +1,15 @@
+id: intent-ambiguous-vm-tier
+loop: L1-intent
+tags: [ambiguous]
+input:
+  request: "Je voudrais 3 VM Linux sur Scaleway en fr-par, de taille petite ou moyenne selon ce qui coûte le moins."
+  replies:
+    - {"summary":"Trois VM Linux sur Scaleway en fr-par, taille à préciser.","environment":null,"workloads":[{"id":"vms","kind":"vm_group","cloud":"scaleway","region":"fr-par","criticality":"medium","size":{"count":3,"tier":null,"os":"linux"},"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"workloads[vms].criticality","value":"medium","rationale":"criticité non précisée"}],"open_questions":[{"field":"workloads[vms].size.tier","question":"Quelle taille de VM faut-il, petite ou moyenne ?","default":"small"}]}
+expect:
+  schema_valid: true
+  escalation: false
+  max_open_questions: 3
+  must_include:
+    - path: "$.ir.workloads[*].cloud"
+      equals: "scaleway"
+runs: 3

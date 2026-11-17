@@ -1,0 +1,24 @@
+id: intent-nominal-reference-en
+loop: L1-intent
+tags: [nominal, multicloud]
+input:
+  request: "I want a Kubernetes cluster on AWS in eu-west-3, medium size with 3 nodes, for a public web application over HTTPS behind a WAF and a load balancer. On Azure, 3 small Linux VMs host the legacy customer database: confidential data, subject to GDPR, which must stay in the EU. A site-to-site VPN connects the cluster to the VMs, on ports 5432 and 9100. In the cluster: Prometheus, Grafana, Loki and a GitOps controller. NIS2 compliance. Budget of 1500 euros per month. Allowed regions: eu-west-3 and francecentral."
+  context: {"allowed_regions": ["eu-west-3", "francecentral"]}
+  replies:
+    - {"summary":"Kubernetes cluster on AWS, three Linux VMs on Azure, site-to-site VPN between them, Prometheus/Grafana/Loki observability, NIS2 compliant.","environment":"staging","workloads":[{"id":"app-cluster","kind":"k8s_cluster","cloud":"aws","region":"eu-west-3","criticality":"high","size":{"count":3,"tier":"medium","os":null},"runs_on":null,"notes":null},{"id":"legacy-vms","kind":"vm_group","cloud":"azure","region":"francecentral","criticality":"medium","size":{"count":3,"tier":"small","os":"linux"},"runs_on":null,"notes":null},{"id":"obs","kind":"observability_stack","cloud":"aws","region":"eu-west-3","criticality":"medium","size":null,"runs_on":"app-cluster","notes":null},{"id":"gitops","kind":"gitops_controller","cloud":"aws","region":"eu-west-3","criticality":"high","size":null,"runs_on":"app-cluster","notes":null}],"connectivity":[{"from":"app-cluster","to":"legacy-vms","kind":"vpn_site_to_site","bidirectional":false,"ports":["tcp/5432","tcp/9100"],"purpose":"application access to the legacy database and VM metrics collection"}],"exposure":[{"workload":"app-cluster","protocol":"https","port":443,"behind":["waf","load_balancer"],"allowed_sources":[],"justification":"public web application"}],"data":[{"id":"customer-db","classification":"confidential","regulation":["gdpr"],"stored_in":["legacy-vms"],"residency":"eu"}],"observability":{"metrics":"prometheus","logs":"loki","dashboards":"grafana","retention_days":90},"compliance":["nis2"],"constraints":{"monthly_budget_eur":1500,"allowed_regions":["eu-west-3","francecentral"],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"environment","value":"staging","rationale":"not stated; staging by default for a first deployment"},{"field":"observability.retention_days","value":"90","rationale":"not stated; 90 days by default"},{"field":"workloads[legacy-vms].region","value":"francecentral","rationale":"European tenant, EU region by default"},{"field":"workloads[legacy-vms].criticality","value":"medium","rationale":"legacy database, criticality not stated"},{"field":"workloads[obs].criticality","value":"medium","rationale":"tooling, criticality not stated"}],"open_questions":[]}
+expect:
+  schema_valid: true
+  escalation: false
+  status: converged
+  max_iterations: 4
+  must_include:
+    - path: "$.ir.workloads[*].cloud"
+      equals: "aws"
+    - path: "$.ir.workloads[*].cloud"
+      equals: "azure"
+    - path: "$.ir.data[*].regulation[*]"
+      equals: "gdpr"
+  must_not_include:
+    - path: "$.ir.exposure[*].workload"
+      equals: "legacy-vms"
+runs: 3

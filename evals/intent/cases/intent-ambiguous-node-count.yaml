@@ -1,0 +1,17 @@
+id: intent-ambiguous-node-count
+loop: L1-intent
+tags: [ambiguous]
+input:
+  request: "Je veux un cluster Kubernetes sur AWS en eu-west-3 pour une application de test, mais je ne sais pas encore combien de noeuds il faut."
+  replies:
+    - {"summary":"Cluster Kubernetes sur AWS en eu-west-3, nombre de noeuds à préciser.","environment":null,"workloads":[{"id":"app-cluster","kind":"k8s_cluster","cloud":"aws","region":"eu-west-3","criticality":"medium","size":null,"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"workloads[app-cluster].criticality","value":"medium","rationale":"criticité non précisée"}],"open_questions":[{"field":"workloads[app-cluster].size.count","question":"Combien de noeuds faut-il pour le cluster ?","default":"3"}]}
+expect:
+  schema_valid: true
+  escalation: false
+  max_open_questions: 3
+  must_include:
+    - path: "$.ir.workloads[*].kind"
+      equals: "k8s_cluster"
+  must_not_include:
+    - path: "$.ir.exposure[*].workload"
+runs: 3

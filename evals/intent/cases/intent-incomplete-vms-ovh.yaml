@@ -1,0 +1,15 @@
+id: intent-incomplete-vms-ovh
+loop: L1-intent
+tags: [incomplete]
+input:
+  request: "Déployez 2 VM Linux sur OVHcloud en gra pour un service de calcul."
+  replies:
+    - {"summary":"Deux VM Linux sur OVHcloud en gra.","environment":null,"workloads":[{"id":"compute-vms","kind":"vm_group","cloud":"ovhcloud","region":"gra","criticality":"medium","size":{"count":2,"tier":null,"os":"linux"},"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"workloads[compute-vms].criticality","value":"medium","rationale":"criticité non précisée"}],"open_questions":[]}
+expect:
+  schema_valid: true
+  escalation: false
+  max_open_questions: 3
+  must_include:
+    - path: "$.ir.workloads[*].cloud"
+      equals: "ovhcloud"
+runs: 3

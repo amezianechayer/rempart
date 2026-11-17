@@ -54,3 +54,61 @@ func (d Draft) ToIR(tenantID string) IR {
 	}
 	return ir
 }
+
+// DraftOf reads an IR back as a draft (inverse of ToIR, tenant dropped): the
+// evaluations measure the delivered IR with the checks of the draft (M1-T06).
+func DraftOf(ir IR) Draft {
+	d := Draft{
+		Summary:           ir.Summary,
+		Workloads:         []DraftWorkload{},
+		Connectivity:      []DraftLink{},
+		Exposure:          []DraftExposure{},
+		Data:              []DraftData{},
+		Compliance:        orEmpty(ir.Compliance),
+		ExplicitOverrides: orEmpty(ir.ExplicitOverrides),
+		Assumptions:       orEmpty(ir.Assumptions),
+		OpenQuestions:     orEmpty(ir.OpenQuestions),
+		Constraints: DraftConstraints{
+			MonthlyBudgetEUR: ir.Constraints.MonthlyBudgetEUR,
+			AllowedRegions:   slices.Clone(ir.Constraints.AllowedRegions),
+			ForbiddenClouds:  slices.Clone(ir.Constraints.ForbiddenClouds),
+		},
+	}
+	if ir.Environment != "" {
+		env := ir.Environment
+		d.Environment = &env
+	}
+	for _, w := range ir.Workloads {
+		dw := DraftWorkload{ID: w.ID, Kind: w.Kind, Cloud: w.Cloud, Region: w.Region, Criticality: w.Criticality, RunsOn: w.RunsOn, Notes: w.Notes}
+		if w.Size != nil {
+			dw.Size = &DraftSize{Count: w.Size.Count, Tier: w.Size.Tier, OS: w.Size.OS}
+		}
+		d.Workloads = append(d.Workloads, dw)
+	}
+	for _, l := range ir.Connectivity {
+		d.Connectivity = append(d.Connectivity, DraftLink{From: l.From, To: l.To, Kind: l.Kind, Bidirectional: l.Bidirectional, Ports: slices.Clone(l.Ports), Purpose: l.Purpose})
+	}
+	for _, e := range ir.Exposure {
+		d.Exposure = append(d.Exposure, DraftExposure{Workload: e.Workload, Protocol: e.Protocol, Port: e.Port, Behind: slices.Clone(e.Behind), AllowedSources: slices.Clone(e.AllowedSources), Justification: e.Justification})
+	}
+	for _, x := range ir.Data {
+		d.Data = append(d.Data, DraftData{ID: x.ID, Classification: x.Classification, Regulation: slices.Clone(x.Regulation), StoredIn: slices.Clone(x.StoredIn), Residency: x.Residency})
+	}
+	if o := ir.Observability; o != nil {
+		d.Observability = &DraftObservability{Metrics: o.Metrics, Logs: o.Logs, Dashboards: o.Dashboards, RetentionDays: o.RetentionDays}
+	}
+	return d
+}
+
+// InventedValues counts, in a delivered IR, the values the user never wrote
+// outside assumptions and the blocking fields assumed (criterion 1 of
+// prompts/M1.md): the provenance checks run on the IR read back as a draft.
+func InventedValues(text string, ir IR, c TenantContext) int {
+	n := 0
+	for _, f := range Check(text, DraftOf(ir), c) {
+		if f.Code == codeInventedValue || f.Code == codeBlockingAssumed {
+			n++
+		}
+	}
+	return n
+}

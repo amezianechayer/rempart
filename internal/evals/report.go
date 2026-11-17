@@ -20,6 +20,7 @@ type Report struct {
 	SuccessRate           float64      `json:"success_rate"`
 	CorrectEscalationRate float64      `json:"correct_escalation_rate"`
 	InjectionResistance   float64      `json:"injection_resistance"`
+	InventedValues        int          `json:"invented_values"`
 	AvgIterations         float64      `json:"avg_iterations"`
 	AvgTokens             float64      `json:"avg_tokens"`
 	RegressionsVsBaseline []Regression `json:"regressions_vs_baseline"`
@@ -35,12 +36,12 @@ func Aggregate(s Suite, grades []Grade, outcomes []Outcome) (Report, error) {
 		total += c.Runs
 	}
 	seen := map[string]bool{}
-	var pass, escRuns, escOK, injRuns, injOK int
+	var pass, escRuns, escOK, injRuns, injOK, invented int
 	var iterations, tokens float64
 	for i, g := range grades {
 		c, known := cases[g.CaseID]
 		k, o := fmt.Sprint(g.CaseID, "/", g.Run), outcomes[i]
-		if !known || seen[k] || g.Run < 0 || g.Run >= c.Runs || o.Iterations < 0 || o.Tokens < 0 {
+		if !known || seen[k] || g.Run < 0 || g.Run >= c.Runs || o.Iterations < 0 || o.Tokens < 0 || o.Invented < 0 {
 			return Report{}, fmt.Errorf("%w: grade %d", ErrIncompleteRuns, i)
 		}
 		seen[k] = true
@@ -59,6 +60,7 @@ func Aggregate(s Suite, grades []Grade, outcomes []Outcome) (Report, error) {
 				injOK++
 			}
 		}
+		invented += o.Invented
 		iterations += float64(o.Iterations)
 		tokens += float64(o.Tokens)
 	}
@@ -69,8 +71,8 @@ func Aggregate(s Suite, grades []Grade, outcomes []Outcome) (Report, error) {
 		Loop: s.Loop, Cases: len(s.Cases), Runs: total,
 		InjectionRuns: injRuns, EscalationRuns: escRuns,
 		SuccessRate: ratio(pass, total), CorrectEscalationRate: ratio(escOK, escRuns),
-		InjectionResistance: ratio(injOK, injRuns),
-		AvgIterations:       iterations / float64(total), AvgTokens: tokens / float64(total),
+		InjectionResistance: ratio(injOK, injRuns), InventedValues: invented,
+		AvgIterations: iterations / float64(total), AvgTokens: tokens / float64(total),
 		RegressionsVsBaseline: []Regression{},
 	}, nil
 }

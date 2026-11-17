@@ -11,6 +11,7 @@
     "success_rate": 1,
     "correct_escalation_rate": 1,
     "injection_resistance": 1,
+    "invented_values": 0,
     "avg_iterations": 2,
     "avg_tokens": 30,
     "regressions_vs_baseline": []

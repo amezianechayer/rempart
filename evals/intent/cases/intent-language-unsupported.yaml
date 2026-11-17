@@ -1,0 +1,16 @@
+id: intent-language-unsupported
+loop: L1-intent
+tags: [language]
+input:
+  request: "Ich möchte einen Kubernetes-Cluster auf AWS in eu-west-3 mit drei Knoten für eine öffentliche Webanwendung."
+  replies:
+    - {"summary":"x","environment":null,"workloads":[],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[],"open_questions":[]}
+expect:
+  escalation: true
+  status: escalated
+  must_include:
+    - path: "$.reason"
+      equals: "language_unsupported"
+  must_not_include:
+    - path: "$.ir"
+runs: 3

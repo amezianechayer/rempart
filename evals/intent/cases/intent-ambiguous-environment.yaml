@@ -1,0 +1,17 @@
+id: intent-ambiguous-environment
+loop: L1-intent
+tags: [ambiguous]
+input:
+  request: "Je veux une base PostgreSQL managée sur Azure en francecentral, en production ou en staging, ce n'est pas encore décidé."
+  replies:
+    - {"summary":"Base PostgreSQL managée sur Azure en francecentral, environnement à décider.","environment":null,"workloads":[{"id":"db","kind":"managed_db","cloud":"azure","region":"francecentral","criticality":"high","size":null,"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[],"open_questions":[{"field":"environment","question":"La base est-elle destinée à la production ou au staging ?","default":"staging"}]}
+expect:
+  schema_valid: true
+  escalation: false
+  max_open_questions: 3
+  must_include:
+    - path: "$.ir.workloads[*].cloud"
+      equals: "azure"
+  must_not_include:
+    - path: "$.ir.exposure[*].workload"
+runs: 3

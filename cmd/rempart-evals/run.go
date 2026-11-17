@@ -29,6 +29,9 @@ type env struct {
 	git     gitRunner         // D14; a fake in tests
 	targets map[string]Target // targets(); a stub may be added in tests
 	environ []string          // D3
+	// confirm asks the human on the terminal (D10, obligation (ed)); nil:
+	// no terminal, every calibration is refused.
+	confirm func(prompt string) bool
 }
 
 // run opens the repository root on ".", uses the real git runner, targets()
@@ -42,7 +45,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer func() { _ = repo.Close() }()
 	environ := os.Environ()
 	_ = os.Unsetenv(apikey.EnvOpenRouter) // read once from environ, never inherited by git (ADR 0008 D5)
-	return runWith(ctx, env{repo: repo, git: execGit, targets: targets(), environ: environ}, args, stdout, stderr)
+	return runWith(ctx, env{repo: repo, git: execGit, targets: targets(), environ: environ, confirm: ttyConfirm}, args, stdout, stderr)
 }
 
 // counted is a flag value that remembers how many times it was set (D12).
@@ -108,6 +111,11 @@ func runWith(ctx context.Context, e env, args []string, stdout, stderr io.Writer
 			return codeUsage
 		}
 		bindReal(ts, opts.suite, opts.write) // D8, D10
+		if opts.write && (e.confirm == nil || !e.confirm("evals : calibrer la route "+opts.llm+"/"+opts.model+
+			" sur la suite "+opts.suite+" (appels facturés) et écrire sa référence ? Taper oui : ")) {
+			say(stderr, "evals : calibration non confirmée sur le terminal : rien n'est exécuté (D10).")
+			return codeUsage
+		}
 		e.targets = ts
 	}
 	for _, kv := range e.environ {

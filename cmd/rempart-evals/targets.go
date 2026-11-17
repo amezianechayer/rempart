@@ -37,7 +37,9 @@ type Target interface {
 	Run(ctx context.Context, c evals.Case, run int) (evals.Outcome, error)
 }
 
-func targets() map[string]Target { return map[string]Target{"demo": demoTarget{log: os.Stderr}} }
+func targets() map[string]Target {
+	return map[string]Target{"demo": demoTarget{log: os.Stderr}, "intent": intentTarget{log: os.Stderr}}
+}
 
 // Wiring of the demo target (D5), the constants of make demo.
 const (
@@ -117,7 +119,7 @@ func (t demoTarget) Run(ctx context.Context, c evals.Case, _ int) (o evals.Outco
 	}
 	cl, err := demoClient(replies)
 	if t.real != nil {
-		cl, err = t.real.client()
+		cl, err = t.real.client(activities.MaxTokensPerCall)
 	}
 	if err != nil {
 		return evals.Outcome{}, err

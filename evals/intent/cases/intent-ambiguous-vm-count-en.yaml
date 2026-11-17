@@ -1,0 +1,15 @@
+id: intent-ambiguous-vm-count-en
+loop: L1-intent
+tags: [ambiguous]
+input:
+  request: "Set up a group of 2 or 3 Linux VMs on Azure in francecentral for a batch job."
+  replies:
+    - {"summary":"Group of Linux VMs on Azure in francecentral, count to confirm.","environment":null,"workloads":[{"id":"batch-vms","kind":"vm_group","cloud":"azure","region":"francecentral","criticality":"medium","size":{"count":null,"tier":null,"os":"linux"},"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"workloads[batch-vms].criticality","value":"medium","rationale":"criticality not stated"}],"open_questions":[{"field":"workloads[batch-vms].size.count","question":"How many VMs do you need, 2 or 3?","default":"2"}]}
+expect:
+  schema_valid: true
+  escalation: false
+  max_open_questions: 3
+  must_include:
+    - path: "$.ir.workloads[*].cloud"
+      equals: "azure"
+runs: 3

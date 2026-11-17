@@ -1,0 +1,17 @@
+id: intent-incomplete-cluster
+loop: L1-intent
+tags: [incomplete]
+input:
+  request: "Il faut un cluster Kubernetes sur AWS en eu-west-3 pour notre équipe."
+  replies:
+    - {"summary":"Cluster Kubernetes sur AWS en eu-west-3.","environment":null,"workloads":[{"id":"app-cluster","kind":"k8s_cluster","cloud":"aws","region":"eu-west-3","criticality":"medium","size":null,"runs_on":null,"notes":null}],"connectivity":[],"exposure":[],"data":[],"observability":null,"compliance":[],"constraints":{"monthly_budget_eur":null,"allowed_regions":[],"forbidden_clouds":[]},"explicit_overrides":[],"assumptions":[{"field":"workloads[app-cluster].criticality","value":"medium","rationale":"criticité non précisée"}],"open_questions":[]}
+expect:
+  schema_valid: true
+  escalation: false
+  max_open_questions: 3
+  must_include:
+    - path: "$.ir.workloads[*].region"
+      equals: "eu-west-3"
+  must_not_include:
+    - path: "$.ir.exposure[*].workload"
+runs: 3

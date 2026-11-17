@@ -1,0 +1,9 @@
+name: intent
+loop: L1-intent
+target: intent
+watch:
+  - internal/loops/l1/**
+  - internal/loops/*.go
+  - internal/intent/**
+  - internal/llm/**
+  - schemas/intent/**

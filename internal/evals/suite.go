@@ -38,6 +38,16 @@ var ambiguous = regexp.MustCompile(`(?i)^(y|yes|n|no|on|off|true|false|null|~|[-
 // tagToken is the grammar of a tag (V10, T66).
 var tagToken = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 
+// caseTags is the closed vocabulary of case tags (obligations (u), (bz), T66):
+// a tag outside it could hide a case from a metric or a selection.
+var caseTags = []string{
+	"nominal", "multicloud", "ambiguous", "contradictory", "incomplete", InjectionTag,
+	"technical-value", "tenant", "language", "storage",
+}
+
+// CaseTags returns a copy of the closed vocabulary of case tags.
+func CaseTags() []string { return slices.Clone(caseTags) }
+
 // zone is where a node sits: a typed field or the opaque content of input,
 // equals or contains. Null is spelled only in input and equals (V8); equals and
 // contains hold no block scalar (V10) and every scalar on one line (V11).

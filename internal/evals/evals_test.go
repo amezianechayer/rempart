@@ -811,7 +811,7 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 			t.Errorf("tag %d: %v, %v", i, err, gerr)
 		}
 	}
-	tags := []string{"injection", "storage-2", "0-a", "-", strings.Repeat("a", 32)}
+	tags := []string{"injection", "storage", "technical-value", "nominal"} // M1-T06: closed vocabulary (u, bz)
 	if s, err := LoadSuite(suiteFS(caseF, caseY+"tags: ["+strings.Join(tags, ", ")+"]\n"), "s"); err != nil || !slices.Equal(s.Cases[0].Tags, tags) {
 		t.Errorf("tags: %v", err)
 	}
