@@ -237,6 +237,20 @@ func (c *Client) loadPrompt(call Call) (prompts.Prompt, error) {
 	return p, nil
 }
 
+// Route returns the route of the tenant of ctx, checked exactly as before
+// every call (policy, registry of validated routes), without calling the
+// provider: the evidence of a loop names the route that produced it (T101).
+func (c *Client) Route(ctx context.Context) (domain.Route, error) {
+	if c == nil {
+		return domain.Route{}, ErrInvalidConfig
+	}
+	tenant, err := tenancy.FromContext(ctx)
+	if err != nil {
+		return domain.Route{}, err
+	}
+	return c.checkedRoute(ctx, tenant)
+}
+
 // checkedRoute returns exactly the route that CheckPolicy accepted (T40).
 func (c *Client) checkedRoute(ctx context.Context, tenant tenancy.ID) (domain.Route, error) {
 	pol, err := c.resolver.Resolve(ctx, tenant)

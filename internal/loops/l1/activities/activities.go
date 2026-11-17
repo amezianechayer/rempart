@@ -95,11 +95,23 @@ type FinalizeRequest struct {
 }
 
 // Finalized is the IR with the tenant of the worker and the contradictions
-// turned into questions.
+// turned into questions, and the route that produced it.
 type Finalized struct {
 	Status         string                 `json:"status"` // converged or needs_clarification
 	IR             domain.IR              `json:"ir"`
 	Contradictions []domain.Contradiction `json:"contradictions"`
+	Route          Route                  `json:"route"`
+}
+
+// Route is the effective route of the proposals and the pinned prompt
+// (obligation (eg), T101): values checked by llm.Client (closed platform
+// list, pinned model), never written by the model.
+type Route struct {
+	Platform   string `json:"platform"`
+	Region     string `json:"region"`
+	Model      string `json:"model"`
+	PromptID   string `json:"prompt_id"`
+	PromptHash string `json:"prompt_hash"`
 }
 
 // payload is the document of the loop, built by Prepare only.
@@ -315,13 +327,21 @@ func blocking(fs []loopsdomain.Finding) bool {
 // Finalize builds the IR of a converged draft, checked again: tenant of the
 // worker, contradictions first among the questions, in the language of the
 // request, ValidateIR. Deterministic, no model.
-func (a *Activities) Finalize(_ context.Context, req FinalizeRequest) (Finalized, error) {
+func (a *Activities) Finalize(ctx context.Context, req FinalizeRequest) (Finalized, error) {
 	p, ok := decodePayload(req.Payload)
 	if !ok {
 		return Finalized{}, refuse("invalid finalize request", loops.ErrTypeValidation)
 	}
-	if a == nil || !customer(a.Tenant) {
+	if a == nil || a.LLM == nil || !customer(a.Tenant) {
 		return Finalized{}, refuse("L1 activities not configured", loops.ErrTypePolicyViolation)
+	}
+	tctx, err := tenancy.WithTenant(ctx, a.Tenant)
+	if err != nil {
+		return Finalized{}, refuse("L1 tenant refused", loops.ErrTypePolicyViolation)
+	}
+	route, err := a.LLM.Route(tctx)
+	if err != nil {
+		return Finalized{}, refuse("L1 route refused", loops.ErrTypePolicyViolation)
 	}
 	if blocking(a.check(p, req.Candidate)) { // never an IR from an unverified draft
 		return Finalized{}, refuse("draft not verified", loops.ErrTypeValidation)
@@ -336,7 +356,9 @@ func (a *Activities) Finalize(_ context.Context, req FinalizeRequest) (Finalized
 	if intent.ValidateIR(ir) != nil {
 		return Finalized{}, refuse("IR not valid", loops.ErrTypeValidation)
 	}
-	out := Finalized{Status: StatusConverged, IR: ir, Contradictions: slices.Clone(cs)}
+	out := Finalized{Status: StatusConverged, IR: ir, Contradictions: slices.Clone(cs), Route: Route{
+		Platform: string(route.Platform), Region: route.Region, Model: route.Model, PromptID: PromptID, PromptHash: PromptHash,
+	}}
 	if out.Contradictions == nil {
 		out.Contradictions = []domain.Contradiction{}
 	}

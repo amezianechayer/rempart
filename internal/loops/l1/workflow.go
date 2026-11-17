@@ -44,12 +44,16 @@ const (
 // Input carries no tenant: the tenant is the one of the worker (rule 9).
 type Input = activities.Input
 
+// Route is the effective route of a delivered IR (obligation (eg)).
+type Route = activities.Route
+
 // Output: IR only when converged or needs_clarification (D5).
 type Output struct {
 	Status         string                 `json:"status"`
 	Reason         string                 `json:"reason,omitempty"`
 	IR             *domain.IR             `json:"ir,omitempty"`
 	Contradictions []domain.Contradiction `json:"contradictions"`
+	Route          *Route                 `json:"route,omitempty"` // set once Finalize ran
 	Loop           loops.LoopResult       `json:"loop"`
 }
 
@@ -101,7 +105,7 @@ func Workflow(ctx workflow.Context, in Input) (Output, error) {
 	if err := workflow.ExecuteActivity(sctx, FinalizeActivity, req).Get(ctx, &fin); err != nil {
 		return Output{}, err
 	}
-	out.Contradictions = fin.Contradictions
+	out.Contradictions, out.Route = fin.Contradictions, &fin.Route
 	if fin.Status == StatusNeedsClarification && in.Round >= MaxRounds {
 		out.Status, out.Reason = StatusEscalated, ReasonClarificationExhausted
 		return out, nil

@@ -242,7 +242,7 @@ func (c *srcChecker) file(sf *SourceFile) {
 	inLoops := under(sf.Pkg, c.loops)
 	// M1-T02 D11: the codec is the decoder itself, out of the workflow code
 	// and decoding classes, confined by loops-codec-confined instead.
-	codec := under(sf.Pkg, c.loops+"/codec")
+	codec := sf.Pkg == c.loops+"/codec"              // obligation (do): the exact package, never a subpackage
 	dec := inLoops && !under(sf.Pkg, fake) && !codec // (au)
 	wf := !codec && (sf.Pkg == c.loops || under(sf.Pkg, c.loops+"/domain") || under(sf.Pkg, c.loops) && c.wfPkg[sf.Pkg])
 	cmd := under(sf.Pkg, c.module+"/cmd")
@@ -314,7 +314,8 @@ func (c *srcChecker) file(sf *SourceFile) {
 			case (pkg == "go.temporal.io/sdk/client" && slices.Contains(temporalDialNames, name) ||
 				pkg == "go.temporal.io/sdk/worker" && name == "New") && sf.Pkg != c.module+"/cmd/rempart-worker": // (dl)
 				c.add(sf, n, "temporal-dial-confined", pkg+"."+name)
-			case codec && pkg == "go.temporal.io/sdk/workflow" && !slices.Contains(codecWorkflowNames, name):
+			case codec && (pkg == "go.temporal.io/sdk/client" || pkg == "go.temporal.io/sdk/worker"), // (do)
+				codec && pkg == "go.temporal.io/sdk/workflow" && !slices.Contains(codecWorkflowNames, name):
 				c.add(sf, n, "loops-codec-confined", pkg+"."+name)
 			case pkg == c.loops && guarded(name) != "":
 				c.ref(sf, n, name, stack)

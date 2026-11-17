@@ -567,3 +567,24 @@ func textParts(r lldomain.Request) []string {
 	}
 	return out
 }
+
+// TestL1OutputCarriesRoute (obligation (eg), T101): a delivered IR comes with
+// the effective route (platform, region, model) and the pinned prompt; an
+// escalation without proposer call carries none.
+func TestL1OutputCarriesRoute(t *testing.T) {
+	h := newHarness(t, tenantA, []llmfake.Step{answer(draft(t, "reference-draft.json"))})
+	out := mustRun(t, h, referenceInput(t))
+	want := l1.Route{Platform: "fake", Region: "", Model: model, PromptID: activities.PromptID, PromptHash: activities.PromptHash}
+	if out.Route == nil || *out.Route != want {
+		t.Errorf("route %+v, want %+v", out.Route, want)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil || !bytes.Contains(raw, []byte(`"route":{"platform":"fake","region":"","model":"fake-model-v1"`)) {
+		t.Errorf("serialized output %s, %v; want the route", raw, err)
+	}
+	h = newHarness(t, tenantA, []llmfake.Step{answer(draft(t, "reference-draft.json"))})
+	esc := mustRun(t, h, l1.Input{RequestText: "Ich möchte einen Kubernetes-Cluster auf AWS in eu-west-3 mit drei Knoten.", Round: 1})
+	if esc.Route != nil {
+		t.Errorf("escalation without model call carries a route %+v", esc.Route)
+	}
+}
