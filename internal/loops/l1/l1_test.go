@@ -221,6 +221,28 @@ func assertEscalatedWithoutIR(t *testing.T, h *harness, out l1.Output) {
 	if n := h.count(l1.FinalizeActivity); n != 0 && out.Reason != l1.ReasonClarificationExhausted {
 		t.Errorf("%d finalizations after an escalation of the loop", n)
 	}
+	assertNoDraft(t, out)
+}
+
+// assertNoDraft (review of M1-T05, T98): the output never carries a draft of
+// the model, the rejected best candidate least of all: the IR is the only
+// deliverable.
+func assertNoDraft(t *testing.T, out l1.Output) {
+	t.Helper()
+	if out.Loop.Best != nil {
+		t.Errorf("output carries the best candidate of the loop: %s", out.Loop.Best)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if loop, ok := m["loop"].(map[string]any); !ok || loop["best"] != nil {
+		t.Errorf("serialized output has a loop without object or with a best key: %s", raw)
+	}
 }
 
 // TestL1ConvergesOnReferenceScenario (C3 at the loop level): the reference
@@ -251,6 +273,7 @@ func TestL1ConvergesOnReferenceScenario(t *testing.T) {
 			if n := h.prov.Invocations(); n != 1 {
 				t.Errorf("%d provider calls, want 1", n)
 			}
+			assertNoDraft(t, out)
 		})
 	}
 }
@@ -315,6 +338,13 @@ func TestL1InjectionNoExposure(t *testing.T) {
 		assertEscalatedWithoutIR(t, h, out)
 		if !slices.ContainsFunc(out.Loop.Remaining, func(f loopsFinding) bool { return f.Code == "INTENT-EXPOSURE-SENSITIVE" }) {
 			t.Errorf("remaining findings %+v, want INTENT-EXPOSURE-SENSITIVE", out.Loop.Remaining)
+		}
+		raw, err := json.Marshal(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(raw, []byte(`"exposure"`)) || bytes.Contains(raw, []byte("demande d'exposition")) {
+			t.Errorf("escalated output carries the exposure of the injected draft: %s", raw)
 		}
 	})
 	t.Run("obeys_then_override", func(t *testing.T) {

@@ -89,13 +89,15 @@ func Workflow(ctx workflow.Context, in Input) (Output, error) {
 	if err != nil {
 		return Output{}, err
 	}
+	best := loop.Best
+	loop.Best = nil // T98: a draft never leaves L1, the rejected one least of all; the IR is the only deliverable
 	out.Loop = loop
 	if loop.Status != loops.StatusConverged {
 		out.Status, out.Reason = StatusEscalated, string(loop.Reason)
 		return out, nil
 	}
 	var fin activities.Finalized
-	req := activities.FinalizeRequest{Payload: prep.Payload, Candidate: loop.Best}
+	req := activities.FinalizeRequest{Payload: prep.Payload, Candidate: best}
 	if err := workflow.ExecuteActivity(sctx, FinalizeActivity, req).Get(ctx, &fin); err != nil {
 		return Output{}, err
 	}
