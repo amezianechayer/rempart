@@ -85,6 +85,10 @@ func unkeyed(lit *ast.CompositeLit) bool {
 // codec may use: propagation and context-aware conversion (M1-T02 D11).
 var codecWorkflowNames = []string{"Context", "ContextPropagator", "HeaderReader", "HeaderWriter", "ContextAware", "WithValue"}
 
+// temporalDialNames create a Temporal client: with worker.New, only
+// cmd/rempart-worker calls them, behind codec.Check (obligation (dl)).
+var temporalDialNames = []string{"Dial", "DialContext", "NewClient", "NewLazyClient", "NewClientFromExisting", "NewClientFromExistingWithContext"}
+
 var decodingNames = []string{
 	"Receive", "ReceiveWithTimeout", "ReceiveAsync", "ReceiveAsyncWithMoreFlag", "Get", "Details",
 	"LastHeartbeatDetails", "GetLastCompletionResult", "SetUpdateHandler", "SetUpdateHandlerWithOptions",
@@ -307,6 +311,9 @@ func (c *srcChecker) file(sf *SourceFile) {
 			pkg, name, ok := c.resolve(sf, nil, n)
 			switch {
 			case !ok:
+			case (pkg == "go.temporal.io/sdk/client" && slices.Contains(temporalDialNames, name) ||
+				pkg == "go.temporal.io/sdk/worker" && name == "New") && sf.Pkg != c.module+"/cmd/rempart-worker": // (dl)
+				c.add(sf, n, "temporal-dial-confined", pkg+"."+name)
 			case codec && pkg == "go.temporal.io/sdk/workflow" && !slices.Contains(codecWorkflowNames, name):
 				c.add(sf, n, "loops-codec-confined", pkg+"."+name)
 			case pkg == c.loops && guarded(name) != "":

@@ -152,7 +152,7 @@ var (
 func set(words ...string) map[string]bool {
 	m := make(map[string]bool, len(words))
 	for _, w := range words {
-		m[w] = true
+		m[fold(w)] = true // tokens are folded (obligation (dc))
 	}
 	return m
 }

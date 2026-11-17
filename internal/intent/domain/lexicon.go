@@ -90,8 +90,21 @@ type tokenIndex struct {
 	raw    string
 }
 
+// diacritics folds the accented Latin letters of French and close languages
+// (obligation (dc)): "donnees de sante" reads like "données de santé".
+var diacritics = strings.NewReplacer(
+	"à", "a", "á", "a", "â", "a", "ã", "a", "ä", "a", "å", "a", "ç", "c",
+	"è", "e", "é", "e", "ê", "e", "ë", "e", "ì", "i", "í", "i", "î", "i", "ï", "i",
+	"ñ", "n", "ò", "o", "ó", "o", "ô", "o", "õ", "o", "ö", "o",
+	"ù", "u", "ú", "u", "û", "u", "ü", "u", "ý", "y", "ÿ", "y", "œ", "oe", "æ", "ae",
+)
+
+// fold lowers s and folds its diacritics: every comparison of the lexicon and
+// of the language detection reads both sides through it.
+func fold(s string) string { return diacritics.Replace(strings.ToLower(s)) }
+
 func tokenize(s string) []string {
-	fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+	fields := strings.FieldsFunc(fold(s), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-'
 	})
 	out := fields[:0]
@@ -144,7 +157,7 @@ func (ix tokenIndex) hasAny(f forms) bool {
 }
 
 // literal reports whether value equals a token of the text.
-func (ix tokenIndex) literal(value string) bool { return ix.set[strings.ToLower(value)] }
+func (ix tokenIndex) literal(value string) bool { return ix.set[fold(value)] }
 
 // anchoredIn reports whether a form of value in the lexicon domain, in any
 // covered language, is in the text.

@@ -12,6 +12,7 @@ import (
 	llmfake "github.com/amezianechayer/rempart/internal/llm/fake"
 	"github.com/amezianechayer/rempart/internal/loops"
 	"github.com/amezianechayer/rempart/internal/loops/codec"
+	"github.com/amezianechayer/rempart/internal/loops/demo"
 	"github.com/amezianechayer/rempart/internal/secrets/envelope"
 	secretsfake "github.com/amezianechayer/rempart/internal/secrets/fake"
 	"github.com/amezianechayer/rempart/internal/tenancy"
@@ -96,4 +97,32 @@ func TestStrictInputDecoding(t *testing.T) {
 			t.Errorf("loop %s, want converged", out.Loop.Status)
 		}
 	})
+}
+
+// TestDemoHeaderTenantBoundary (obligation (dk)): a workflow started with the
+// header of another tenant, or a malformed header, fails before any activity.
+func TestDemoHeaderTenantBoundary(t *testing.T) {
+	for name, data := range map[string]string{"other_tenant": string(tenantB), "malformed": "not-a-tenant"} {
+		t.Run(name, func(t *testing.T) {
+			h := sealed(t, newHarness(t, tenantA, []llmfake.Step{answer(greetBonjour)}), tenantA)
+			h.env.SetHeader(&commonpb.Header{Fields: map[string]*commonpb.Payload{codec.TenantHeader: {
+				Metadata: map[string][]byte{converter.MetadataEncoding: []byte(codec.EncodingTenant)},
+				Data:     []byte(data),
+			}}})
+			// A malformed header makes the propagator fail the workflow task:
+			// a worker retries it and the run never completes, the test
+			// environment panics (T97, fail closed either way).
+			panicked := func() (p bool) {
+				defer func() { p = recover() != nil }()
+				h.env.ExecuteWorkflow(demo.WorkflowName, input())
+				return false
+			}()
+			if !panicked && h.env.IsWorkflowCompleted() && h.env.GetWorkflowError() == nil {
+				t.Fatal("workflow succeeded with a foreign or malformed tenant header")
+			}
+			if n := len(h.prov.Calls()); n != 0 || h.total() != 0 {
+				t.Errorf("%d provider calls, %d activities; want 0, 0", n, h.total())
+			}
+		})
+	}
 }
