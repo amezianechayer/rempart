@@ -341,3 +341,31 @@ func TestRedactThirdReview(t *testing.T) {
 		hides(t, "[REDACTED:aws_access_key] "+doc, sec)
 	})
 }
+
+// TestRedactFourthReview: probes of the fourth security review of M1-T08. A
+// JSON string the decoder never yields (truncated, invalid escape, control
+// byte) is masked from its quote when it holds an escape; a scalar YAML root
+// is a leaf; a typed marker is found whatever its form.
+func TestRedactFourthReview(t *testing.T) {
+	bs := "\\"
+	sec := "c2VjcmV0LWtleS1ieXRlcw=="
+	psk := bs + "u003cpre_shared_key" + bs + "u003eZk3vP9qW2xT7" + bs + "u003c/pre_shared_key" + bs + "u003e"
+	for name, c := range map[string]struct {
+		in      string
+		secrets []string
+	}{
+		"truncated_leaf":     {`{"config":"` + psk + ` and more`, []string{"Zk3vP9qW2xT7"}},
+		"truncated_in_array": {`[{"a":1},{"config":"x ` + psk, []string{"Zk3vP9qW2xT7"}},
+		"invalid_escape":     {`{"m":"` + bs + `q` + bs + `u0073k-proj-abcdefghijklmnopqrstuvwx"}`, []string{"abcdefghijklmnopqrstuvwx"}},
+		"control_byte":       {`{"m":"a` + "\x01" + bs + `u0073k-proj-abcdefghijklmnopqrstuvwx"}`, []string{"abcdefghijklmnopqrstuvwx"}},
+		"root_dq_scalar":     {`"password` + bs + `t=hunter2xyz"`, []string{"hunter2xyz"}},
+		"root_block_scalar":  {"--- |\n  apiVersion: v1\n  kind: Secret\n  data:\n    tls.key: " + sec + "\n", []string{sec}},
+		"marker_crlf":        {"kind: Secret\r\ndata:\r\n  tls.key: " + sec + "\r\nbad: [\r\n", []string{sec}},
+		"marker_comment":     {"kind: Secret # db\ndata:\n  tls.key: " + sec + "\nbad: [\n", []string{sec}},
+		"marker_quoted_key":  {"\"kind\": \"Secret\"\ndata:\n  tls.key: " + sec + "\nbad: [\n", []string{sec}},
+		"marker_flow":        {"{kind: Secret, data: {tls.key: " + sec + "}}\nbad: [\n", []string{sec}},
+		"marker_next_line":   {"kind:\n  Secret\ndata:\n  tls.key: " + sec + "\nbad: [\n", []string{sec}},
+	} {
+		t.Run(name, func(t *testing.T) { hides(t, c.in, c.secrets...) })
+	}
+}

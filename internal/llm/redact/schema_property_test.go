@@ -157,8 +157,7 @@ func checkAccepted(raw string, asPrompt bool) error {
 }
 
 // TestSchemaSecretProperty: every positive case, at every placement, as a tool
-// or a prompt schema. At least one case hides its secret from the raw bytes,
-// so that the property is not vacuous.
+// or a prompt schema.
 func TestSchemaSecretProperty(t *testing.T) {
 	ins := redact.PositiveInputs()
 	if len(ins) < 50 {
@@ -181,9 +180,9 @@ func TestSchemaSecretProperty(t *testing.T) {
 			}
 		}
 	}
-	if hidden == 0 {
-		t.Fatal("no case hides its secret from the raw bytes: vacuous property")
-	}
+	// Since M1-T08 the redactor decodes the JSON leaves of the raw bytes: a
+	// placement may no longer hide its secret from them, and the check on the
+	// decoded texts is then a second line of defense.
 	t.Logf("%d placements hide the secret from the raw bytes", hidden)
 	for _, asPrompt := range []bool{false, true} { // witness: a clean schema reaches the provider
 		if ok, err := reaches(placements["description"]("Look up a record."), asPrompt); !ok || err != nil {

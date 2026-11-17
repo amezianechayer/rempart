@@ -225,6 +225,7 @@ func (w *jsonWalk) document(at int) int {
 			for i := len(stack) - 1; i >= 0; i-- {
 				w.close(stack[i], stack[:i+1])
 			}
+			w.interrupted(tokenStart(w.s, at+prev))
 			var se *json.SyntaxError
 			switch {
 			case errors.As(err, &se) && int(se.Offset) > 0:
@@ -279,6 +280,27 @@ func (w *jsonWalk) document(at int) int {
 				top.expectKey = true
 			}
 		}
+	}
+}
+
+// interrupted masks the string that starts at s[start] when the decoder
+// failed on it (truncated text, invalid escape, control byte): it is never
+// yielded as a leaf, so an escape in it is never decoded. From the quote to
+// the closing quote, or to the end of the text (fourth review of M1-T08).
+func (w *jsonWalk) interrupted(start int) {
+	if start >= len(w.s) || w.s[start] != '"' {
+		return
+	}
+	end := start + 1
+	for end < len(w.s) && w.s[end] != '"' {
+		if w.s[end] == '\\' {
+			end++
+		}
+		end++
+	}
+	end = min(end, len(w.s))
+	if start+1 < end && strings.IndexByte(w.s[start+1:end], '\\') >= 0 {
+		w.out = append(w.out, mask(start+1, end, KindSensitiveVar))
 	}
 }
 
@@ -418,10 +440,22 @@ func yamlCandidates(s string, b *budget) []candidate {
 			}
 			return out // io.EOF, or not YAML: the other passes read the text
 		}
-		if len(doc.Content) != 1 || (doc.Content[0].Kind != yaml.MappingNode && doc.Content[0].Kind != yaml.SequenceNode) {
-			continue // an empty, scalar or prose document: the next ones are read
+		if len(doc.Content) != 1 {
+			continue // an empty document: the next ones are read
 		}
 		w := yamlWalker{s: s, l: lines, b: b}
+		if root := doc.Content[0]; root.Kind == yaml.ScalarNode {
+			// A quoted or block scalar root is a leaf; a plain one is free
+			// text, read by the regular expressions.
+			if root.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) == 0 {
+				continue
+			}
+			if !w.scalar(root, "", -1) {
+				return []candidate{mask(0, len(s), KindSensitiveVar)}
+			}
+			out = append(out, w.out...)
+			continue
+		}
 		if !w.walk(doc.Content[0], 0, "", -1) {
 			return []candidate{mask(0, len(s), KindSensitiveVar)}
 		}
@@ -430,8 +464,10 @@ func yamlCandidates(s string, b *budget) []candidate {
 }
 
 // typedMarker: a typed secret of a YAML stream (Kubernetes Secret, OpenTofu
-// sensitive value, SSM SecureString).
-var typedMarker = regexp.MustCompile(`(?im)^[ \t-]*(?:kind:[ \t]*["']?Secret["']?[ \t]*$|sensitive:[ \t]*true|type:[ \t]*["']?SecureString)`)
+// sensitive value, SSM SecureString), whatever its form: quoted key, tag,
+// comment, CRLF, flow style, value on the next line.
+var typedMarker = regexp.MustCompile(`(?i)["']?\bkind["']?[ \t]*:\s*(?:!!?\S+\s+)?["']?Secret\b` +
+	`|["']?\bsensitive["']?[ \t]*:\s*(?:!!?\S+\s+)?["']?true\b|\bSecureString\b`)
 
 // yamlLines splits the text like the YAML decoder: line breaks "\r\n", "\r",
 // "\n", U+0085, U+2028, U+2029; a leading byte order mark is not a column.
