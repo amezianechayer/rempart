@@ -74,3 +74,35 @@ Amendements de l'ADR 0002 : plateformes ci-dessus ; « jamais un alias » devien
 - **T22** : hôte codé, `BaseURL` de bouclage seulement, aucune redirection, aucun proxy, transport D6 (`TestTransportInjectionRefused`) ; OpenRouter, tiers qui reçoit les prompts, est borné par D2 et D7.
 - **T92** : alias en `none` seulement, fournisseur final fixé, `model`, `provider` et `system_fingerprint` consignés ; `TestModelPinnedPerPlatform`.
 - Proposé à `security-reviewer` : T89 étendue au relais américain et au fournisseur final variable ; T47 et T91 couverts par D3 et D6.
+
+## Amendement A1 : faits vérifiés aux premiers appels réels (H-real, 2026-11-18)
+
+- Statut de A1 : proposé le 2026-11-18 par l'agent, à accepter par l'humain avec l'ADR (remplacer cette ligne par « Statut de A1 : accepté le <date> (décision humaine) »).
+- Origine : premiers essais de la calibration réelle de la suite `intent` depuis le terminal de l'humain, puis diagnostic par `curl` aux conditions exactes de D3 (fournisseur imposé sans repli, `require_parameters`, `data_collection: "deny"`, `transforms: []`, schéma strict du brouillon) ; entrée du 2026-11-18 de `docs/STATUS.md`, constats F11 et F12.
+
+### Faits vérifiés
+
+Relevés le 2026-11-18 par l'humain, depuis son poste, sur `https://openrouter.ai/api/v1` (statut « vérifié » : observé par un appel réel, à la date indiquée, sans garantie de durée).
+
+| # | Fait | Statut | Effet |
+|---|---|---|---|
+| F1 | Point d'accès, format OpenAI, clé dans `Authorization: Bearer` | vérifié (200) | aucun |
+| F5 | `json_schema` strict avec `require_parameters: true` accepté par le fournisseur `openai` pour `openai/gpt-4o-2024-08-06`, avec le vrai schéma du brouillon `intent.extract.v1` | vérifié (200, brouillon rendu) | aucun |
+| F8 | La réponse porte `model` et `provider` | vérifié | aucun |
+| F9 | Plafond de dépense par clé, lisible par `GET /api/v1/key` (`limit`, `limit_remaining`) | vérifié | aucun |
+| F11 | `deepseek/deepseek-chat` n'a plus de point d'accès chez le fournisseur `deepseek` aux conditions de D3 : 404 « no endpoints » ; l'identifiant n'est servi que par d'autres fournisseurs (DeepInfra, StreamLake), non vérifiés pour `data_collection: "deny"` | vérifié (404) | A1.1 |
+| F12 | Le fournisseur `anthropic` refuse un schéma strict à plus de 16 paramètres nullables ou à types unions ; le schéma du brouillon en compte 17 : 400 | vérifié (400) | A1.2 |
+| F13 | OpenRouter réserve avant l'appel le coût maximal de la requête (`max_tokens` compris) et refuse par 402 si le solde du compte ne le couvre pas, sans facturer ; la limite de la clé n'est pas un solde (`is_free_tier: true` tant qu'aucun crédit n'est acheté) | vérifié (402) | A1.3 |
+
+F2 à F4, F6, F7 et F10 restent non vérifiés.
+
+### Décision
+
+- **A1.1** (F11) `deepseek/deepseek-chat` est **retiré** de la liste fermée de D4, par la règle même de D4 (« une entrée que `data_collection: "deny"` laisse sans fournisseur est retirée, jamais assouplie ») : aucune entrée n'est rattachée à un fournisseur final non vérifié. Un modèle DeepSeek revient par un nouvel amendement, avec un fournisseur final dont `curl` aux conditions de D3 rend 200. Les tests qui prenaient cet identifiant comme exemple de modèle listé prennent `openai/gpt-4o-2024-08-06` ; ceux qui le prenaient comme exemple de modèle hors liste le gardent.
+- **A1.2** (F12) `anthropic/claude-sonnet-4.5` reste listé, mais n'est pas calibrable avec `intent.extract.v1` : l'appel échoue fermé (400, compté `HTTP 400`, aucune baseline écrite). Une version 2 du schéma du brouillon, à 16 paramètres nullables ou unions au plus, est une tâche de M2 (nouveau prompt, nouveau hash, nouvelles baselines) ; d'ici là, aucune route Anthropic n'est validée.
+- **A1.3** (F13) Aucun changement de code : le plafond `MaxTokensPerCall` de L1 (8 192) fixe le coût réservé par appel ; le crédit nécessaire est documenté dans `docs/SETUP.md` (environ 10 $ pour une calibration et une mesure de la suite `intent` sur GPT-4o). Une calibration interrompue par des 402 n'écrit rien (décompte des échecs par classe, `TestRealModeReportsFailureCauses`).
+
+### Conséquences
+
+- Positives : la liste fermée ne contient plus d'entrée qui échoue à chaque appel ; la route réelle de référence de M1 est `openrouter` / `openai/gpt-4o-2024-08-06`, seule vérifiée de bout en bout.
+- Négatives : aucun modèle à poids ouverts ni aucun fournisseur hors États-Unis dans la liste en M1 ; Anthropic attend le schéma v2.
