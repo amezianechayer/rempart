@@ -160,12 +160,12 @@ Dans le brouillon, dans l'IR et dans le graphe, `exposure[].allowed_sources` vid
 - **A2.2** Forme canonique : une adresse `A` s'écrit `A/32` (IPv4) ou `A/128` (IPv6) ; un préfixe écrit est pris masqué. Une source du brouillon est ancrée si sa forme canonique est celle d'une adresse ou d'un préfixe du texte ; une source non masquée reste refusée.
 - **A2.3** La sémantique de `allowed_sources` vide (« tout Internet ») sera écrite dans la description du schéma à sa prochaine version (v2, avec la limite de 16 unions de l'ADR 0008 A1.2) : `schemas/intent/v1.json` est tenu égal à la référence du skill, aux écarts listés près.
 - **A2.4** L'oracle indépendant de `invented_values` (`cmd/rempart-evals/invented.go`) lit lui aussi les adresses et préfixes du texte, avec son propre découpage (clé collée, port, bornes d'une plage, zone).
-- **A2.5** Résidus acceptés : notations entière (`3405803786`) et hexadécimale (`0xCB00710A`) d'une adresse non vues ; une restriction captée en dérogation seulement laisse `allowed_sources` vide (obligation (ey), avant M2 : en L2, une exposition sans source qui coexiste avec une dérogation citant une adresse est non résolue).
+- **A2.5** Résidus acceptés : notations entière (`3405803786`) et hexadécimale (`0xCB00710A`) d'une adresse non vues, ainsi que les séparateurs d'apparence de point non ASCII (U+2024, U+FF0E, U+00B7), la notation désarmée (`203[.]0[.]113[.]10`), les points espacés et les virgules (obligation (ez), avant M2 : normalisation NFKC et réécriture de `[.]`, `(.)`, `[:]` avant lecture) ; une restriction captée en dérogation seulement laisse `allowed_sources` vide (obligation (ey), avant M2 : en L2, une exposition sans source qui coexiste avec une dérogation citant une adresse est non résolue).
 
 ### Conséquences
 
 - Positives : une restriction écrite ne disparaît plus sans finding ; la forme fidèle d'une adresse seule est représentable ; un CIDR imposé par l'utilisateur pour un réseau doit être consigné en dérogation au lieu de disparaître en silence.
-- Négatives : tout nombre de la forme d'une adresse (`1.2.3.4` cité comme version) doit être capté en dérogation, sinon escalade ; une restriction captée en dérogation seulement laisse `allowed_sources` vide, ce que la confirmation humaine de L2 doit montrer.
+- Négatives : tout nombre de la forme d'une adresse (`1.2.3.4` cité comme version) et tout jeton d'allure d'adresse illisible (montant `1.000.000.000`, adresse MAC `00:1A:2B:3C:4D:5E`) doivent être captés en dérogation, sinon escalade ; une restriction captée en dérogation seulement laisse `allowed_sources` vide, ce que la confirmation humaine de L2 doit montrer.
 
 ### Impact sécurité
 
