@@ -21,6 +21,7 @@ const (
 	codeExposureUnrequest      = "INTENT-EXPOSURE-UNREQUESTED"
 	codeDataOmitted            = "INTENT-DATA-OMITTED"
 	codeExposureSourcesOmitted = "INTENT-EXPOSURE-SOURCES-OMITTED"
+	codeFieldInvalid           = "INTENT-FIELD-INVALID"
 )
 
 // CodeLanguageUnsupported: the request is in a language, script or encoding
@@ -39,11 +40,13 @@ var messages = map[string]string{
 	codeExposureUnrequest:      "exposure not requested by the user; remove the entry",
 	codeDataOmitted:            "sensitive data written by the user is not declared in data",
 	codeExposureSourcesOmitted: "address or prefix written by the user is neither an allowed source of an exposure nor captured in explicit_overrides",
+	codeFieldInvalid:           "field is not a path of the draft (segments [a-z_], an index or an identifier between brackets, 64 bytes at most)",
 	CodeLanguageUnsupported:    "request language, script or encoding not covered by the deterministic checks; human review required",
 }
 
 var severities = map[string]loopsdomain.Severity{
 	codeBlockingAssumed: loopsdomain.SeverityMedium,
+	codeFieldInvalid:    loopsdomain.SeverityMedium,
 }
 
 func finding(code, resource string) loopsdomain.Finding {
@@ -68,6 +71,7 @@ func Check(text string, d Draft, c TenantContext) []loopsdomain.Finding {
 	out = append(out, checkExposure(ix, d)...)
 	out = append(out, checkCompleteness(ix, d)...)
 	out = append(out, checkSources(text, d)...)
+	out = append(out, checkFields(d)...)
 	return loopsdomain.Sort(out)
 }
 

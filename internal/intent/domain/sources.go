@@ -2,6 +2,7 @@ package domain
 
 import (
 	"net/netip"
+	"regexp"
 	"strings"
 
 	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
@@ -24,12 +25,35 @@ func writtenPrefixes(s string) map[netip.Prefix]bool {
 	return out
 }
 
+// Obligation (ez): an address written with a dot look-alike or in a defanged
+// notation is read as the address. rearm rewrites the separators: the dot
+// look-alikes U+2024, U+FF0E, U+00B7, U+3002, U+FE52, the defanged forms
+// [.], (.), {.}, [:], a dot surrounded by blanks between two digits, and the
+// commas of four groups of one to three digits.
+var (
+	defanged = strings.NewReplacer(
+		"\u2024", ".", "\uFF0E", ".", "\u00B7", ".", "\u3002", ".", "\uFE52", ".",
+		"[.]", ".", "(.)", ".", "{.}", ".", "[:]", ":", "(:)", ":",
+	)
+	spacedDot  = regexp.MustCompile(`([0-9])[ \t]+\.[ \t]*([0-9])|([0-9])[ \t]*\.[ \t]+([0-9])`)
+	commaQuads = regexp.MustCompile(`\b([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3})\b`)
+)
+
+func rearm(s string) string {
+	s = defanged.Replace(s)
+	for prev := ""; prev != s; {
+		prev = s
+		s = spacedDot.ReplaceAllString(s, "$1$3.$2$4")
+	}
+	return commaQuads.ReplaceAllString(s, "$1.$2.$3.$4")
+}
+
 // readAddresses reads the addresses and prefixes of s, and returns apart the
 // tokens that look like an address but stay unreadable (second review pass
 // of T102: fail closed instead of chasing every notation).
 func readAddresses(s string) (map[netip.Prefix]bool, []string) {
 	out, unreadable := map[netip.Prefix]bool{}, []string{}
-	for _, tok := range strings.FieldsFunc(s, func(r rune) bool { return !isAddrRune(r) }) {
+	for _, tok := range strings.FieldsFunc(rearm(s), func(r rune) bool { return !isAddrRune(r) }) {
 		tok = strings.TrimLeft(strings.TrimRight(tok, ".:/"), ".")
 		if !strings.ContainsAny(tok, "0123456789") {
 			continue
@@ -118,7 +142,7 @@ func checkSources(text string, d Draft) []loopsdomain.Finding {
 	}
 	quoted := func(tok string) bool {
 		for _, o := range d.ExplicitOverrides {
-			if strings.Contains(o.Statement, tok) {
+			if strings.Contains(rearm(o.Statement), tok) {
 				return true
 			}
 		}

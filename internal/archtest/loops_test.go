@@ -110,9 +110,14 @@ func runSourceCases(t *testing.T, rule, detail string, cases []srcCase) {
 				t.Fatalf("no violation, want %s mentioning %q", r, d)
 			}
 			for _, v := range got {
-				if v.Rule != r {
+				// (er): a fixture that hides an import behind a build
+				// constraint raises no-build-constraint too, orthogonal to r.
+				if v.Rule != r && v.Rule != "no-build-constraint" {
 					t.Errorf("%s: %s (%s), want only %s", v.Pos, v.Rule, v.Detail, r)
 				}
+			}
+			if !slices.ContainsFunc(got, func(v SourceViolation) bool { return v.Rule == r }) {
+				t.Errorf("no %s violation: %v", r, got)
 			}
 			if !slices.ContainsFunc(got, func(v SourceViolation) bool { return strings.Contains(v.Detail, d) }) {
 				t.Errorf("no violation mentions %q: %v", d, got)
@@ -275,7 +280,9 @@ func TestReadSourcesNestedBin(t *testing.T) {
 	}
 	got := checkSources(t, srcs)
 	want := []SourceViolation{
+		{"no-build-constraint", "bin/dev.go:1", "build constraint //go:build dev"}, // (er)
 		{"loops-fake-tests-only", "bin/dev.go:5", modulePath + "/bin imports " + modulePath + "/internal/loops/fake"},
+		{"no-build-constraint", "cmd/rempart-worker/bin/dev.go:1", "build constraint //go:build dev"},
 		{
 			"loops-fake-tests-only", "cmd/rempart-worker/bin/dev.go:5",
 			modulePath + "/cmd/rempart-worker/bin imports " + modulePath + "/internal/loops/fake",

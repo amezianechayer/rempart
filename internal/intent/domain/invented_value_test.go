@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strconv"
 	"testing"
 
 	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
@@ -159,9 +160,16 @@ func TestInventedValueDetected(t *testing.T) {
 	}
 	for _, tc := range blocking {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Check(text, draftFrom(t, "reference-draft.json", tc.edit), ctx)
-			if !hasFinding(got, "INTENT-BLOCKING-ASSUMED", loopsdomain.SeverityMedium, tc.path) {
-				t.Errorf("want INTENT-BLOCKING-ASSUMED medium on %q, got %+v", tc.path, got)
+			d := draftFrom(t, "reference-draft.json", tc.edit)
+			res := ""
+			for i, a := range d.Assumptions { // (es): the finding names the assumption, never its field
+				if a.Field == tc.path {
+					res = "assumptions[" + strconv.Itoa(i) + "].field"
+				}
+			}
+			got := Check(text, d, ctx)
+			if !hasFinding(got, "INTENT-BLOCKING-ASSUMED", loopsdomain.SeverityMedium, res) {
+				t.Errorf("want INTENT-BLOCKING-ASSUMED medium on %q (%q), got %+v", res, tc.path, got)
 			}
 		})
 	}

@@ -140,15 +140,16 @@ func checkProvenance(ix tokenIndex, d Draft, c TenantContext) []loopsdomain.Find
 		}
 	}
 	allowed := append(slices.Clone(c.AllowedRegions), d.Constraints.AllowedRegions...)
-	for _, a := range d.Assumptions {
+	for i, a := range d.Assumptions {
+		res := iPath("assumptions", i, "field") // (es), T104: never the field, text of the model
 		switch {
 		case strings.HasPrefix(a.Field, "workloads[") && strings.HasSuffix(a.Field, "].cloud"):
-			out = append(out, finding(codeBlockingAssumed, a.Field))
+			out = append(out, finding(codeBlockingAssumed, res))
 		case strings.HasPrefix(a.Field, "workloads[") && strings.HasSuffix(a.Field, "].region") && !slices.Contains(allowed, a.Value):
-			out = append(out, finding(codeBlockingAssumed, a.Field))
+			out = append(out, finding(codeBlockingAssumed, res))
 		case strings.HasPrefix(a.Field, "data[") && strings.HasSuffix(a.Field, "].classification") &&
 			a.Value != "confidential" && a.Value != "regulated":
-			out = append(out, finding(codeBlockingAssumed, a.Field))
+			out = append(out, finding(codeBlockingAssumed, res))
 		}
 	}
 	return out

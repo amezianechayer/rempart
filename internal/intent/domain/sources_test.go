@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -125,4 +126,59 @@ func TestExposureSourcesNoFalsePositive(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestExposureSourcesNonASCIISeparators (obligation (ez)): an address written
+// with a dot look-alike (U+2024, U+FF0E, U+00B7, U+3002, U+FE52) is read as
+// the address: dropped, it fails (or the language escalates); kept as /32,
+// it is anchored.
+func TestExposureSourcesNonASCIISeparators(t *testing.T) {
+	fr := readText(t, "reference-request.txt")
+	for _, sep := range []string{"․", "．", "·", "。", "﹒"} {
+		addr := strings.Join([]string{"203", "0", "113", "10"}, sep)
+		text := fr + " L'application n'est accessible que depuis " + addr + " et rien d'autre."
+		t.Run(fmt.Sprintf("U+%04X", []rune(sep)[0]), func(t *testing.T) {
+			got := Check(text, draftFrom(t, "reference-draft.json", nil), TenantContext{})
+			if !hasFinding(got, codeSourcesOmitted, loopsdomain.SeverityHigh, "exposure") && !hasFinding(got, CodeLanguageUnsupported, loopsdomain.SeverityHigh, "") {
+				t.Errorf("dropped restriction: want %s or the language refused, got %+v", codeSourcesOmitted, got)
+			}
+			kept := Check(text, draftFrom(t, "reference-draft.json", withSources("203.0.113.10/32")), TenantContext{})
+			for _, f := range kept {
+				if f.Code == codeSourcesOmitted || f.Code == "INTENT-TECHNICAL-VALUE" || f.Code == "INTENT-INVENTED-VALUE" {
+					t.Errorf("kept restriction refused: %+v", kept)
+				}
+			}
+		})
+	}
+}
+
+// TestExposureSourcesDefanged (obligation (ez)): a defanged address
+// ([.], (.), [:]), with spaced dots or commas, is read as the address.
+func TestExposureSourcesDefanged(t *testing.T) {
+	fr := readText(t, "reference-request.txt")
+	for name, tc := range map[string]struct{ written, source string }{
+		"brackets":      {"203[.]0[.]113[.]10", "203.0.113.10/32"},
+		"parentheses":   {"203(.)0(.)113(.)10", "203.0.113.10/32"},
+		"spaced_dots":   {"203 . 0 . 113 . 10", "203.0.113.10/32"},
+		"commas":        {"203,0,113,10", "203.0.113.10/32"},
+		"ipv6_brackets": {"2001[:]db8[:][:]10", "2001:db8::10/128"},
+		"prefix":        {"198[.]51[.]100[.]0/24", "198.51.100.0/24"},
+	} {
+		text := fr + " L'application n'est accessible que depuis " + tc.written + " et rien d'autre."
+		t.Run(name, func(t *testing.T) {
+			got := Check(text, draftFrom(t, "reference-draft.json", nil), TenantContext{})
+			if !hasFinding(got, codeSourcesOmitted, loopsdomain.SeverityHigh, "exposure") {
+				t.Errorf("dropped restriction: want %s, got %+v", codeSourcesOmitted, got)
+			}
+			if kept := Check(text, draftFrom(t, "reference-draft.json", withSources(tc.source)), TenantContext{}); len(kept) != 0 {
+				t.Errorf("kept restriction: want no finding, got %+v", kept)
+			}
+		})
+	}
+	t.Run("amounts_and_versions_untouched", func(t *testing.T) {
+		text := fr + " Version 2.4 du service, quota de 1,5 To et 99,9 de disponibilité."
+		if got := Check(text, draftFrom(t, "reference-draft.json", nil), TenantContext{}); hasFinding(got, codeSourcesOmitted, loopsdomain.SeverityHigh, "") {
+			t.Errorf("unexpected %s: %+v", codeSourcesOmitted, got)
+		}
+	})
 }

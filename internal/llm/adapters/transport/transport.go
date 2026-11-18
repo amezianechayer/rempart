@@ -7,6 +7,7 @@ package transport
 import (
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"time"
 )
@@ -35,16 +36,22 @@ func Harden(rt http.RoundTripper) (http.RoundTripper, error) {
 		t.TLSNextProto != nil || t.TLSClientConfig != nil {
 		return nil, ErrTransportRefused
 	}
-	return t, nil
+	return t.Clone(), nil // (dx): a later change by its owner does not reach the hardened transport
 }
 
+// fresh builds the transport field by field (obligation (dx), T47): never a
+// clone of http.DefaultTransport, which any package can replace with a
+// dialer, a proxy or a TLS configuration.
 func fresh() *http.Transport {
-	if d, ok := http.DefaultTransport.(*http.Transport); ok {
-		c := d.Clone()
-		c.Proxy = nil
-		return c
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	return &http.Transport{
+		DialContext:           d.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
 	}
-	return &http.Transport{}
 }
 
 // Client returns a client over rt that follows no redirect, stops after

@@ -104,3 +104,46 @@ func TestClientBoundsAndRedirects(t *testing.T) {
 		t.Errorf("reading a body over the bound: %v, want ErrResponseTooLarge", err)
 	}
 }
+
+// TestFreshTransportExplicit (obligation (dx), T47): a new transport is built
+// field by field, never cloned from http.DefaultTransport (a package could
+// have replaced it with a dialer, a proxy or a TLS configuration); an
+// injected transport is cloned, so that a later change by its owner does not
+// reach the hardened one.
+func TestFreshTransportExplicit(t *testing.T) {
+	saved := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = saved })
+	dialed := false
+	http.DefaultTransport = &http.Transport{
+		Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: "127.0.0.1:1"}),
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			dialed = true
+			return nil, errors.New("hooked")
+		},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: the hook the test proves absent
+	}
+	rt, err := Harden(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := rt.(*http.Transport)
+	if !ok || tr.Proxy != nil || tr.DialContext == nil || tr.TLSClientConfig != nil {
+		t.Fatalf("fresh transport %+v: want no proxy, an own dialer, no TLS configuration", rt)
+	}
+	if _, err := tr.DialContext(context.Background(), "tcp", "127.0.0.1:1"); dialed {
+		t.Errorf("fresh transport dials with the hook of http.DefaultTransport (%v)", err)
+	}
+
+	injected := &http.Transport{}
+	got, err := Harden(injected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == http.RoundTripper(injected) {
+		t.Fatal("injected transport returned as is, want a clone")
+	}
+	injected.Proxy = http.ProxyFromEnvironment
+	if gt, ok := got.(*http.Transport); !ok || gt.Proxy != nil {
+		t.Error("a change of the injected transport reaches the hardened one")
+	}
+}

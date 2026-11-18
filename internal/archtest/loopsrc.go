@@ -269,6 +269,7 @@ func (c *srcChecker) file(sf *SourceFile) {
 			c.add(sf, is, "loops-no-json-decoding", "import "+p)
 		}
 	}
+	c.buildVariant(sf)
 	for _, cg := range sf.File.Comments { // (aw)
 		for _, cm := range cg.List {
 			switch {
@@ -714,6 +715,44 @@ func (c *srcChecker) resolve(sf *SourceFile, locals map[string]bool, e ast.Expr)
 func (c *srcChecker) isLoops(sf *SourceFile, locals map[string]bool, e ast.Expr, typ string) bool {
 	pkg, name, ok := c.resolve(sf, locals, e)
 	return ok && pkg == c.loops && name == typ && c.kind[pkg+"."+name] == "type"
+}
+
+// buildVariant (obligation (er), T103): the import rules read go list in the
+// default build configuration; a file behind a build constraint or a GOOS or
+// GOARCH file name suffix would import out of their sight. Refused in every
+// non-test file, except the integration tag alone.
+func (c *srcChecker) buildVariant(sf *SourceFile) {
+	for _, cg := range sf.File.Comments {
+		if cg.Pos() >= sf.File.Package {
+			break
+		}
+		for _, cm := range cg.List {
+			text := strings.TrimSpace(cm.Text)
+			if (strings.HasPrefix(text, "//go:build") || strings.HasPrefix(text, "// +build")) && text != "//go:build integration" {
+				c.add(sf, cm, "no-build-constraint", "build constraint "+text)
+			}
+		}
+	}
+	name := strings.TrimSuffix(path.Base(sf.Path), ".go")
+	parts := strings.Split(name, "_")
+	if n := len(parts); n > 1 && (knownOS[parts[n-1]] || knownArch[parts[n-1]] || n > 2 && knownOS[parts[n-2]] && knownArch[parts[n-1]]) {
+		c.add(sf, sf.File.Name, "no-build-constraint", "build constraint by a GOOS or GOARCH file name suffix")
+	}
+}
+
+// knownOS and knownArch: the lists of go/build (syslist.go).
+var (
+	knownOS   = setOf("aix android darwin dragonfly freebsd hurd illumos ios js linux nacl netbsd openbsd plan9 solaris wasip1 windows zos")
+	knownArch = setOf("386 amd64 amd64p32 arm armbe arm64 arm64be loong64 mips mipsle mips64 mips64le mips64p32 mips64p32le " +
+		"ppc ppc64 ppc64le riscv riscv64 s390 s390x sparc sparc64 wasm")
+)
+
+func setOf(s string) map[string]bool {
+	m := map[string]bool{}
+	for _, w := range strings.Fields(s) {
+		m[w] = true
+	}
+	return m
 }
 
 func (c *srcChecker) add(sf *SourceFile, n ast.Node, rule, detail string) {
