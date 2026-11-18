@@ -1007,3 +1007,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-18 12:30 [harnais] PHASE FREE (discipline TDD suspendue) : T18 fix: continuation requires a first attempt without cron, integration test of forged phases green, mutation detected
 
 - 2026-11-18 12:30 [harnais] phase : tests -> free
+
+- 2026-11-18 12:39 [harnais] jalon courant : M2
