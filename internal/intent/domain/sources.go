@@ -20,21 +20,73 @@ func isAddrRune(r rune) bool {
 // writtenPrefixes returns the canonical prefixes of the addresses and
 // prefixes of s: an address A as A/32 or A/128, a prefix masked.
 func writtenPrefixes(s string) map[netip.Prefix]bool {
-	out := map[netip.Prefix]bool{}
+	out, _ := readAddresses(s)
+	return out
+}
+
+// readAddresses reads the addresses and prefixes of s, and returns apart the
+// tokens that look like an address but stay unreadable (second review pass
+// of T102: fail closed instead of chasing every notation).
+func readAddresses(s string) (map[netip.Prefix]bool, []string) {
+	out, unreadable := map[netip.Prefix]bool{}, []string{}
 	for _, tok := range strings.FieldsFunc(s, func(r rune) bool { return !isAddrRune(r) }) {
 		tok = strings.TrimLeft(strings.TrimRight(tok, ".:/"), ".")
 		if !strings.ContainsAny(tok, "0123456789") {
 			continue
 		}
-		if strings.Contains(tok, "/") {
-			if p, err := netip.ParsePrefix(tok); err == nil {
-				out[p.Masked()] = true
-			}
-		} else if a, err := netip.ParseAddr(tok); err == nil {
-			out[netip.PrefixFrom(a, a.BitLen())] = true
+		if p, ok := readAddress(tok); ok {
+			out[p] = true
+		} else if addressLike(tok) {
+			unreadable = append(unreadable, tok)
 		}
 	}
-	return out
+	return out, unreadable
+}
+
+// readAddress reads tok as is, then after the retouches of glued forms: a
+// key glued by a single ':' (never '::', "ce:203.0.113.10" from "source:"),
+// the port of an IPv4 address ("203.0.113.10:443").
+func readAddress(tok string) (netip.Prefix, bool) {
+	cands := []string{tok}
+	if i := strings.Index(tok, ":"); i >= 0 && !strings.HasPrefix(tok[i:], "::") {
+		cands = append(cands, tok[i+1:])
+	}
+	for _, c := range cands {
+		if j := strings.LastIndex(c, ":"); j > 0 && strings.Count(c[:j], ".") == 3 && digits(c[j+1:]) {
+			cands = append(cands, c[:j])
+		}
+	}
+	for _, c := range cands {
+		if strings.Contains(c, "/") {
+			if p, err := netip.ParsePrefix(c); err == nil {
+				return p.Masked(), true
+			}
+		} else if a, err := netip.ParseAddr(c); err == nil {
+			return netip.PrefixFrom(a, a.BitLen()), true
+		}
+	}
+	return netip.Prefix{}, false
+}
+
+func digits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+// addressLike: three dots, a "::", or two ':' with a group that is not a
+// two-digit number (an hour hh:mm:ss is not an address).
+func addressLike(tok string) bool {
+	if strings.Count(tok, ".") >= 3 || strings.Contains(tok, "::") {
+		return true
+	}
+	if strings.Count(tok, ":") < 2 {
+		return false
+	}
+	for _, g := range strings.Split(tok, ":") {
+		if len(g) > 2 || !digits(g) && g != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // canonicalSource parses an allowed source; only a masked prefix is admitted.
@@ -52,7 +104,9 @@ func sourceWritten(written map[netip.Prefix]bool, s string) bool {
 
 // checkSources: every address or prefix of the whole text (never a sentence,
 // T85c) is an allowed source of an exposure or is captured in
-// explicit_overrides; otherwise INTENT-EXPOSURE-SOURCES-OMITTED.
+// explicit_overrides, and every token that looks like an address but stays
+// unreadable is quoted verbatim in explicit_overrides; otherwise
+// INTENT-EXPOSURE-SOURCES-OMITTED.
 func checkSources(text string, d Draft) []loopsdomain.Finding {
 	kept := map[netip.Prefix]bool{}
 	for _, e := range d.Exposure {
@@ -62,13 +116,27 @@ func checkSources(text string, d Draft) []loopsdomain.Finding {
 			}
 		}
 	}
+	quoted := func(tok string) bool {
+		for _, o := range d.ExplicitOverrides {
+			if strings.Contains(o.Statement, tok) {
+				return true
+			}
+		}
+		return false
+	}
 	for _, o := range d.ExplicitOverrides {
 		for p := range writtenPrefixes(o.Statement) {
 			kept[p] = true
 		}
 	}
-	for p := range writtenPrefixes(text) {
+	written, unreadable := readAddresses(text)
+	for p := range written {
 		if !kept[p] {
+			return []loopsdomain.Finding{finding(codeExposureSourcesOmitted, "exposure")}
+		}
+	}
+	for _, tok := range unreadable {
+		if !quoted(tok) {
 			return []loopsdomain.Finding{finding(codeExposureSourcesOmitted, "exposure")}
 		}
 	}

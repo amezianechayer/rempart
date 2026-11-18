@@ -50,6 +50,18 @@ func TestExposureSourcesOmitted(t *testing.T) {
 		"other_sentence":       {fr + " Une seule adresse : 203.0.113.10. Elle seule joindra l'application.", "203.0.113.10", nil},
 		"one_of_two_kept":      {fr + " Accès depuis 203.0.113.10 et 198.51.100.7 seulement.", "198.51.100.7", withSources("203.0.113.10/32")},
 		"other_address_listed": {fr + " Accès depuis 203.0.113.10 seulement.", "203.0.113.10", withSources("203.0.113.11/32")},
+		// Second review pass: forms glued to a key by ':', with a port,
+		// unreadable (leading zeros) fail closed unless captured verbatim.
+		"colon_key_ip":              {fr + " Accès réservé à ip:203.0.113.10.", "203.0.113.10", nil},
+		"colon_key_source":          {fr + " Restriction source:203.0.113.10 sur l'application.", "203.0.113.10", nil},
+		"colon_key_cidr":            {fr + " Accès réservé à cidr:203.0.113.0/24.", "203.0.113.0/24", nil},
+		"colon_key_word":            {fr + " Accès depuis:203.0.113.10 seulement.", "203.0.113.10", nil},
+		"with_port":                 {fr + " Accès depuis 203.0.113.10:443 seulement.", "203.0.113.10", nil},
+		"key_and_port":              {fr + " Accès réservé à source:203.0.113.10:443.", "203.0.113.10", nil},
+		"ipv6_colon_key":            {fr + " Accès réservé à ip:2001:db8::10.", "2001:db8::10", nil},
+		"leading_zeros":             {fr + " Accès depuis 203.000.113.010 seulement.", "203.000.113.010", nil},
+		"five_parts":                {fr + " Accès depuis 203.0.113.10.5 seulement.", "203.0.113.10.5", nil},
+		"leading_zeros_with_source": {fr + " Accès depuis 203.000.113.010 seulement.", "203.000.113.010", withSources("203.0.113.10/32")},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -78,6 +90,11 @@ func TestExposureSourcesKept(t *testing.T) {
 		"two_addresses":        {fr + " Accès depuis 203.0.113.10 et 198.51.100.7 seulement.", withSources("203.0.113.10/32", "198.51.100.7/32")},
 		"captured_in_override": {fr + " L'application n'est accessible que depuis 203.0.113.10.", withOverride("restreindre l'accès à 203.0.113.10")},
 		"glued_kept":           {fr + " Restriction source=203.0.113.10 sur l'application.", withSources("203.0.113.10/32")},
+		"colon_key_kept":       {fr + " Restriction source:203.0.113.10 sur l'application.", withSources("203.0.113.10/32")},
+		"colon_key_cidr_kept":  {fr + " L'accès à l'application est réservé à cidr:203.0.113.0/24.", withSources("203.0.113.0/24")},
+		"port_kept":            {fr + " Accès depuis 203.0.113.10:443 seulement.", withSources("203.0.113.10/32")},
+		"ipv6_colon_key_kept":  {fr + " Accès réservé à ip:2001:db8::10.", withSources("2001:db8::10/128")},
+		"unreadable_override":  {fr + " Accès depuis 203.000.113.010 seulement.", withOverride("restreindre l'accès à 203.000.113.010")},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -97,6 +114,10 @@ func TestExposureSourcesNoFalsePositive(t *testing.T) {
 		"hour":         " Maintenance à 12:30 ou 10:00:00.",
 		"double_colon": " Note :: rien de plus.",
 		"ratio":        " Disponibilité 99.9 et ratio 3/4.",
+		"date":         " Mise en service le 18.11.2026 à 10:30:15.",
+		"amount":       " Plafond de 1.500.000 euros.",
+		"port_alone":   " Service sur le port :8443.",
+		"uuid":         " Référence 7c9e6679-7425-40de-944b-e07fc1f90ae7.",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := Check(fr+extra, draftFrom(t, "reference-draft.json", nil), TenantContext{}); hasFinding(got, codeSourcesOmitted, loopsdomain.SeverityHigh, "") {

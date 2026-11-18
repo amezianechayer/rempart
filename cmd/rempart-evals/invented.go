@@ -194,17 +194,31 @@ func inventedValues(request string, ir intentdomain.IR) int {
 
 // oracleSources returns the allowed sources a request states, in the form of
 // a canonical prefix: each prefix written, masked, and each address written,
-// as a /32 or /128. Its own cut of the text: whitespace and punctuation, a
-// key glued by "=".
+// as a /32 or /128. Its own cut of the text: whitespace, punctuation, a key
+// glued by "=", the bounds of a range, a zone; then a key glued by ":" and
+// the port of an IPv4 address are tried off.
 func oracleSources(request string) map[string]bool {
 	out := map[string]bool{}
-	cut := func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(",;()[]{}\"'«»=", r) }
+	cut := func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(",;()[]{}\"'«»=-%", r) }
 	for _, f := range strings.FieldsFunc(request, cut) {
 		f = strings.TrimRight(f, ".:")
-		if p, err := netip.ParsePrefix(f); err == nil {
-			out[p.Masked().String()] = true
-		} else if a, err := netip.ParseAddr(f); err == nil && a.Zone() == "" {
-			out[netip.PrefixFrom(a, a.BitLen()).String()] = true
+		forms := []string{f}
+		if k, rest, ok := strings.Cut(f, ":"); ok && !strings.HasPrefix(rest, ":") && k != "" {
+			forms = append(forms, rest)
+		}
+		for _, x := range forms {
+			if host, port, ok := strings.Cut(x, ":"); ok && strings.Count(host, ".") == 3 && port != "" && strings.Trim(port, "0123456789") == "" {
+				forms = append(forms, host)
+			}
+		}
+		for _, x := range forms {
+			if p, err := netip.ParsePrefix(x); err == nil {
+				out[p.Masked().String()] = true
+				break
+			} else if a, err := netip.ParseAddr(x); err == nil && a.Zone() == "" {
+				out[netip.PrefixFrom(a, a.BitLen()).String()] = true
+				break
+			}
 		}
 	}
 	return out

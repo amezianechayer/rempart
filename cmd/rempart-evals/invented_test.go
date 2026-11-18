@@ -100,3 +100,27 @@ func TestInventedOracleSources(t *testing.T) {
 		}
 	}
 }
+
+// TestInventedOracleGluedSources (second review pass, T102): the oracle reads
+// the forms the verifier anchors: a key glued by ':', a port, a range, a zone.
+func TestInventedOracleGluedSources(t *testing.T) {
+	request := string(intentFixture(t, "reference-request.txt")) +
+		" Accès réservé à source:203.0.113.10, cidr:198.51.100.0/24, 192.0.2.7:443, 192.0.2.20-192.0.2.21, ip:2001:db8::10 et fe80::1%eth0."
+	for sources, want := range map[string]int{
+		"203.0.113.10/32":  0,
+		"198.51.100.0/24":  0,
+		"192.0.2.7/32":     0,
+		"192.0.2.20/32":    0,
+		"192.0.2.21/32":    0,
+		"2001:db8::10/128": 0,
+		"fe80::1/128":      0,
+		"192.0.2.22/32":    1,
+		"203.0.113.0/24":   1,
+	} {
+		ir := referenceIRFor(t)
+		ir.Exposure[0].AllowedSources = strings.Fields(sources)
+		if n := inventedValues(request, ir); n != want {
+			t.Errorf("sources %q: %d invented values, want %d", sources, n, want)
+		}
+	}
+}

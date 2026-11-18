@@ -44,3 +44,31 @@ func TestL1SourceRestrictionKept(t *testing.T) {
 		}
 	})
 }
+
+// TestL1SourceRestrictionGluedForms (second review pass, T102): an address
+// glued to a key by ':' or followed by a port is kept or escalates, never
+// dropped into an IR open to all of Internet.
+func TestL1SourceRestrictionGluedForms(t *testing.T) {
+	kept := answer(draft(t, "reference-draft.json", `"allowed_sources": []`, `"allowed_sources": ["203.0.113.10/32"]`))
+	dropped := answer(draft(t, "reference-draft.json"))
+	for name, extra := range map[string]string{
+		"colon_key":    " L'accès à l'application est réservé à source:203.0.113.10.",
+		"word_key":     " Accès depuis:203.0.113.10 seulement.",
+		"with_port":    " Accès depuis 203.0.113.10:443 seulement.",
+		"key_and_port": " L'accès à l'application est réservé à ip:203.0.113.10:443.",
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := referenceInput(t)
+			in.RequestText += extra
+			h := newHarness(t, tenantA, []llmfake.Step{kept, dropped})
+			out := mustRun(t, h, in)
+			if out.Status != l1.StatusConverged || out.IR == nil || len(out.IR.Exposure) != 1 ||
+				!slices.Equal(out.IR.Exposure[0].AllowedSources, []string{"203.0.113.10/32"}) {
+				t.Fatalf("status %s, remaining %+v, IR %v; want converged on the faithful draft", out.Status, out.Loop.Remaining, out.IR != nil)
+			}
+			h = newHarness(t, tenantA, times(dropped, 8))
+			out = mustRun(t, h, in)
+			assertEscalatedWithoutIR(t, h, out)
+		})
+	}
+}
