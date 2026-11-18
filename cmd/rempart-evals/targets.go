@@ -10,8 +10,10 @@ import (
 	"os"
 	"time"
 
+	"go.temporal.io/sdk/converter"
 	tlog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/amezianechayer/rempart/internal/evals"
 	"github.com/amezianechayer/rempart/internal/llm"
@@ -129,11 +131,15 @@ func (t demoTarget) Run(ctx context.Context, c evals.Case, _ int) (o evals.Outco
 			o, err = evals.Outcome{}, errors.New("rempart-evals: test environment panicked")
 		}
 	}()
-	var suite testsuite.WorkflowTestSuite
-	suite.SetLogger(tlog.NewStructuredLogger(slog.New(slog.NewTextHandler(t.log, &slog.HandlerOptions{Level: slog.LevelWarn}))))
-	wenv := suite.NewTestWorkflowEnvironment()
-	wenv.SetTestTimeout(demoTestTimeout)
-	if err := demo.Register(wenv, &activities.Activities{LLM: cl, Tenant: demoTenant}, denyAll{}); err != nil {
+	newEnv := func() (*testsuite.TestWorkflowEnvironment, error) {
+		var suite testsuite.WorkflowTestSuite
+		suite.SetLogger(tlog.NewStructuredLogger(slog.New(slog.NewTextHandler(t.log, &slog.HandlerOptions{Level: slog.LevelWarn}))))
+		wenv := suite.NewTestWorkflowEnvironment()
+		wenv.SetTestTimeout(demoTestTimeout)
+		return wenv, demo.Register(wenv, &activities.Activities{LLM: cl, Tenant: demoTenant}, denyAll{})
+	}
+	wenv, err := newEnv()
+	if err != nil {
 		return evals.Outcome{}, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -141,6 +147,22 @@ func (t demoTarget) Run(ctx context.Context, c evals.Case, _ int) (o evals.Outco
 	}
 	start := time.Now()
 	wenv.ExecuteWorkflow(demo.WorkflowName, demo.Input{Target: target, Author: demoAuthor, ApprovalTimeout: demoApproval})
+	// The demo continues as new before the approval wait (ADR 0001, D7 of
+	// M1-codec-replay): run 2 runs as the server would start it.
+	var can *workflow.ContinueAsNewError
+	if wenv.IsWorkflowCompleted() && errors.As(wenv.GetWorkflowError(), &can) {
+		var next demo.Input
+		if can.WorkflowType == nil || can.WorkflowType.Name != demo.WorkflowName ||
+			converter.GetDefaultDataConverter().FromPayloads(can.Input, &next) != nil {
+			o.Err = "workflow_failed"
+			return o, nil
+		}
+		if wenv, err = newEnv(); err != nil {
+			return evals.Outcome{}, err
+		}
+		wenv.SetContinuedExecutionRunID("run-1")
+		wenv.ExecuteWorkflow(demo.WorkflowName, next)
+	}
 	o.Duration = time.Since(start)
 	if !wenv.IsWorkflowCompleted() {
 		return evals.Outcome{}, errors.New("rempart-evals: workflow not completed")

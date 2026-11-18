@@ -92,8 +92,10 @@ func runOnDev(t *testing.T, v demo.ApprovalVerifier, in demo.Input, signal *loop
 	if err != nil {
 		t.Fatalf("ExecuteWorkflow: %v", err)
 	}
-	if signal != nil { // before the approval wait starts: buffered by the server (risk 4)
-		if err := c.SignalWorkflow(ctx, id, wr.GetRunID(), loops.ApprovalSignal, *signal); err != nil {
+	first := wr.GetRunID() // Get follows the continuation and moves GetRunID to the last run
+	if signal != nil {     // to run 2, the approval wait: a signal to run 1 is lost (D7, R8)
+		waitContinuation(t, ctx, c, id, first)
+		if err := c.SignalWorkflow(ctx, id, "", loops.ApprovalSignal, *signal); err != nil {
 			t.Fatalf("SignalWorkflow: %v", err)
 		}
 	}
@@ -101,30 +103,58 @@ func runOnDev(t *testing.T, v demo.ApprovalVerifier, in demo.Input, signal *loop
 	if err := wr.Get(ctx, &out); err != nil {
 		t.Fatalf("workflow failed: %v", err)
 	}
-	return &e2eRun{c: c, prov: prov, id: id, runID: wr.GetRunID(), queue: queue, took: time.Since(start)}, out
+	return &e2eRun{c: c, prov: prov, id: id, runID: first, queue: queue, took: time.Since(start)}, out
 }
 
-// history returns the scheduled activity names, the execution timeout of the
-// started event and the text of every event.
+// waitContinuation waits until the execution id runs a run other than first.
+func waitContinuation(t *testing.T, ctx context.Context, c client.Client, id, first string) {
+	t.Helper()
+	for {
+		d, err := c.DescribeWorkflowExecution(ctx, id, "")
+		if err != nil {
+			t.Fatalf("DescribeWorkflowExecution: %v", err)
+		}
+		if run := d.GetWorkflowExecutionInfo().GetExecution().GetRunId(); run != "" && run != first {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("no continuation before the deadline")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// history returns, over run 1 and its continuation, the scheduled activity
+// names, the execution timeout of the started event and the text of every
+// event.
 func (r *e2eRun) history(t *testing.T) (scheduled []string, timeout time.Duration, text string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	runs := []string{r.runID}
+	if d, err := r.c.DescribeWorkflowExecution(ctx, r.id, ""); err == nil {
+		if last := d.GetWorkflowExecutionInfo().GetExecution().GetRunId(); last != r.runID {
+			runs = append(runs, last)
+		}
+	}
 	var b strings.Builder
-	it := r.c.GetWorkflowHistory(ctx, r.id, r.runID, false, historyAllEvents)
-	for it.HasNext() {
-		ev, err := it.Next()
-		if err != nil {
-			t.Fatalf("history: %v", err)
+	for _, run := range runs {
+		it := r.c.GetWorkflowHistory(ctx, r.id, run, false, historyAllEvents)
+		for it.HasNext() {
+			ev, err := it.Next()
+			if err != nil {
+				t.Fatalf("history: %v", err)
+			}
+			if a := ev.GetActivityTaskScheduledEventAttributes(); a != nil {
+				scheduled = append(scheduled, a.GetActivityType().GetName())
+			}
+			if s := ev.GetWorkflowExecutionStartedEventAttributes(); s != nil {
+				timeout = s.GetWorkflowExecutionTimeout().AsDuration()
+			}
+			b.WriteString(ev.String())
+			b.WriteByte('\n')
 		}
-		if a := ev.GetActivityTaskScheduledEventAttributes(); a != nil {
-			scheduled = append(scheduled, a.GetActivityType().GetName())
-		}
-		if s := ev.GetWorkflowExecutionStartedEventAttributes(); s != nil {
-			timeout = s.GetWorkflowExecutionTimeout().AsDuration()
-		}
-		b.WriteString(ev.String())
-		b.WriteByte('\n')
 	}
 	if b.Len() == 0 {
 		t.Fatal("empty history")

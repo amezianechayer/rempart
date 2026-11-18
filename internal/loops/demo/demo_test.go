@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
@@ -32,6 +33,7 @@ import (
 	"github.com/amezianechayer/rempart/internal/llm/prompts"
 	"github.com/amezianechayer/rempart/internal/llm/schema"
 	"github.com/amezianechayer/rempart/internal/loops"
+	"github.com/amezianechayer/rempart/internal/loops/codec"
 	"github.com/amezianechayer/rempart/internal/loops/demo"
 	"github.com/amezianechayer/rempart/internal/loops/demo/activities"
 	"github.com/amezianechayer/rempart/internal/loops/domain"
@@ -111,13 +113,28 @@ func newClient(t *testing.T, steps []llmfake.Step) (*llm.Client, *llmfake.Provid
 }
 
 // harness runs the registered demo in the in-process test suite: no socket.
+// It drives the continuation of D7: run 2 runs on a fresh environment.
 type harness struct {
-	env     *testsuite.TestWorkflowEnvironment
-	prov    *llmfake.Provider
-	mu      sync.Mutex
-	started map[string]int
-	commits []string
-	start   time.Time
+	t         *testing.T
+	env       *testsuite.TestWorkflowEnvironment
+	prov      *llmfake.Provider
+	llm       *llm.Client
+	tenant    tenancy.ID
+	verifier  demo.ApprovalVerifier
+	configure []func(*testsuite.TestWorkflowEnvironment) // converters, reapplied to run 2
+	dc        converter.DataConverter                    // decodes the input of the continuation
+	delayed   []delayedCall
+	mu        sync.Mutex
+	started   map[string]int
+	commits   []string
+	start     time.Time
+	continued *demo.Input // input of run 2, nil without continuation
+	header    *commonpb.Header
+}
+
+type delayedCall struct {
+	d time.Duration
+	f func()
 }
 
 func newHarness(t *testing.T, tenant tenancy.ID, steps []llmfake.Step) *harness {
@@ -129,12 +146,25 @@ func newHarness(t *testing.T, tenant tenancy.ID, steps []llmfake.Step) *harness 
 func newHarnessWith(t *testing.T, tenant tenancy.ID, steps []llmfake.Step, v demo.ApprovalVerifier) *harness {
 	t.Helper()
 	c, prov := newClient(t, steps)
+	h := &harness{t: t, prov: prov, llm: c, tenant: tenant, verifier: v, started: map[string]int{}}
+	h.env = h.newEnv()
+	return h
+}
+
+// newEnv is a fresh environment with the registrations, the listener and the
+// converters of h.
+func (h *harness) newEnv() *testsuite.TestWorkflowEnvironment {
+	t := h.t
+	t.Helper()
 	var suite testsuite.WorkflowTestSuite
-	h := &harness{env: suite.NewTestWorkflowEnvironment(), prov: prov, started: map[string]int{}}
-	if err := demo.Register(h.env, &activities.Activities{LLM: c, Tenant: tenant}, v); err != nil {
+	env := suite.NewTestWorkflowEnvironment()
+	if err := demo.Register(env, &activities.Activities{LLM: h.llm, Tenant: h.tenant}, h.verifier); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	h.env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, args converter.EncodedValues) {
+	for _, f := range h.configure {
+		f(env)
+	}
+	env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, args converter.EncodedValues) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		h.started[info.ActivityType.Name]++
@@ -146,11 +176,19 @@ func newHarnessWith(t *testing.T, tenant tenancy.ID, steps []llmfake.Step, v dem
 			h.commits = append(h.commits, s)
 		}
 	})
-	return h
+	return env
+}
+
+// at runs f after d on the environment of the current run, run 2 included:
+// signals sent to run 1 are lost by design (D7, R8), the approval wait is in
+// run 2.
+func (h *harness) at(d time.Duration, f func()) {
+	h.delayed = append(h.delayed, delayedCall{d: d, f: f})
+	h.env.RegisterDelayedCallback(f, d)
 }
 
 func (h *harness) signalAt(d time.Duration, a loops.Approval) {
-	h.env.RegisterDelayedCallback(func() { h.env.SignalWorkflow(loops.ApprovalSignal, a) }, d)
+	h.at(d, func() { h.env.SignalWorkflow(loops.ApprovalSignal, a) })
 }
 
 // run executes the workflow by its registered name and returns its output or
@@ -163,13 +201,53 @@ func (h *harness) run(t *testing.T, in any) (demo.Output, error) {
 		t.Fatal("workflow not completed")
 	}
 	var out demo.Output
-	if err := h.env.GetWorkflowError(); err != nil {
+	err := h.env.GetWorkflowError()
+	var can *workflow.ContinueAsNewError
+	if errors.As(err, &can) {
+		err = h.continueRun(t, can)
+	}
+	if err != nil {
 		return out, err
 	}
 	if err := h.env.GetWorkflowResult(&out); err != nil {
 		t.Fatalf("GetWorkflowResult: %v", err)
 	}
 	return out, nil
+}
+
+// continueRun starts run 2 as the server would: same workflow, decoded
+// input, propagated header, continued execution run id.
+func (h *harness) continueRun(t *testing.T, can *workflow.ContinueAsNewError) error {
+	t.Helper()
+	if can.WorkflowType == nil || can.WorkflowType.Name != demo.WorkflowName {
+		t.Fatalf("continuation to %+v, want %s", can.WorkflowType, demo.WorkflowName)
+	}
+	dc := h.dc
+	if dc == nil {
+		dc = converter.GetDefaultDataConverter()
+	}
+	var next demo.Input
+	if err := dc.FromPayloads(can.Input, &next); err != nil {
+		t.Fatalf("input of the continuation: %v", err)
+	}
+	h.continued, h.header = &next, can.Header
+	h.env = h.newEnv()
+	h.env.SetContinuedExecutionRunID("run-1")
+	if h.dc != nil {
+		if can.Header.GetFields()[codec.TenantHeader] == nil {
+			t.Fatal("continuation without the rempart-tenant header")
+		}
+		h.env.SetHeader(can.Header)
+	}
+	for _, c := range h.delayed {
+		h.env.RegisterDelayedCallback(c.f, c.d)
+	}
+	h.start = h.env.Now()
+	h.env.ExecuteWorkflow(demo.WorkflowName, next)
+	if !h.env.IsWorkflowCompleted() {
+		t.Fatal("continued workflow not completed")
+	}
+	return h.env.GetWorkflowError()
 }
 
 func (h *harness) count(name string) int {
@@ -657,12 +735,13 @@ func importName(f *ast.File, path string) (string, bool) {
 }
 
 // TestDemoSingleApprovalWait: obligation (o), one approval wait per workflow,
-// outside any loop or closure; no raw signal channel nor ContinueAsNew.
+// outside any loop or closure; no raw signal channel; exactly one
+// ContinueAsNew, right before the wait (ADR 0001, D7 of M1-codec-replay).
 func TestDemoSingleApprovalWait(t *testing.T) {
 	forbidden := func(name string) bool {
-		return name == "GetSignalChannel" || name == "NewContinueAsNewError" || strings.HasPrefix(name, "SetUpdateHandler")
+		return name == "GetSignalChannel" || strings.HasPrefix(name, "SetUpdateHandler")
 	}
-	waits := 0
+	waits, continues := 0, 0
 	for _, f := range parseDir(t, ".") {
 		loopsName, hasLoops := importName(f, loopsImport)
 		var stack []ast.Node
@@ -678,6 +757,9 @@ func TestDemoSingleApprovalWait(t *testing.T) {
 			}
 			if forbidden(sel.Sel.Name) {
 				t.Errorf("demo uses %s", sel.Sel.Name)
+			}
+			if sel.Sel.Name == "NewContinueAsNewError" {
+				continues++
 			}
 			x, isIdent := sel.X.(*ast.Ident)
 			if !hasLoops || !isIdent || x.Name != loopsName || sel.Sel.Name != "AwaitApprovals" {
@@ -707,6 +789,9 @@ func TestDemoSingleApprovalWait(t *testing.T) {
 	if waits != 1 {
 		t.Errorf("%d references to loops.AwaitApprovals, want exactly 1", waits)
 	}
+	if continues != 1 {
+		t.Errorf("%d references to NewContinueAsNewError, want exactly 1 (D7)", continues)
+	}
 	for _, f := range parseDir(t, "activities") {
 		if _, ok := importName(f, workflowImport); ok {
 			t.Errorf("activities imports %s (rule l)", workflowImport)
@@ -724,12 +809,12 @@ func TestDemoCanceledNoCommit(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, tenantA, []llmfake.Step{answer(greetBonjour)})
-			h.env.RegisterDelayedCallback(func() {
+			h.at(time.Second, func() {
 				if withApproval {
 					h.env.SignalWorkflow(loops.ApprovalSignal, signedBy("bob", expectedHash(greetBonjour)))
 				}
 				h.env.CancelWorkflow()
-			}, time.Second)
+			})
 			_, err := h.run(t, input())
 			if !temporal.IsCanceledError(err) {
 				t.Errorf("error %v, want a cancellation", err)

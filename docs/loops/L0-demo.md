@@ -38,6 +38,7 @@ approval:
   required: 1
   needs_security_role: false
   waits_per_workflow: 1          # obligation (o), sans purge du canal de signaux (D6)
+  phase: run 2 seulement : le run 1 converge puis ContinueAsNew juste avant l'attente, entrée avec approval_phase (boucle convergée) ; phase admise seulement si ContinuedExecutionRunID non vide, boucle convergée et candidat non vide, sinon InvalidDemoInput non rejouable avant toute activité ; plan_hash recalculé depuis le candidat, jamais lu dans l'entrée ; signaux envoyés au run 1 perdus [ADR-0001, T18, D7 de M1-codec-replay]
   max_ignored_signals: 20
   on_timeout: ne rien faire
   verifier: vérificateur factice réservé aux tests ; make demo (M0-T20) enregistre un vérificateur qui refuse tout
@@ -46,5 +47,6 @@ plan_hash: SHA-256 hexadécimal de "rempart-demo-plan-v1\n" suivi du meilleur ca
 outputs: [loop_result, approval_result, plan_hash, committed]
 idempotency_keys: [tenant_id, workflow_id, plan_hash]
 security_notes: aucune donnée cloud ; faux fournisseur LLM seulement en M0 ; historique en clair en M0 (A1), chiffré par tenant en M1 [ADR-0001]
+replay: internal/loops/testdata/histories/demo-run1.json et demo-run2.json (enregistrés contre la pile par TestRecordHistories, étiquette recordhistories, clé du faux à graine fixe) rejoués par TestReplay à chaque make verify-quick, témoins GetVersion [ADR-0001]
 evals: evals/demo/ (M0-T23)
 ```

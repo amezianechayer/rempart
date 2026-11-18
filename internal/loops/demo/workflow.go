@@ -40,11 +40,19 @@ func ExecutionTimeout(approvalTimeout time.Duration) time.Duration {
 	return Spec().MaxRunDuration() + approvalTimeout + loops.VerifyApprovalTimeout + CommitTimeout + ExecutionMargin
 }
 
-// Input: no phase, no loop result, no canary (amendment A1).
+// Input of the demo. Phase is set by the workflow only, for the continuation
+// of D7 (M1-codec-replay): it is admitted only in a continued execution.
 type Input struct {
-	Target          string        `json:"target"`
-	Author          string        `json:"author"` // declared, not authenticated until M4
-	ApprovalTimeout time.Duration `json:"approval_timeout"`
+	Target          string         `json:"target"`
+	Author          string         `json:"author"` // declared, not authenticated until M4
+	ApprovalTimeout time.Duration  `json:"approval_timeout"`
+	Phase           *ApprovalPhase `json:"approval_phase,omitempty"`
+}
+
+// ApprovalPhase carries the converged loop of run 1 to run 2; the plan hash
+// is computed again from Loop.Best, never carried (T54).
+type ApprovalPhase struct {
+	Loop loops.LoopResult `json:"loop"`
 }
 
 type Output struct {
@@ -63,18 +71,33 @@ func Spec() loops.LoopSpec {
 	}
 }
 
+// Workflow: run 1 runs the loop and, converged, continues as new right before
+// the approval wait (ADR 0001, D7): the history of the wait starts small and
+// in-flight runs survive a change of the loop. Run 2 waits for the approval;
+// signals sent to run 1 are lost by design (R8).
 func Workflow(ctx workflow.Context, in Input) (Output, error) {
 	if err := in.validate(); err != nil {
 		return Output{}, err
 	}
-	loop, err := loops.RunLoop(ctx, Spec(), payload(in.Target))
-	if err != nil {
-		return Output{}, err
+	if in.Phase == nil {
+		loop, err := loops.RunLoop(ctx, Spec(), payload(in.Target))
+		if err != nil {
+			return Output{}, err
+		}
+		if loop.Status != loops.StatusConverged { // escalation: no approval wait
+			return Output{Loop: loop}, nil
+		}
+		next := in
+		next.Phase = &ApprovalPhase{Loop: loop}
+		return Output{}, workflow.NewContinueAsNewError(ctx, WorkflowName, next)
+	}
+	// Run 2: admitted only in a continued execution, for a converged loop
+	// with a candidate (T18), before any activity.
+	loop := in.Phase.Loop
+	if workflow.GetInfo(ctx).ContinuedExecutionRunID == "" || loop.Status != loops.StatusConverged || len(loop.Best) == 0 {
+		return Output{}, invalidInput("approval phase")
 	}
 	out := Output{Loop: loop}
-	if loop.Status != loops.StatusConverged { // escalation: no approval wait
-		return out, nil
-	}
 	out.PlanHash = planHash(loop.Best)
 	approval, err := loops.AwaitApprovals(ctx, loops.ApprovalRequest{
 		PlanHash: out.PlanHash, Author: in.Author, Required: RequiredApprovals,

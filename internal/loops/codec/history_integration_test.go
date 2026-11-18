@@ -183,9 +183,9 @@ func canaryWorkflow(ctx workflow.Context, in string) (string, error) {
 	return echoed + " " + sig, nil
 }
 
-// historyOf fetches the history of a run with a client without codec: the
-// raw events as the server stores them.
-func historyOf(t *testing.T, id, runID string) [][]byte {
+// historyOf fetches the history of the run first and of its continuation, if
+// any, with a client without codec: the raw events as the server stores them.
+func historyOf(t *testing.T, id, first string) [][]byte {
 	t.Helper()
 	plain := dialHist(t, client.Options{
 		HostPort: histTemporal, Namespace: histNamespace,
@@ -193,18 +193,28 @@ func historyOf(t *testing.T, id, runID string) [][]byte {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	runs := []string{first}
+	d, err := plain.DescribeWorkflowExecution(ctx, id, "")
+	if err != nil {
+		t.Fatalf("DescribeWorkflowExecution: %v", err)
+	}
+	if last := d.GetWorkflowExecutionInfo().GetExecution().GetRunId(); last != first {
+		runs = append(runs, last)
+	}
 	var out [][]byte
-	it := plain.GetWorkflowHistory(ctx, id, runID, false, histAllEvents)
-	for it.HasNext() {
-		ev, err := it.Next()
-		if err != nil {
-			t.Fatalf("history: %v", err)
+	for _, run := range runs {
+		it := plain.GetWorkflowHistory(ctx, id, run, false, histAllEvents)
+		for it.HasNext() {
+			ev, err := it.Next()
+			if err != nil {
+				t.Fatalf("history: %v", err)
+			}
+			raw, err := proto.Marshal(ev)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, raw)
 		}
-		raw, err := proto.Marshal(ev)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, raw)
 	}
 	if len(out) == 0 {
 		t.Fatal("empty history")
@@ -358,6 +368,7 @@ func TestHistoryHasNoPlaintext(t *testing.T) {
 		if err := c.SignalWorkflow(ctx, id, wr.GetRunID(), canarySignal, sig); err != nil {
 			t.Fatalf("SignalWorkflow: %v", err)
 		}
+		first := wr.GetRunID()
 		var out string
 		if err := wr.Get(ctx, &out); err != nil {
 			t.Fatalf("workflow: %v", err)
@@ -365,7 +376,7 @@ func TestHistoryHasNoPlaintext(t *testing.T) {
 		if out != result+" "+sig {
 			t.Fatalf("result %q", out)
 		}
-		assertSealed(t, historyOf(t, id, wr.GetRunID()), dc, in, result, sig, errCanary)
+		assertSealed(t, historyOf(t, id, first), dc, in, result, sig, errCanary)
 	})
 
 	t.Run("demo", func(t *testing.T) {
@@ -393,11 +404,12 @@ func TestHistoryHasNoPlaintext(t *testing.T) {
 		if err := c.SignalWorkflow(ctx, id, wr.GetRunID(), loops.ApprovalSignal, sig); err != nil {
 			t.Fatalf("SignalWorkflow: %v", err)
 		}
+		first := wr.GetRunID()
 		var out demo.Output
 		if err := wr.Get(ctx, &out); err != nil {
 			t.Fatalf("workflow: %v", err)
 		}
-		assertSealed(t, historyOf(t, id, wr.GetRunID()), dc, author, approver, "bonjour")
+		assertSealed(t, historyOf(t, id, first), dc, author, approver, "bonjour")
 	})
 
 	t.Run("l1", func(t *testing.T) {
@@ -424,6 +436,7 @@ func TestHistoryHasNoPlaintext(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ExecuteWorkflow: %v", err)
 		}
+		first := wr.GetRunID()
 		var out l1.Output
 		if err := wr.Get(ctx, &out); err != nil {
 			t.Fatalf("workflow: %v", err)
@@ -431,6 +444,6 @@ func TestHistoryHasNoPlaintext(t *testing.T) {
 		if out.Status != l1.StatusConverged || out.IR == nil || !strings.Contains(out.IR.Summary, summary) {
 			t.Fatalf("status %s, remaining %+v; want converged with the summary of the draft", out.Status, out.Loop.Remaining)
 		}
-		assertSealed(t, historyOf(t, id, wr.GetRunID()), dc, note, summary)
+		assertSealed(t, historyOf(t, id, first), dc, note, summary)
 	})
 }

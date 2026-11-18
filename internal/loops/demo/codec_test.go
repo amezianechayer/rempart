@@ -7,6 +7,7 @@ import (
 
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 
 	llmfake "github.com/amezianechayer/rempart/internal/llm/fake"
@@ -37,6 +38,12 @@ func sealed(t *testing.T, h *harness, tenant tenancy.ID) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.dc = dc
+	h.configure = append(h.configure, func(env *testsuite.TestWorkflowEnvironment) {
+		env.SetDataConverter(dc)
+		env.SetFailureConverter(fc)
+		env.SetContextPropagators([]workflow.ContextPropagator{codec.NewTenantPropagator()})
+	})
 	h.env.SetDataConverter(dc)
 	h.env.SetFailureConverter(fc)
 	h.env.SetContextPropagators([]workflow.ContextPropagator{codec.NewTenantPropagator()})
