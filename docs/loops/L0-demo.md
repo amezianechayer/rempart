@@ -38,7 +38,7 @@ approval:
   required: 1
   needs_security_role: false
   waits_per_workflow: 1          # obligation (o), sans purge du canal de signaux (D6)
-  phase: run 2 seulement : le run 1 converge puis ContinueAsNew juste avant l'attente, entrée avec approval_phase (boucle convergée) ; phase admise seulement si ContinuedExecutionRunID non vide, boucle convergée et candidat non vide, sinon InvalidDemoInput non rejouable avant toute activité ; plan_hash recalculé depuis le candidat, jamais lu dans l'entrée ; signaux envoyés au run 1 perdus [ADR-0001, T18, D7 de M1-codec-replay]
+  phase: run 2 seulement : le run 1 converge puis ContinueAsNew juste avant l'attente, entrée avec approval_phase (boucle convergée) ; phase admise seulement en continuation (ContinuedExecutionRunID non vide, Attempt 1, aucun cron : une relance ou un run de cron porte l'entrée du client), boucle convergée et candidat non vide ; run 1 refusé sous cron ; sinon InvalidDemoInput non rejouable avant toute activité ; plan_hash recalculé depuis le candidat, jamais lu dans l'entrée ; signaux envoyés au run 1 perdus [ADR-0001, T18, D7 de M1-codec-replay]
   max_ignored_signals: 20
   on_timeout: ne rien faire
   verifier: vérificateur factice réservé aux tests ; make demo (M0-T20) enregistre un vérificateur qui refuse tout

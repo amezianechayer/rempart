@@ -12,6 +12,7 @@ import (
 
 	"go.temporal.io/sdk/client"
 	tlog "go.temporal.io/sdk/log"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 
 	llmfake "github.com/amezianechayer/rempart/internal/llm/fake"
@@ -235,5 +236,86 @@ func TestDemoApprovedEndToEnd(t *testing.T) {
 	}
 	if r.took >= 30*time.Second {
 		t.Errorf("run took %v: the buffered approval did not end the wait", r.took)
+	}
+}
+
+// TestDemoForgedPhaseRefused (security review of the M1 close, T18): a
+// client that starts the demo with a forged approval phase never reaches the
+// approval wait, neither by a cron schedule (next runs carry a previous run
+// id and the input of the client) nor by a retry policy (the retried run
+// too): every run fails in InvalidDemoInput, no approval is verified.
+func TestDemoForgedPhaseRefused(t *testing.T) {
+	forged := demo.Input{Target: target, Author: "alice", ApprovalTimeout: 5 * time.Second, Phase: &demo.ApprovalPhase{
+		Loop: loops.LoopResult{Status: loops.StatusConverged, Best: greetBonjour, Iterations: 1},
+	}}
+	for name, tc := range map[string]struct {
+		opts        client.StartWorkflowOptions
+		workerAfter time.Duration // retry: run 1 times out on a queue without worker
+	}{
+		"cron":  {opts: client.StartWorkflowOptions{CronSchedule: "@every 2s"}},
+		"retry": {opts: client.StartWorkflowOptions{WorkflowRunTimeout: 2 * time.Second, RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumAttempts: 3}}, workerAfter: 3 * time.Second},
+	} {
+		t.Run(name, func(t *testing.T) {
+			opts := tc.opts
+			c := dialDev(t)
+			cl, _ := newClient(t, nil)
+			queue, err := loops.NewWorkflowID("rempart-demo-it")
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, err := loops.NewWorkflowID(demo.IDPrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := worker.New(c, queue, worker.Options{})
+			if err := demo.Register(w, &activities.Activities{LLM: cl, Tenant: tenantA}, &loopsfake.ApprovalVerifier{}); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			opts.ID, opts.TaskQueue, opts.WorkflowExecutionTimeout = id, queue, 30*time.Second
+			wr, err := c.ExecuteWorkflow(ctx, opts, demo.WorkflowName, forged)
+			if err != nil {
+				t.Fatalf("ExecuteWorkflow: %v", err)
+			}
+			time.Sleep(tc.workerAfter)
+			if err := w.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer w.Stop()
+			// Let the server start the next runs (cron) or attempts (retry).
+			time.Sleep(7 * time.Second)
+			_ = c.TerminateWorkflow(ctx, id, "", "test over")
+			runs, invalid, verified, waits := 0, 0, 0, 0
+			for run := wr.GetRunID(); run != ""; runs++ {
+				next := ""
+				h := c.GetWorkflowHistory(ctx, id, run, false, historyAllEvents)
+				for h.HasNext() {
+					ev, err := h.Next()
+					if err != nil {
+						t.Fatalf("history: %v", err)
+					}
+					if a := ev.GetActivityTaskScheduledEventAttributes(); a != nil && a.GetActivityType().GetName() == demo.VerifyApprovalActivity {
+						verified++
+					}
+					if f := ev.GetWorkflowExecutionFailedEventAttributes(); f != nil {
+						if strings.Contains(f.GetFailure().String(), demo.ErrTypeInvalidDemoInput) {
+							invalid++
+						}
+						next = f.GetNewExecutionRunId()
+					}
+					if to := ev.GetWorkflowExecutionTimedOutEventAttributes(); to != nil {
+						next = to.GetNewExecutionRunId()
+					}
+					if ev.GetTimerStartedEventAttributes() != nil || ev.GetWorkflowExecutionCompletedEventAttributes() != nil {
+						waits++ // the approval wait started, or a run went through it
+					}
+				}
+				run = next
+			}
+			if runs < 2 || invalid < 1 || verified != 0 || waits != 0 {
+				t.Errorf("%d runs, %d refused in InvalidDemoInput, %d approval verifications, %d approval waits; want at least 2 runs, refused, none verified, no wait", runs, invalid, verified, waits)
+			}
+		})
 	}
 }

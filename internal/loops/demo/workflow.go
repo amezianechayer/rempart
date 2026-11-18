@@ -79,7 +79,11 @@ func Workflow(ctx workflow.Context, in Input) (Output, error) {
 	if err := in.validate(); err != nil {
 		return Output{}, err
 	}
+	info := workflow.GetInfo(ctx)
 	if in.Phase == nil {
+		if cronRun(info) { // a cron run repeats the input of the client (T18)
+			return Output{}, invalidInput("cron schedule")
+		}
 		loop, err := loops.RunLoop(ctx, Spec(), payload(in.Target))
 		if err != nil {
 			return Output{}, err
@@ -94,7 +98,7 @@ func Workflow(ctx workflow.Context, in Input) (Output, error) {
 	// Run 2: admitted only in a continued execution, for a converged loop
 	// with a candidate (T18), before any activity.
 	loop := in.Phase.Loop
-	if workflow.GetInfo(ctx).ContinuedExecutionRunID == "" || loop.Status != loops.StatusConverged || len(loop.Best) == 0 {
+	if !continued(info) || loop.Status != loops.StatusConverged || len(loop.Best) == 0 {
 		return Output{}, invalidInput("approval phase")
 	}
 	out := Output{Loop: loop}
@@ -122,6 +126,15 @@ func Workflow(ctx workflow.Context, in Input) (Output, error) {
 	out.Committed = true
 	return out, nil
 }
+
+// continued: a continuation of run 1 (D7, T18). ContinuedExecutionRunID is
+// also set by a retry or a cron run, whose input is the one of the client:
+// only a first attempt without cron schedule is a continuation.
+func continued(info *workflow.Info) bool {
+	return info.ContinuedExecutionRunID != "" && info.Attempt == 1 && !cronRun(info)
+}
+
+func cronRun(info *workflow.Info) bool { return info.CronSchedule != "" }
 
 func (in Input) validate() error {
 	switch {
