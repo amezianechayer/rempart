@@ -1,8 +1,10 @@
 package domain
 
 import (
+	"maps"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 
 	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
@@ -35,25 +37,44 @@ var (
 		"\u2024", ".", "\uFF0E", ".", "\u00B7", ".", "\u3002", ".", "\uFE52", ".",
 		"[.]", ".", "(.)", ".", "{.}", ".", "[:]", ":", "(:)", ":",
 	)
-	spacedDot  = regexp.MustCompile(`([0-9])[ \t]+\.[ \t]*([0-9])|([0-9])[ \t]*\.[ \t]+([0-9])`)
-	commaQuads = regexp.MustCompile(`\b([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3})\b`)
+	// review of M2-T01: blanks on both sides of the dot (never a sentence
+	// end), four groups outside any number (never the tail of an address).
+	spacedDot  = regexp.MustCompile(`([0-9])[ \t]+\.[ \t]+([0-9])`)
+	commaQuads = regexp.MustCompile(`(^|[^0-9.,])([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3})([^0-9.,]|$)`)
 )
 
 func rearm(s string) string {
 	s = defanged.Replace(s)
 	for prev := ""; prev != s; {
 		prev = s
-		s = spacedDot.ReplaceAllString(s, "$1$3.$2$4")
+		s = spacedDot.ReplaceAllString(s, "$1.$2")
 	}
-	return commaQuads.ReplaceAllString(s, "$1.$2.$3.$4")
+	return commaQuads.ReplaceAllString(s, "$1$2.$3.$4.$5$6")
 }
 
 // readAddresses reads the addresses and prefixes of s, and returns apart the
 // tokens that look like an address but stay unreadable (second review pass
 // of T102: fail closed instead of chasing every notation).
+// A rereading never removes a reading (review of M2-T01): the addresses of
+// the original text and of the rearmed text are joined, and so are the
+// unreadable tokens (fail closed).
 func readAddresses(s string) (map[netip.Prefix]bool, []string) {
+	out, unreadable := readTokens(s)
+	if r := rearm(s); r != s {
+		more, bad := readTokens(r)
+		maps.Copy(out, more)
+		for _, tok := range bad {
+			if !slices.Contains(unreadable, tok) {
+				unreadable = append(unreadable, tok)
+			}
+		}
+	}
+	return out, unreadable
+}
+
+func readTokens(s string) (map[netip.Prefix]bool, []string) {
 	out, unreadable := map[netip.Prefix]bool{}, []string{}
-	for _, tok := range strings.FieldsFunc(rearm(s), func(r rune) bool { return !isAddrRune(r) }) {
+	for _, tok := range strings.FieldsFunc(s, func(r rune) bool { return !isAddrRune(r) }) {
 		tok = strings.TrimLeft(strings.TrimRight(tok, ".:/"), ".")
 		if !strings.ContainsAny(tok, "0123456789") {
 			continue

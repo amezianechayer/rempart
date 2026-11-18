@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"go/ast"
+	"go/build/constraint"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -717,20 +718,27 @@ func (c *srcChecker) isLoops(sf *SourceFile, locals map[string]bool, e ast.Expr,
 	return ok && pkg == c.loops && name == typ && c.kind[pkg+"."+name] == "type"
 }
 
-// buildVariant (obligation (er), T103): the import rules read go list in the
-// default build configuration; a file behind a build constraint or a GOOS or
-// GOARCH file name suffix would import out of their sight. Refused in every
-// non-test file, except the integration tag alone.
+// buildVariant (obligation (er), T103, review of M2-T01): the import rules
+// read go list in the default build configuration; a file behind a build
+// constraint (any form cmd/go reads, //+build without space included), a
+// GOOS or GOARCH file name suffix or cgo would import out of their sight.
+// Refused in every non-test file, the integration tag included.
 func (c *srcChecker) buildVariant(sf *SourceFile) {
 	for _, cg := range sf.File.Comments {
 		if cg.Pos() >= sf.File.Package {
 			break
 		}
 		for _, cm := range cg.List {
-			text := strings.TrimSpace(cm.Text)
-			if (strings.HasPrefix(text, "//go:build") || strings.HasPrefix(text, "// +build")) && text != "//go:build integration" {
-				c.add(sf, cm, "no-build-constraint", "build constraint "+text)
+			for _, line := range strings.Split(cm.Text, "\n") {
+				if line = strings.TrimSpace(line); constraint.IsGoBuild(line) || constraint.IsPlusBuild(line) {
+					c.add(sf, cm, "no-build-constraint", "build constraint "+line)
+				}
 			}
+		}
+	}
+	for _, is := range sf.File.Imports {
+		if is.Path.Value == `"C"` {
+			c.add(sf, is, "no-build-constraint", "cgo file, ignored by go list without cgo")
 		}
 	}
 	name := strings.TrimSuffix(path.Base(sf.Path), ".go")

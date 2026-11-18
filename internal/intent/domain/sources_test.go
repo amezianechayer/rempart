@@ -182,3 +182,29 @@ func TestExposureSourcesDefanged(t *testing.T) {
 		}
 	})
 }
+
+// TestExposureSourcesRearmNeverRemoves (review of M2-T01): the rereading of
+// the separators never removes a reading of the original text: two addresses
+// at a sentence end, or an address followed by a list of numbers, stay
+// readable, and their faithful form is anchored.
+func TestExposureSourcesRearmNeverRemoves(t *testing.T) {
+	fr := readText(t, "reference-request.txt")
+	for name, tc := range map[string]struct {
+		written string
+		sources []string
+	}{
+		"sentence_end":   {"203.0.113.10. 198.51.100.7 doit aussi y accéder", []string{"203.0.113.10/32", "198.51.100.7/32"}},
+		"list_after":     {"192.168.1.1,2,3,4 et rien d'autre", []string{"192.168.1.1/32"}},
+		"spaced_one_end": {"203.0.113.10 .5 de marge", []string{"203.0.113.10/32"}},
+	} {
+		text := fr + " L'application n'est accessible que depuis " + tc.written + "."
+		t.Run(name, func(t *testing.T) {
+			if got := Check(text, draftFrom(t, "reference-draft.json", withSources(tc.sources...)), TenantContext{}); len(got) != 0 {
+				t.Errorf("faithful draft refused: %+v", got)
+			}
+			if got := Check(text, draftFrom(t, "reference-draft.json", nil), TenantContext{}); !hasFinding(got, codeSourcesOmitted, loopsdomain.SeverityHigh, "exposure") {
+				t.Errorf("dropped restriction: want %s, got %+v", codeSourcesOmitted, got)
+			}
+		})
+	}
+}

@@ -7,7 +7,8 @@ import "testing"
 // configuration; a file behind a build constraint or a GOOS or GOARCH file
 // name suffix would import out of their sight (an adapter, the calibration
 // client or the fake key wrapper wired in the worker). Any build constraint
-// in a non-test file is refused, except the integration tag alone.
+// in a non-test file is refused, the integration tag included (it only
+// hides a file outside a test), and so is a cgo file.
 func TestBuildVariantCannotHideImports(t *testing.T) {
 	const m = "github.com/amezianechayer/rempart/"
 	file := func(pkg, constraint, imp string) string {
@@ -31,14 +32,14 @@ func TestBuildVariantCannotHideImports(t *testing.T) {
 		sc("goos_suffix", "", "GOOS or GOARCH", addFile("cmd/rempart-worker/zz_windows.go", "package main\n\nimport _ \""+m+"internal/secrets/fake\"\n")),
 		sc("goos_goarch_suffix", "", "GOOS or GOARCH", addFile("internal/intent/zz_linux_arm64.go", "package intent\n\nimport _ \""+m+"internal/llm/fake\"\n")),
 		sc("goarch_suffix", "", "GOOS or GOARCH", addFile("internal/intent/zz_wasm.go", "package intent\n\nimport _ \"database/sql\"\n")),
+		// Review of M2-T01: forms cmd/go reads as constraints, the integration
+		// tag outside a test, and a cgo file (ignored by go list without cgo).
+		sc("plus_build_no_space", "", "", addFile("cmd/rempart-worker/zz_variant.go", file("main", "//+build rempart_variant", m+"internal/secrets/fake"))),
+		sc("plus_build_tab", "", "", addFile("cmd/rempart-worker/zz_variant.go", file("main", "//\t+build rempart_variant", m+"internal/secrets/fake"))),
+		sc("integration_non_test", "", "", addFile("cmd/rempart-worker/zz_variant.go", file("main", "//go:build integration", m+"internal/secrets/fake"))),
+		sc("cgo_file", "", "cgo", addFile("cmd/rempart-worker/zz_cgo.go", "package main\n\nimport \"C\"\n\nimport _ \""+m+"internal/secrets/fake\"\n")),
 	})
 
-	t.Run("integration_tag_alone_admitted", func(t *testing.T) {
-		srcs := repoSources(t, addFile("internal/intent/zz_integration.go", file("intent", "//go:build integration", "strings")))
-		if got := checkSources(t, srcs); len(got) != 0 {
-			t.Errorf("violations %v, want none for the integration tag alone", got)
-		}
-	})
 	t.Run("suffix_like_names_admitted", func(t *testing.T) {
 		srcs := repoSources(t, addFile("internal/intent/zz_window.go", "package intent\n\nimport _ \"strings\"\n"))
 		if got := checkSources(t, srcs); len(got) != 0 {
