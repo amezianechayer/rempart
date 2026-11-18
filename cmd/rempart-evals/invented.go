@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/netip"
 	"strconv"
 	"strings"
 	"unicode"
@@ -89,6 +90,7 @@ func (t oracleText) statesNumber(n int) bool {
 // inventedValues counts the invented values of ir for request.
 func inventedValues(request string, ir intentdomain.IR) int {
 	t := newOracleText(request)
+	sources := oracleSources(request)
 	declared := func(field, value string) bool {
 		for _, a := range ir.Assumptions {
 			if a.Field == field && a.Value == value {
@@ -150,7 +152,8 @@ func inventedValues(request string, ir intentdomain.IR) int {
 			check(p+"port", strconv.Itoa(*e.Port), t.statesNumber(*e.Port) || has && std == *e.Port && t.states(e.Protocol))
 		}
 		for _, s := range e.AllowedSources {
-			str(p+"allowed_sources", s)
+			src, err := netip.ParsePrefix(s)
+			check(p+"allowed_sources", s, err == nil && src == src.Masked() && sources[src.String()])
 		}
 	}
 	for _, d := range ir.Data {
@@ -187,4 +190,22 @@ func inventedValues(request string, ir intentdomain.IR) int {
 		str("constraints.forbidden_clouds", c)
 	}
 	return n
+}
+
+// oracleSources returns the allowed sources a request states, in the form of
+// a canonical prefix: each prefix written, masked, and each address written,
+// as a /32 or /128. Its own cut of the text: whitespace and punctuation, a
+// key glued by "=".
+func oracleSources(request string) map[string]bool {
+	out := map[string]bool{}
+	cut := func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(",;()[]{}\"'«»=", r) }
+	for _, f := range strings.FieldsFunc(request, cut) {
+		f = strings.TrimRight(f, ".:")
+		if p, err := netip.ParsePrefix(f); err == nil {
+			out[p.Masked().String()] = true
+		} else if a, err := netip.ParseAddr(f); err == nil && a.Zone() == "" {
+			out[netip.PrefixFrom(a, a.BitLen()).String()] = true
+		}
+	}
+	return out
 }

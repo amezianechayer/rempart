@@ -20,8 +20,14 @@ func TestValidatedPairs(t *testing.T) {
 	if !slices.Contains(got, llm.Pair{Platform: domain.PlatformFake, Model: "fake-model-v1"}) {
 		t.Errorf("demo pairs %+v, want the fake baseline", got)
 	}
-	if got, err := evals.ValidatedPairs("intent"); err != nil || len(got) != 0 {
-		t.Errorf("intent pairs %+v, %v; want none before a human baseline", got, err)
+	if got, err := evals.ValidatedPairs("intent"); err != nil || !slices.Contains(got, llm.Pair{Platform: domain.PlatformFake, Model: "fake-model-v1"}) {
+		t.Errorf("intent pairs %+v, %v; want the fake baseline committed by the human (H3-intent)", got, err)
+	}
+	if got, err := evals.RealPairs("intent"); err != nil || slices.ContainsFunc(got, func(p llm.Pair) bool { return p.Platform == domain.PlatformFake }) {
+		t.Errorf("intent real pairs %+v, %v; want the validated pairs without the fake route", got, err)
+	}
+	if got, err := evals.ValidatedPairs("nosuchsuite"); err != nil || len(got) != 0 {
+		t.Errorf("unknown suite pairs %+v, %v; want none", got, err)
 	}
 	for _, bad := range []string{"", "..", "demo/baseline", "Demo"} {
 		if _, err := evals.ValidatedPairs(bad); !errors.Is(err, evals.ErrInvalidSuite) {

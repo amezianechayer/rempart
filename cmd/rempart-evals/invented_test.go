@@ -74,3 +74,29 @@ func TestInventedOracle(t *testing.T) {
 		}
 	}
 }
+
+// TestInventedOracleSources (review of the M1 milestone, T102): an allowed
+// source is stated when the request writes the prefix, or the address of a
+// /32 or /128; another address or prefix is invented.
+func TestInventedOracleSources(t *testing.T) {
+	request := string(intentFixture(t, "reference-request.txt")) +
+		" Accès depuis 203.0.113.10, 2001:db8::10 et 198.51.100.0/24 seulement (source=192.0.2.7)."
+	for sources, want := range map[string]int{
+		"203.0.113.10/32":                 0,
+		"2001:db8::10/128":                0,
+		"198.51.100.0/24":                 0,
+		"192.0.2.7/32":                    0,
+		"203.0.113.11/32":                 1,
+		"203.0.113.0/24":                  1,
+		"198.51.100.0/25":                 1,
+		"203.0.113.1/32":                  1,
+		"203.0.113.10/32 198.51.100.7/32": 1,
+		"2001:db8::/32":                   1,
+	} {
+		ir := referenceIRFor(t)
+		ir.Exposure[0].AllowedSources = strings.Fields(sources)
+		if n := inventedValues(request, ir); n != want {
+			t.Errorf("sources %q: %d invented values, want %d", sources, n, want)
+		}
+	}
+}

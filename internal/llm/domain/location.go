@@ -22,11 +22,11 @@ var ErrUnknownLocation = errors.New("llm: unknown processing location")
 
 // openRouterModels: ADR 0008 D4 (O1, option (a)), the closed list of exact
 // OpenRouter model ids and the single final provider of each (the slug sent
-// in provider.order). Unverified at the source on 2026-10-13 (F7, F8): an
-// entry changes by an amendment of ADR 0008 only.
+// in provider.order). An entry changes by an amendment of ADR 0008 only;
+// deepseek/deepseek-chat withdrawn by A1.1 (F11: no endpoint at the provider
+// deepseek under the preferences of D3, 2026-11-18).
 var openRouterModels = map[string]string{
 	"anthropic/claude-sonnet-4.5": "anthropic",
-	"deepseek/deepseek-chat":      "deepseek",
 	"openai/gpt-4o-2024-08-06":    "openai",
 }
 

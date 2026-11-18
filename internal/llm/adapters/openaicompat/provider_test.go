@@ -23,8 +23,8 @@ import (
 
 const (
 	testKey   = "sk-or-v1-TEST-canary-0f3c"
-	testModel = "deepseek/deepseek-chat"
-	okReply   = `{"id":"gen-123","model":"deepseek/deepseek-chat","provider":"DeepSeek",` +
+	testModel = "openai/gpt-4o-2024-08-06"
+	okReply   = `{"id":"gen-123","model":"openai/gpt-4o-2024-08-06","provider":"OpenAI",` +
 		`"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"{\"greeting\":\"bonjour\"}"}}],` +
 		`"usage":{"prompt_tokens":12,"completion_tokens":5}}`
 )
@@ -119,11 +119,11 @@ func TestOpenRouterRequestBody(t *testing.T) {
 		}
 	}
 	want := map[string]string{
-		"model":      `"deepseek/deepseek-chat"`,
+		"model":      `"openai/gpt-4o-2024-08-06"`,
 		"stream":     `false`,
 		"transforms": `[]`,
 		"max_tokens": `64`,
-		"provider":   `{"order":["deepseek"],"allow_fallbacks":false,"require_parameters":true,"data_collection":"deny"}`,
+		"provider":   `{"order":["openai"],"allow_fallbacks":false,"require_parameters":true,"data_collection":"deny"}`,
 		"response_format": `{"type":"json_schema","json_schema":{"name":"output","strict":true,"schema":` +
 			string(testSchema) + `}}`,
 	}
@@ -162,7 +162,7 @@ func TestOpenRouterResponse(t *testing.T) {
 // TestOpenRouterProviderMismatchRejected (ADR 0008 D4, T21, T92): a final
 // provider other than the one of the closed list is refused.
 func TestOpenRouterProviderMismatchRejected(t *testing.T) {
-	ts, _ := server(t, http.StatusOK, strings.Replace(okReply, `"provider":"DeepSeek"`, `"provider":"Fireworks"`, 1))
+	ts, _ := server(t, http.StatusOK, strings.Replace(okReply, `"provider":"OpenAI"`, `"provider":"Fireworks"`, 1))
 	_, err := newProvider(t, ts).Structured(context.Background(), route(), request())
 	if !errors.Is(err, ErrProviderMismatch) {
 		t.Fatalf("Structured = %v, want ErrProviderMismatch", err)
@@ -170,7 +170,7 @@ func TestOpenRouterProviderMismatchRejected(t *testing.T) {
 	if strings.Contains(fmt.Sprint(err), testKey) {
 		t.Error("the error quotes the key")
 	}
-	ts2, _ := server(t, http.StatusOK, strings.Replace(okReply, `"provider":"DeepSeek",`, ``, 1))
+	ts2, _ := server(t, http.StatusOK, strings.Replace(okReply, `"provider":"OpenAI",`, ``, 1))
 	if _, err := newProvider(t, ts2).Structured(context.Background(), route(), request()); !errors.Is(err, ErrProviderMismatch) {
 		t.Errorf("no provider: %v, want ErrProviderMismatch", err)
 	}
@@ -185,7 +185,7 @@ func TestOpenRouterResponseRefused(t *testing.T) {
 		want   error
 	}{
 		"two_choices": {200, strings.Replace(okReply, `}}],`, `}},{"index":1,"finish_reason":"stop","message":{"role":"assistant","content":"{}"}}],`, 1), ErrUnexpectedResponse},
-		"no_choice":   {200, `{"id":"gen-1","model":"deepseek/deepseek-chat","provider":"DeepSeek","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}`, ErrUnexpectedResponse},
+		"no_choice":   {200, `{"id":"gen-1","model":"openai/gpt-4o-2024-08-06","provider":"OpenAI","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}`, ErrUnexpectedResponse},
 		"length":      {200, strings.Replace(okReply, `"finish_reason":"stop"`, `"finish_reason":"length"`, 1), ErrMaxTokens},
 		"tool_calls":  {200, strings.Replace(okReply, `"finish_reason":"stop"`, `"finish_reason":"tool_calls"`, 1), ErrUnexpectedResponse},
 		"refusal":     {200, strings.Replace(okReply, `"role":"assistant",`, `"role":"assistant","refusal":"no",`, 1), ErrRefusal},

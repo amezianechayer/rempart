@@ -12,7 +12,7 @@ import (
 // data only (ADR 0008).
 func realPolicy() domain.TenantPolicy {
 	return domain.TenantPolicy{
-		Route:     domain.Route{Platform: domain.PlatformOpenRouter, Model: "deepseek/deepseek-chat"},
+		Route:     domain.Route{Platform: domain.PlatformOpenRouter, Model: "openai/gpt-4o-2024-08-06"},
 		Residency: domain.ResidencyNone, Retention: domain.RetentionStandard,
 	}
 }
@@ -25,7 +25,7 @@ func TestRouteWithoutBaselineRejected(t *testing.T) {
 	pair := Pair{Platform: pol.Route.Platform, Model: pol.Route.Model}
 	for name, pairs := range map[string][]Pair{
 		"no_registry":    nil,
-		"other_model":    {{Platform: domain.PlatformOpenRouter, Model: "openai/gpt-4o-2024-08-06"}},
+		"other_model":    {{Platform: domain.PlatformOpenRouter, Model: "anthropic/claude-sonnet-4.5"}},
 		"other_platform": {{Platform: domain.PlatformAnthropic, Model: pol.Route.Model}},
 	} {
 		t.Run(name, func(t *testing.T) {

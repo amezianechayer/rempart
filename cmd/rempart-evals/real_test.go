@@ -19,14 +19,14 @@ func TestRealModeRefusedWithoutKeyOrModel(t *testing.T) {
 	e := newEnv(t, t.TempDir(), noGit(t))
 	for name, args := range map[string][]string{
 		"no_model":      {"--suite", "demo", "--llm", "openrouter"},
-		"model_no_llm":  {"--suite", "demo", "--model", "deepseek/deepseek-chat"},
-		"unknown_llm":   {"--suite", "demo", "--llm", "anthropic", "--model", "deepseek/deepseek-chat"},
+		"model_no_llm":  {"--suite", "demo", "--model", "openai/gpt-4o-2024-08-06"},
+		"unknown_llm":   {"--suite", "demo", "--llm", "anthropic", "--model", "openai/gpt-4o-2024-08-06"},
 		"unlisted":      {"--suite", "demo", "--llm", "openrouter", "--model", "openrouter/auto"},
-		"variant":       {"--suite", "demo", "--llm", "openrouter", "--model", "deepseek/deepseek-chat:free"},
-		"all_suites":    {"--suite", "all", "--llm", "openrouter", "--model", "deepseek/deepseek-chat"},
-		"changed":       {"--suite", "changed", "--base", "HEAD", "--llm", "openrouter", "--model", "deepseek/deepseek-chat"},
-		"twice":         {"--suite", "demo", "--llm", "openrouter", "--llm", "openrouter", "--model", "deepseek/deepseek-chat"},
-		"no_key_in_env": {"--suite", "demo", "--llm", "openrouter", "--model", "deepseek/deepseek-chat"},
+		"variant":       {"--suite", "demo", "--llm", "openrouter", "--model", "openai/gpt-4o-2024-08-06:free"},
+		"all_suites":    {"--suite", "all", "--llm", "openrouter", "--model", "openai/gpt-4o-2024-08-06"},
+		"changed":       {"--suite", "changed", "--base", "HEAD", "--llm", "openrouter", "--model", "openai/gpt-4o-2024-08-06"},
+		"twice":         {"--suite", "demo", "--llm", "openrouter", "--llm", "openrouter", "--model", "openai/gpt-4o-2024-08-06"},
+		"no_key_in_env": {"--suite", "demo", "--llm", "openrouter", "--model", "openai/gpt-4o-2024-08-06"},
 	} {
 		code, stdout, stderr := runArgs(t, e, args...)
 		if code != codeUsage || stdout != "" {
@@ -42,14 +42,14 @@ func TestRealModeRefusedWithoutKeyOrModel(t *testing.T) {
 // route of the model; the key is never printed.
 func TestRealModeTargets(t *testing.T) {
 	environ := []string{"PATH=/bin", apikey.EnvOpenRouter + "=" + realKey}
-	ts, err := realTargets(environ, "openrouter", "deepseek/deepseek-chat")
+	ts, err := realTargets(environ, "openrouter", "openai/gpt-4o-2024-08-06")
 	if err != nil {
 		t.Fatalf("realTargets: %v", err)
 	}
-	if id := ts["demo"].Identity(); id != (Identity{Platform: "openrouter", Model: "deepseek/deepseek-chat"}) {
+	if id := ts["demo"].Identity(); id != (Identity{Platform: "openrouter", Model: "openai/gpt-4o-2024-08-06"}) {
 		t.Errorf("demo identity %+v", id)
 	}
-	if _, err := realTargets([]string{"PATH=/bin"}, "openrouter", "deepseek/deepseek-chat"); err == nil ||
+	if _, err := realTargets([]string{"PATH=/bin"}, "openrouter", "openai/gpt-4o-2024-08-06"); err == nil ||
 		strings.Contains(err.Error(), realKey) {
 		t.Errorf("realTargets without key: %v", err)
 	}

@@ -18,9 +18,9 @@ Propositions à appliquer par toi si ce n'est pas encore fait (le harnais est pr
 |---|---|---|---|
 | Python 3 (`python3`) | 3.8+ | M0 (hooks) | python.org ou paquet système |
 | Git, make, bash, jq | récents | M0 | paquets système |
-| Go | version de la directive `go` de `go.mod` (1.27.2 au 2026-10-13) ; un Go 1.21+ local télécharge cette chaîne via `GOTOOLCHAIN=auto` | M0 | go.dev/dl |
+| Go | version de la directive `go` de `go.mod` (1.27.4 au 2026-11-18, failles GO-2026-6859 et GO-2026-6809 de la bibliothèque standard corrigées) ; un Go 1.21+ local télécharge cette chaîne via `GOTOOLCHAIN=auto` | M0 | go.dev/dl |
 | Docker Engine + plugin compose v2 | 28 ou plus, démon local (socket unix) | M0 (`make dev`) | docs.docker.com/engine/install. Docker Desktop est payant pour les entreprises de plus de 250 salariés ou 10 M$ de chiffre d'affaires |
-| golangci-lint | v2.14.0 (épinglée ; CI en M0-T04), compilée avec Go 1.27 ou plus : `GOTOOLCHAIN=go1.27.2 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0` ou binaire officiel | M0 | golangci-lint.run |
+| golangci-lint | v2.14.0 (épinglée ; CI en M0-T04), compilée avec une version de Go au moins égale à la directive `go` (sinon elle refuse le module) : `GOTOOLCHAIN=go1.27.4 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0` ou binaire officiel | M0 | golangci-lint.run |
 | govulncheck | v1.8.0, épinglée par la directive `tool` de `go.mod` et lancée par `go tool govulncheck` ; binaire séparé facultatif | M0 | `go install golang.org/x/vuln/cmd/govulncheck@v1.8.0` |
 | gofumpt | récent | M0 | `go install mvdan.cc/gofumpt@latest` |
 | OPA | 1.x | M0 (si `policies/` existe) | openpolicyagent.org |
@@ -50,7 +50,7 @@ Propositions à appliquer par toi si ce n'est pas encore fait (le harnais est pr
 ## Evals sur un vrai modèle (M1, ADR 0008)
 - Seulement depuis le terminal de l'humain, jamais depuis un agent ni la CI (refus dans le binaire). Route vérifiée de bout en bout le 2026-11-18 : `--llm openrouter --model openai/gpt-4o-2024-08-06`.
 - Compte OpenRouter **crédité** : la limite de dépense d'une clé n'est pas un solde. Tant qu'aucun crédit n'est acheté (`"is_free_tier": true` sur `GET https://openrouter.ai/api/v1/key`), chaque appel est refusé par un 402 : OpenRouter réserve avant l'appel le coût maximal de la requête (8 192 tokens de sortie pour L1, environ 0,09 $ par appel sur GPT-4o). Prévoir environ 10 $ pour une calibration et une mesure de la suite `intent` (28 cas, 3 exécutions).
-- La clé se saisit sans écho, jamais en clair sur la ligne de commande (elle resterait dans `~/.bash_history`) : `( read -rs -p "Clé OpenRouter : " K && export REMPART_LLM_KEY_OPENROUTER="$K" && go run ./cmd/rempart-evals --suite intent --llm openrouter --model openai/gpt-4o-2024-08-06 )`. Ajouter `--write-baseline` pour la calibration, confirmée par `oui` sur le terminal. Une calibration dont un appel échoue n'écrit rien et affiche les échecs par classe (`HTTP 402 ×81`, etc.).
+- La clé se saisit sans écho, jamais en clair sur la ligne de commande (elle resterait dans `~/.bash_history`) : `( read -rs -p "Clé OpenRouter : " K && export REMPART_LLM_KEY_OPENROUTER="$K" && go run ./cmd/rempart-evals --suite intent --llm openrouter --model openai/gpt-4o-2024-08-06 )`. Ajouter `--write-baseline` pour la calibration. Chaque lancement, mesure ou calibration, se confirme par `oui` sur le terminal ; une calibration sous le seuil du critère 1 de M1 (succès 0,9, résistance aux injections 1) n'écrit rien. Une calibration dont un appel échoue n'écrit rien et affiche les échecs par classe (`HTTP 402 ×81`, etc.).
 
 ## Comptes (avant M3)
 Comptes bac à sable AWS et Azure dédiés, avec alertes de budget. Aucun identifiant dans le dépôt.

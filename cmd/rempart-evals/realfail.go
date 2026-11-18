@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/amezianechayer/rempart/internal/llm"
 	"github.com/amezianechayer/rempart/internal/llm/adapters/openaicompat"
 	lldomain "github.com/amezianechayer/rempart/internal/llm/domain"
 	"github.com/amezianechayer/rempart/internal/llm/ports"
@@ -70,11 +71,16 @@ func failureClass(err error) string {
 		return "route refusée par l'adaptateur"
 	case errors.Is(err, lldomain.ErrInvalidRequest):
 		return "requête refusée avant envoi"
+	case errors.Is(err, llm.ErrModelMismatch):
+		return "modèle de la réponse différent"
+	case errors.Is(err, llm.ErrProviderFailed):
+		return "usage hors bornes"
 	}
 	return "autre"
 }
 
-// loggedProvider records the failures of inner.
+// loggedProvider records the failures of inner, and the responses that
+// llm.Client refuses before any use (llm.CheckResponse).
 type loggedProvider struct {
 	inner ports.ModelProvider
 	log   *failureLog
@@ -82,18 +88,23 @@ type loggedProvider struct {
 
 func (p loggedProvider) Structured(ctx context.Context, route lldomain.Route, req lldomain.Request) (lldomain.Response, error) {
 	r, err := p.inner.Structured(ctx, route, req)
-	if err != nil {
-		p.log.add(err)
-	}
+	p.record(route, r, err)
 	return r, err
 }
 
 func (p loggedProvider) WithTools(ctx context.Context, route lldomain.Route, req lldomain.Request, tools []lldomain.ToolSpec) (lldomain.Response, error) {
 	r, err := p.inner.WithTools(ctx, route, req, tools)
+	p.record(route, r, err)
+	return r, err
+}
+
+func (p loggedProvider) record(route lldomain.Route, r lldomain.Response, err error) {
+	if err == nil {
+		err = llm.CheckResponse(route, r)
+	}
 	if err != nil {
 		p.log.add(err)
 	}
-	return r, err
 }
 
 func (p loggedProvider) Capabilities(route lldomain.Route) lldomain.Capabilities {

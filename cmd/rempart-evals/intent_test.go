@@ -133,8 +133,8 @@ func TestWriteBaselineRequiresTTY(t *testing.T) {
 	e.environ = append(e.environ, apikey.EnvOpenRouter+"="+realKey)
 	asked := ""
 	e.confirm = func(prompt string) bool { asked = prompt; return false }
-	code, stdout, stderr := runArgs(t, e, "--suite", "intent", "--llm", "openrouter", "--model", "deepseek/deepseek-chat", "--write-baseline")
-	if code != codeUsage || stdout != "" || !strings.Contains(asked, "deepseek/deepseek-chat") {
+	code, stdout, stderr := runArgs(t, e, "--suite", "intent", "--llm", "openrouter", "--model", "openai/gpt-4o-2024-08-06", "--write-baseline")
+	if code != codeUsage || stdout != "" || !strings.Contains(asked, "openai/gpt-4o-2024-08-06") {
 		t.Errorf("code %d, stdout %q, prompt %q; want %d after a refused confirmation naming the route", code, stdout, asked, codeUsage)
 	}
 	if strings.Contains(stderr+asked, realKey) {
@@ -144,7 +144,7 @@ func TestWriteBaselineRequiresTTY(t *testing.T) {
 		t.Errorf("baseline directory created: %v", err)
 	}
 	e.confirm = nil
-	if code, _, _ := runArgs(t, e, "--suite", "intent", "--llm", "openrouter", "--model", "deepseek/deepseek-chat", "--write-baseline"); code != codeUsage {
+	if code, _, _ := runArgs(t, e, "--suite", "intent", "--llm", "openrouter", "--model", "openai/gpt-4o-2024-08-06", "--write-baseline"); code != codeUsage {
 		t.Errorf("no confirmation available: code %d, want %d", code, codeUsage)
 	}
 }
@@ -162,7 +162,7 @@ func TestRealModeRefusedForAgentsAndCI(t *testing.T) {
 		e.environ = append(e.environ, apikey.EnvOpenRouter+"="+realKey, v)
 		asked := false
 		e.confirm = func(string) bool { asked = true; return true }
-		if code, stdout, _ := runArgs(t, e, "--suite", "intent", "--llm", "openrouter", "--model", "deepseek/deepseek-chat"); code != codeUsage || stdout != "" || asked {
+		if code, stdout, _ := runArgs(t, e, "--suite", "intent", "--llm", "openrouter", "--model", "openai/gpt-4o-2024-08-06"); code != codeUsage || stdout != "" || asked {
 			t.Errorf("%s, real mode: code %d, stdout %q, asked %v; want %d before any confirmation", v, code, stdout, asked, codeUsage)
 		}
 	}
@@ -179,11 +179,11 @@ func TestRealModeRefusedForAgentsAndCI(t *testing.T) {
 // TestRealModeIntentTarget: the real mode runs the intent target on the
 // OpenRouter route of the model.
 func TestRealModeIntentTarget(t *testing.T) {
-	ts, err := realTargets([]string{"PATH=/bin", apikey.EnvOpenRouter + "=" + realKey}, "openrouter", "deepseek/deepseek-chat")
+	ts, err := realTargets([]string{"PATH=/bin", apikey.EnvOpenRouter + "=" + realKey}, "openrouter", "openai/gpt-4o-2024-08-06")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id := ts["intent"].Identity(); id != (Identity{Platform: "openrouter", Model: "deepseek/deepseek-chat"}) {
+	if id := ts["intent"].Identity(); id != (Identity{Platform: "openrouter", Model: "openai/gpt-4o-2024-08-06"}) {
 		t.Errorf("intent identity %+v", id)
 	}
 	if !strings.Contains(string(mustJSON(t, targets()["intent"].Identity())), "fake") {

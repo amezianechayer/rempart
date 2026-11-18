@@ -59,8 +59,8 @@ func reached(t *testing.T, cfg llm.Config, calibrated, r domain.Route) (bool, er
 // never calibrated; the registry of the configuration is kept.
 func TestCalibrationAllowsOnlyItsRoute(t *testing.T) {
 	cfg := llm.Config{MaxTokensPerCall: 16}
-	calibrated := domain.Route{Platform: domain.PlatformOpenRouter, Model: "deepseek/deepseek-chat"}
-	other := domain.Route{Platform: domain.PlatformOpenRouter, Model: "openai/gpt-4o-2024-08-06"}
+	calibrated := domain.Route{Platform: domain.PlatformOpenRouter, Model: "openai/gpt-4o-2024-08-06"}
+	other := domain.Route{Platform: domain.PlatformOpenRouter, Model: "anthropic/claude-sonnet-4.5"}
 	if ok, err := reached(t, cfg, calibrated, calibrated); !ok || errors.Is(err, llm.ErrRouteWithoutBaseline) {
 		t.Errorf("calibrated route: reached %v, %v", ok, err)
 	}
@@ -84,7 +84,7 @@ func TestCalibrationAllowsOnlyItsRoute(t *testing.T) {
 		"fake":         {Platform: domain.PlatformFake, Model: "fake-model-v1"},
 		"empty_model":  {Platform: domain.PlatformOpenRouter},
 		"unwired":      {Platform: domain.PlatformOpenAI, Model: "gpt-4o-2024-08-06"},
-		"with_region":  {Platform: domain.PlatformOpenRouter, Region: "eu-west-3", Model: "deepseek/deepseek-chat"},
+		"with_region":  {Platform: domain.PlatformOpenRouter, Region: "eu-west-3", Model: "openai/gpt-4o-2024-08-06"},
 		"empty_route":  {},
 		"unknown_kind": {Platform: "mystery", Model: "m"},
 	} {

@@ -69,6 +69,7 @@ func controlledValues(ix tokenIndex, d Draft) []controlled {
 			add(iPath("connectivity", i, "ports"), p, ok, false)
 		}
 	}
+	written := writtenPrefixes(ix.raw)
 	for i, e := range d.Exposure {
 		protoAnchored := ix.anchoredIn(lexProtocol, e.Protocol)
 		add(iPath("exposure", i, "protocol"), e.Protocol, protoAnchored, false)
@@ -77,7 +78,7 @@ func controlledValues(ix tokenIndex, d Draft) []controlled {
 			add(iPath("exposure", i, "port"), strconv.Itoa(*e.Port), ix.literal(strconv.Itoa(*e.Port)), has && protoAnchored && std == *e.Port)
 		}
 		for _, s := range e.AllowedSources {
-			add(iPath("exposure", i, "allowed_sources"), s, strings.Contains(ix.raw, s), false)
+			add(iPath("exposure", i, "allowed_sources"), s, sourceWritten(written, s), false)
 		}
 	}
 	strictest := strictestClass(ix)

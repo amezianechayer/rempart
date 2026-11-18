@@ -143,3 +143,28 @@ Les décisions 2 et 4 reposent sur un lexique fermé écrit en français. Une de
 - **T85** : la décision 4 est vérifiée en anglais et sur un texte mêlé.
 - **T86** : extension aux formes anglaises affaiblissantes ; (ci) traitée.
 - **T94 (proposée)** : contournement des contrôles lexicaux par la langue, l'écriture ou l'encodage de la demande ; parade A1.2 ; résidu consigné dans le plan (R2).
+
+## Amendement A2 : restrictions de source d'une exposition (revue sécurité de clôture de M1)
+
+- Statut de A2 : proposé le 2026-11-18 par l'agent sur constat haut de `security-reviewer` (revue du jalon M1), à accepter par l'humain (remplacer cette ligne par « Statut de A2 : accepté le <date> (décision humaine) »).
+- Origine : constat haut de la revue de clôture de M1 (menace T102 de `docs/02-THREAT-MODEL.md`).
+
+### Contexte
+
+Dans le brouillon, dans l'IR et dans le graphe, `exposure[].allowed_sources` vide signifie « tout Internet », la valeur la moins protectrice. La provenance ne contrôlait que les sources présentes, jamais une restriction absente, et une adresse seule écrite par l'utilisateur ne pouvait pas être représentée : sa forme fidèle `A/32` était refusée (`INTENT-TECHNICAL-VALUE`, `INTENT-INVENTED-VALUE`), et la correction ciblée poussait un modèle correct à retirer la restriction. L'IR convergeait alors avec une exposition à tout Internet. C'est une décision de sécurité prise par le modèle et validée par le code déterministe, contraire au défaut sûr de la décision 2.
+
+### Décision
+
+- **A2.1** Règle de complétude `INTENT-EXPOSURE-SOURCES-OMITTED` (haute) : toute adresse ou tout préfixe IPv4 ou IPv6 écrit dans le texte de l'utilisateur (le texte entier, jamais une phrase : T85c) figure, sous forme canonique, dans au moins une `exposure[].allowed_sources`, ou est capté par une `explicit_overrides[].statement`. Le découpage du texte coupe sur tout caractère étranger à une adresse, ce qui trouve aussi une valeur collée à une clé (`source=203.0.113.10`, obligation (ch)).
+- **A2.2** Forme canonique : une adresse `A` s'écrit `A/32` (IPv4) ou `A/128` (IPv6) ; un préfixe écrit est pris masqué. Une source du brouillon est ancrée si sa forme canonique est celle d'une adresse ou d'un préfixe du texte ; une source non masquée reste refusée.
+- **A2.3** La sémantique de `allowed_sources` vide (« tout Internet ») sera écrite dans la description du schéma à sa prochaine version (v2, avec la limite de 16 unions de l'ADR 0008 A1.2) : `schemas/intent/v1.json` est tenu égal à la référence du skill, aux écarts listés près.
+- **A2.4** L'oracle indépendant de `invented_values` (`cmd/rempart-evals/invented.go`) lit lui aussi les adresses et préfixes du texte, avec son propre découpage.
+
+### Conséquences
+
+- Positives : une restriction écrite ne disparaît plus sans finding ; la forme fidèle d'une adresse seule est représentable ; un CIDR imposé par l'utilisateur pour un réseau doit être consigné en dérogation au lieu de disparaître en silence.
+- Négatives : tout nombre de la forme d'une adresse (`1.2.3.4` cité comme version) doit être capté en dérogation, sinon escalade ; une restriction captée en dérogation seulement laisse `allowed_sources` vide, ce que la confirmation humaine de L2 doit montrer.
+
+### Impact sécurité
+
+- **T102** (nouvelle) : parade A2.1 et A2.2 ; tests `TestExposureSourcesOmitted`, `TestExposureSourcesKept`, `TestExposureSourcesNoFalsePositive`, `TestL1SourceRestrictionKept` ; cas d'eval `intent-exposure-source-address` et `intent-injection-source-removed`.

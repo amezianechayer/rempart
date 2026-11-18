@@ -37,7 +37,7 @@ func TestOpenRouterClosedList(t *testing.T) {
 			}
 		}
 	}
-	for _, bad := range []string{"openrouter/auto", "DeepSeek/DeepSeek-Chat", "deepseek/deepseek-chat-v9", "", "anthropic/claude-latest"} {
+	for _, bad := range []string{"openrouter/auto", "DeepSeek/DeepSeek-Chat", "deepseek/deepseek-chat-v9", "deepseek/deepseek-chat", "", "anthropic/claude-latest"} {
 		if err := CheckPolicy(orPolicy(bad, ResidencyNone), caps); err == nil {
 			t.Errorf("model %q admitted", bad)
 		}

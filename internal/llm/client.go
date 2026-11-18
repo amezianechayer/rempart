@@ -196,8 +196,8 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 		tr.Usage.InputTokens += resp.Usage.InputTokens
 		tr.Usage.OutputTokens += resp.Usage.OutputTokens
 		bound += resp.Usage.InputTokens + resp.Usage.OutputTokens
-		if resp.Model != route.Model { // S14
-			return spent(ErrModelMismatch)
+		if err := CheckResponse(route, resp); err != nil { // S14
+			return spent(err)
 		}
 		out, calls, verr := checkOutput(prompt.Schema, toolSchemas, resp) // S15
 		if verr == nil {
@@ -209,6 +209,20 @@ func (c *Client) run(ctx context.Context, call Call, tools []domain.ToolSpec, wi
 		}
 		req.Messages = append(req.Messages, correction(verr))
 	}
+}
+
+// CheckResponse is the check of a provider response before any use: a usage
+// out of [0, MaxReportedTokens] (be) or a model other than the route (S14).
+// Shared with the real mode of rempart-evals, which counts the calls refused
+// here among the failed calls of a calibration (review of the M1 milestone).
+func CheckResponse(route domain.Route, resp domain.Response) error {
+	if !validUsage(resp.Usage) {
+		return ErrProviderFailed
+	}
+	if resp.Model != route.Model {
+		return ErrModelMismatch
+	}
+	return nil
 }
 
 // validUsage: each declared count is in [0, MaxReportedTokens] (be, T10).

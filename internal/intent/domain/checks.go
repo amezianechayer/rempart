@@ -12,14 +12,15 @@ import (
 )
 
 const (
-	codeRefUnknown        = "INTENT-REF-UNKNOWN"
-	codeRefDuplicate      = "INTENT-REF-DUPLICATE"
-	codeTechnicalValue    = "INTENT-TECHNICAL-VALUE"
-	codeInventedValue     = "INTENT-INVENTED-VALUE"
-	codeBlockingAssumed   = "INTENT-BLOCKING-ASSUMED"
-	codeExposureSensitive = "INTENT-EXPOSURE-SENSITIVE"
-	codeExposureUnrequest = "INTENT-EXPOSURE-UNREQUESTED"
-	codeDataOmitted       = "INTENT-DATA-OMITTED"
+	codeRefUnknown             = "INTENT-REF-UNKNOWN"
+	codeRefDuplicate           = "INTENT-REF-DUPLICATE"
+	codeTechnicalValue         = "INTENT-TECHNICAL-VALUE"
+	codeInventedValue          = "INTENT-INVENTED-VALUE"
+	codeBlockingAssumed        = "INTENT-BLOCKING-ASSUMED"
+	codeExposureSensitive      = "INTENT-EXPOSURE-SENSITIVE"
+	codeExposureUnrequest      = "INTENT-EXPOSURE-UNREQUESTED"
+	codeDataOmitted            = "INTENT-DATA-OMITTED"
+	codeExposureSourcesOmitted = "INTENT-EXPOSURE-SOURCES-OMITTED"
 )
 
 // CodeLanguageUnsupported: the request is in a language, script or encoding
@@ -29,15 +30,16 @@ const CodeLanguageUnsupported = "INTENT-LANGUAGE-UNSUPPORTED"
 
 // Fixed messages, per code, never quoting a value (plan P6).
 var messages = map[string]string{
-	codeRefUnknown:          "reference to a workload that does not exist",
-	codeRefDuplicate:        "identifier used twice",
-	codeTechnicalValue:      "technical value (CIDR, IP address, ASN, IAM role) not allowed here; describe the need instead",
-	codeInventedValue:       "value not written by the user; declare it in assumptions or ask a question",
-	codeBlockingAssumed:     "blocking field cannot be assumed; ask a question",
-	codeExposureSensitive:   "sensitive workload exposed; remove the entry and capture the request in explicit_overrides",
-	codeExposureUnrequest:   "exposure not requested by the user; remove the entry",
-	codeDataOmitted:         "sensitive data written by the user is not declared in data",
-	CodeLanguageUnsupported: "request language, script or encoding not covered by the deterministic checks; human review required",
+	codeRefUnknown:             "reference to a workload that does not exist",
+	codeRefDuplicate:           "identifier used twice",
+	codeTechnicalValue:         "technical value (CIDR, IP address, ASN, IAM role) not allowed here; describe the need instead",
+	codeInventedValue:          "value not written by the user; declare it in assumptions or ask a question",
+	codeBlockingAssumed:        "blocking field cannot be assumed; ask a question",
+	codeExposureSensitive:      "sensitive workload exposed; remove the entry and capture the request in explicit_overrides",
+	codeExposureUnrequest:      "exposure not requested by the user; remove the entry",
+	codeDataOmitted:            "sensitive data written by the user is not declared in data",
+	codeExposureSourcesOmitted: "address or prefix written by the user is neither an allowed source of an exposure nor captured in explicit_overrides",
+	CodeLanguageUnsupported:    "request language, script or encoding not covered by the deterministic checks; human review required",
 }
 
 var severities = map[string]loopsdomain.Severity{
@@ -65,6 +67,7 @@ func Check(text string, d Draft, c TenantContext) []loopsdomain.Finding {
 	out = append(out, checkProvenance(ix, d, c)...)
 	out = append(out, checkExposure(ix, d)...)
 	out = append(out, checkCompleteness(ix, d)...)
+	out = append(out, checkSources(text, d)...)
 	return loopsdomain.Sort(out)
 }
 
@@ -185,10 +188,10 @@ func checkTechnical(text string, d Draft) []loopsdomain.Finding {
 			out = append(out, finding(codeTechnicalValue, l.path))
 		}
 	}
+	written := writtenPrefixes(text)
 	for i, e := range d.Exposure {
 		for _, s := range e.AllowedSources {
-			p, err := netip.ParsePrefix(s)
-			if err != nil || p.Masked() != p || !strings.Contains(text, s) {
+			if !sourceWritten(written, s) {
 				out = append(out, finding(codeTechnicalValue, iPath("exposure", i, "allowed_sources")))
 			}
 		}
