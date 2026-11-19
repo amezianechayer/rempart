@@ -2,6 +2,8 @@
 //
 // Subcommand design (M1-T04): rempart design [--json | --cidr-only]
 // [--superblock CIDR] [--reserve CIDR]... [--growth N] <ir.json>.
+// Subcommand threat (M2-T04): rempart threat model <graph.json> and
+// rempart threat diff <before.json> <after.json>.
 package main
 
 import (
@@ -25,11 +27,14 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// run is the testable entry point: 0 success, 1 design refused, 2 usage.
+// run is the testable entry point: 0 success, 1 refused, 2 usage.
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "design" {
-		_, _ = fmt.Fprintln(stderr, name+": "+usage)
-		return exitUsage
+	switch {
+	case len(args) > 0 && args[0] == "design":
+		return runDesign(args[1:], stdout, stderr)
+	case len(args) > 0 && args[0] == "threat":
+		return runThreat(args[1:], stdout, stderr)
 	}
-	return runDesign(args[1:], stdout, stderr)
+	_, _ = fmt.Fprintln(stderr, name+": "+usage+"\n"+threatUsage)
+	return exitUsage
 }

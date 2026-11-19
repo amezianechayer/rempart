@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rempart.dev/schemas/threat/v1.json",
+  "title": "Rempart threat model and delta, catalog stride-v1 (ADR 0010 D9 to D11)",
+  "$defs": {
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "target": {
+      "type": "string",
+      "pattern": "^((internet|(net|wl|lb|data|id|acct):[a-z0-9][a-z0-9.-]{0,80})|[a-z_]+\\|[a-z0-9:.-]+\\|[a-z0-9:.-]+(\\|(tcp|udp|https|http)/[0-9]{1,5}(-[0-9]{1,5})?)?)$",
+      "maxLength": 300
+    },
+    "threat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "rule",
+        "category",
+        "target",
+        "target_type",
+        "severity",
+        "status",
+        "controls"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^STRIDE-[STRIDE]-[0-9]{3}@((internet|(net|wl|lb|data|id|acct):[a-z0-9][a-z0-9.-]{0,80})|[a-z_]+\\|[a-z0-9:.-]+\\|[a-z0-9:.-]+(\\|(tcp|udp|https|http)/[0-9]{1,5}(-[0-9]{1,5})?)?)$",
+          "maxLength": 320
+        },
+        "rule": {
+          "type": "string",
+          "pattern": "^STRIDE-[STRIDE]-[0-9]{3}$"
+        },
+        "category": {
+          "enum": [
+            "spoofing",
+            "tampering",
+            "repudiation",
+            "information_disclosure",
+            "denial_of_service",
+            "elevation_of_privilege"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "target_type": {
+          "enum": [
+            "node",
+            "flow"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "status": {
+          "enum": [
+            "open",
+            "mitigated"
+          ]
+        },
+        "controls": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9]{1,5}-[0-9]{3}$"
+          }
+        }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from",
+        "to"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^STRIDE-[STRIDE]-[0-9]{3}@((internet|(net|wl|lb|data|id|acct):[a-z0-9][a-z0-9.-]{0,80})|[a-z_]+\\|[a-z0-9:.-]+\\|[a-z0-9:.-]+(\\|(tcp|udp|https|http)/[0-9]{1,5}(-[0-9]{1,5})?)?)$",
+          "maxLength": 320
+        },
+        "from": {
+          "$ref": "#/$defs/threat"
+        },
+        "to": {
+          "$ref": "#/$defs/threat"
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "catalog",
+        "tenant_id",
+        "graph_revision",
+        "pack_digest",
+        "threats"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "catalog": {
+          "const": "stride-v1"
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/tenant_id"
+        },
+        "graph_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "pack_digest": {
+          "$ref": "#/$defs/revision"
+        },
+        "threats": {
+          "type": "array",
+          "maxItems": 20000,
+          "items": {
+            "$ref": "#/$defs/threat"
+          }
+        }
+      }
+    },
+    "delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "catalog",
+        "tenant_id",
+        "pack_digest",
+        "from",
+        "to",
+        "added",
+        "removed",
+        "changed"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "catalog": {
+          "const": "stride-v1"
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/tenant_id"
+        },
+        "pack_digest": {
+          "$ref": "#/$defs/revision"
+        },
+        "from": {
+          "$ref": "#/$defs/revision"
+        },
+        "to": {
+          "$ref": "#/$defs/revision"
+        },
+        "added": {
+          "type": "array",
+          "maxItems": 20000,
+          "items": {
+            "$ref": "#/$defs/threat"
+          }
+        },
+        "removed": {
+          "type": "array",
+          "maxItems": 20000,
+          "items": {
+            "$ref": "#/$defs/threat"
+          }
+        },
+        "changed": {
+          "type": "array",
+          "maxItems": 20000,
+          "items": {
+            "$ref": "#/$defs/change"
+          }
+        }
+      }
+    }
+  }
+}

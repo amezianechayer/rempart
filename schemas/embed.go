@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"embed"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -12,7 +13,7 @@ import (
 
 // FS holds the schemas, read-only, compiled into the binary.
 //
-//go:embed intent/v1.json intent/draft-v1.json graph/v1.json policy/design-input-v1.json
+//go:embed intent/v1.json intent/draft-v1.json graph/v1.json policy/design-input-v1.json threat/v1.json
 var FS embed.FS
 
 // Paths of the schemas inside FS.
@@ -23,6 +24,10 @@ const (
 	// PolicyDesignInput is the input of the design policies (ADR 0011 D3, D5),
 	// draft-07 for the type checker of OPA.
 	PolicyDesignInput = "policy/design-input-v1.json"
+	// ThreatModel and ThreatDelta are the documents of the threat model
+	// (ADR 0010 D11), two fragments of one file.
+	ThreatModel = "threat/v1.json#/$defs/model"
+	ThreatDelta = "threat/v1.json#/$defs/delta"
 )
 
 // ErrUnknownSchema: the path is not one of the embedded schemas.
@@ -43,6 +48,8 @@ var compiled = map[string]func() (*jsonschema.Schema, error){
 	IntentDraft:       sync.OnceValues(func() (*jsonschema.Schema, error) { return compile(IntentDraft) }),
 	Graph:             sync.OnceValues(func() (*jsonschema.Schema, error) { return compile(Graph) }),
 	PolicyDesignInput: sync.OnceValues(func() (*jsonschema.Schema, error) { return compile(PolicyDesignInput) }),
+	ThreatModel:       sync.OnceValues(func() (*jsonschema.Schema, error) { return compile(ThreatModel) }),
+	ThreatDelta:       sync.OnceValues(func() (*jsonschema.Schema, error) { return compile(ThreatDelta) }),
 }
 
 // Compile compiles an embedded schema (Draft 2020-12, loader that denies any
@@ -55,8 +62,10 @@ func Compile(path string) (*jsonschema.Schema, error) {
 	return f()
 }
 
+// compile reads the file of path, which may name a fragment after "#".
 func compile(path string) (*jsonschema.Schema, error) {
-	raw, err := FS.ReadFile(path)
+	file, fragment, _ := strings.Cut(path, "#")
+	raw, err := FS.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
@@ -67,8 +76,11 @@ func compile(path string) (*jsonschema.Schema, error) {
 	c := jsonschema.NewCompiler()
 	c.DefaultDraft(jsonschema.Draft2020)
 	c.UseLoader(denyLoader{})
-	if err := c.AddResource(resourceBase+path, doc); err != nil {
+	if err := c.AddResource(resourceBase+file, doc); err != nil {
 		return nil, err
 	}
-	return c.Compile(resourceBase + path)
+	if fragment != "" {
+		return c.Compile(resourceBase + file + "#" + fragment)
+	}
+	return c.Compile(resourceBase + file)
 }

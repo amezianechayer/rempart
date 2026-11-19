@@ -353,6 +353,16 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
     - (fm) [moyen, avant M2-T05, T114] donnée à résidence `fr` atteinte par un workload de zone `eu` hors de France : rien ne se déclenche (RES-006 juge la sortie de l'UE, RES-002 le seul placement de l'hôte) ; règle de transfert au niveau `fr` et cas `ko`.
     - (fn) [bas, avant les graphes observés (L6)] le nœud `internet` est lu de zone `unknown` : un `CAN_REACH` d'Internet à sources restreintes vers un hôte lève RES-006 (bruit, échec fermé ; `Build` ne produit pas ces arêtes) ; exclure Internet ou garder ce comportement, à trancher.
   - **M2-T03 `policy-design` close** : critères 1 à 7 de la fiche tenus (voir l'entrée T03b, puis 140 tests Rego après la revue) ; revue sécurité PASS en troisième passe.
+- 2026-11-19 : **M2-T04 `threat-stride` livrée et close** (phases tests puis impl ; ADR 0010 D9 à D12) :
+  - `internal/threat` : catalogue `stride-v1` (27 entrées, une entrée générique par couple (type, catégorie) applicable, plus l'hypothèse STRIDE-I-004 des chemins transitifs), empreinte figée dans `testdata/catalog.sha256` ; `Analyze` (statut dérivé des contrôles évalués et des findings, au plus 20 000 menaces, refus d'un graphe sans tenant ou d'une empreinte de pack hors grammaire) ; `Revision` (JCS sur `FactsGraph`, vecteur figé) ; `Diff` (refus inter-tenant, inter-catalogue, inter-pack) ; `DecodeModel` et `DecodeDelta` stricts (16 Mio, UTF-8, doublons par jetons, schéma, `DisallowUnknownFields`).
+  - `schemas/threat/v1.json` (`$defs` `model` et `delta`, compilés séparément : `schemas.Compile` accepte désormais un fragment après `#`) ; `cmd/rempart` : `threat model <graphe>` et `threat diff <graphe A> <graphe B>` (graphe lu strictement, findings du pack de conception embarqué, messages fixes, codes 0, 1, 2).
+  - Preuves : critère 1 `9` ; critère 2 (C4) `true` ; critère 3 `1` (deux exécutions, même SHA-256) ; critère 4 `make -f Makefile verify-quick` rc=0 (140 tests Rego, archtest vert). Delta de référence : 12 menaces ajoutées (le répartiteur SSH et ses deux flux), STRIDE-T-001 et STRIDE-I-001 de `wl:legacy-vms` passent de `mitigated` à `open` (NET-003 sur `lb:legacy-vms-22`). Modèle de référence : 60 menaces, 12 ouvertes (entrées sans contrôle et hypothèse I-004 sur `wl:legacy-vms`).
+  - Retours en phase tests consignés par le harnais : écriture de `catalog.sha256` une fois le catalogue écrit (prévu au plan de la tâche) ; corrections de lint seules dans les tests (`errchkjson`, `gofumpt`, `gosec`), aucune assertion modifiée.
+  - **Écarts à l'ADR 0010, à valider par l'humain** :
+    1. D9, ressources d'une cible : en plus du nœud (et, pour un flux, de l'arête et de ses deux extrémités), une cible nœud porte ses arêtes `HAS_PERMISSION` (sortantes pour une identité, entrantes pour un compte) et les répartiteurs de charge qui lui transmettent (`CAN_REACH` dont la source est un `LoadBalancer`). Motif : IAM-001 porte sur l'arête de permission, NET-003 sur le répartiteur exposé, pas sur le processus derrière ; sans cette extension, l'exposition SSH de `wl:legacy-vms` ne rouvrait aucune de ses menaces. L'extension ne fait qu'ajouter des ressources : elle ne peut qu'ouvrir une menace, jamais en atténuer une (échec fermé).
+    2. D9, hypothèse STRIDE-I-004 : cible une donnée sensible (classification autre que `public` et `internal`, ou absente, lue du côté sûr comme les politiques) ou son hôte (`STORES`), atteinte depuis Internet par un chemin de `reach` de plus d'un saut ; sans contrôle, donc toujours `open`. Le contrôle `L2-INTERNET-TO-SENSITIVE` cité par D9 n'existe pas encore (M2-T05) : à ajouter à l'entrée lors d'un passage à `stride-v2`, ou à laisser hors catalogue, à trancher en T05.
+  - Limite notée : la commande `threat` évalue le pack sans contexte de conception (`DesignContext` vide : environnement déduit des réseaux, sans contraintes, rôles ni observabilité) ; L2 (T05) fournira le contexte de l'IR, donc des findings potentiellement différents pour les contrôles qui en dépendent.
+  - Sécurité : non par tâche (fiche) ; revue de clôture du jalon.
 
 
 ## En cours
@@ -1179,3 +1189,27 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 08:55 [harnais] PHASE FREE (discipline TDD suspendue) : constat haut de la seconde passe corrigé (RES-006 dans les deux sens)
 
 - 2026-11-19 08:55 [harnais] phase : impl -> free
+
+- 2026-11-19 09:27 [harnais] phase : free -> tests
+
+- 2026-11-19 09:30 [harnais] phase : tests -> impl
+
+- 2026-11-19 09:37 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T04: freeze testdata/catalog.sha256 (digest of stride-v1, planned to be written once the catalog exists)
+
+- 2026-11-19 09:37 [harnais] phase : impl -> tests
+
+- 2026-11-19 09:37 [harnais] passage en impl avec tests verts (caractérisation) : M2-T04: catalog digest frozen, implementation complete, all tests green
+
+- 2026-11-19 09:37 [harnais] phase : tests -> impl
+
+- 2026-11-19 09:37 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T04: lint-only fixes of the frozen tests (errchkjson, gofumpt, gosec G304/G703), no assertion changed
+
+- 2026-11-19 09:37 [harnais] phase : impl -> tests
+
+- 2026-11-19 09:37 [harnais] passage en impl avec tests verts (caractérisation) : M2-T04: lint-only test fixes done, assertions unchanged
+
+- 2026-11-19 09:37 [harnais] phase : tests -> impl
+
+- 2026-11-19 09:39 [harnais] PHASE FREE (discipline TDD suspendue) : tâche threat-stride terminée
+
+- 2026-11-19 09:39 [harnais] phase : impl -> free
