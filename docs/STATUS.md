@@ -1264,3 +1264,9 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 14:58 [harnais] phase : impl -> tests
 
 - 2026-11-19 14:58 [harnais] phase : tests -> impl
+
+- 2026-11-19 15:01 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 step 5: tests of internal/design/revise
+
+- 2026-11-19 15:01 [harnais] phase : impl -> tests
+
+- 2026-11-19 15:02 [harnais] phase : tests -> impl
