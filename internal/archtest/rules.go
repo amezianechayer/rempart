@@ -197,6 +197,11 @@ func DefaultRules(module string) []Rule {
 			Targets:     []string{m("internal/secrets/fake/...")},
 			AllowedFrom: []string{m("cmd/rempart-evals")},
 		},
+		{ // ADR 0011 D6: OPA and the embedded pack, the OPA adapter only (T6, T109)
+			Name: "opa-confined", Kind: Confine,
+			Targets:     []string{"github.com/open-policy-agent/opa/...", m("policies/...")},
+			AllowedFrom: []string{m("internal/policy/adapters/opa/...")},
+		},
 	}
 }
 

@@ -1,0 +1,13 @@
+{
+	"ImportPath": "github.com/amezianechayer/rempart/internal/policy",
+	"Imports": [
+		"github.com/open-policy-agent/opa/v1/rego"
+	]
+}
+{
+	"ImportPath": "github.com/amezianechayer/rempart/cmd/rempart-worker",
+	"Imports": [
+		"github.com/amezianechayer/rempart/internal/policy/adapters/opa",
+		"github.com/amezianechayer/rempart/policies"
+	]
+}

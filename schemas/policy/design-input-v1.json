@@ -1,0 +1,166 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://rempart.dev/schemas/policy/design-input-v1.json",
+  "title": "Rempart design policy input v1",
+  "description": "Entrée des politiques de conception (ADR 0011 D5) : faits du graphe sans texte libre, atteignabilité calculée en Go, faits dérivés. Passé au vérificateur de types d'OPA : un champ absent du schéma est une erreur de type.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["graph", "reach", "derived"],
+  "properties": {
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "tenant_id", "source", "nodes", "edges"],
+      "properties": {
+        "version": {"type": "string", "const": "1"},
+        "tenant_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+        "source": {"type": "string", "enum": ["design", "observed"]},
+        "nodes": {"type": "array", "items": {"$ref": "#/definitions/node"}},
+        "edges": {"type": "array", "items": {"$ref": "#/definitions/edge"}}
+      }
+    },
+    "reach": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hops", "from_internet"],
+      "properties": {
+        "hops": {"type": "array", "items": {"$ref": "#/definitions/hop"}},
+        "from_internet": {"type": "array", "items": {"$ref": "#/definitions/path"}}
+      }
+    },
+    "derived": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jurisdiction", "unconfirmed_exposures", "sources_unresolved", "constraints", "environment", "observability", "workload_roles"],
+      "properties": {
+        "jurisdiction": {"type": "object", "additionalProperties": {"type": "string", "enum": ["fr", "eu", "non_eu", "unknown"]}},
+        "unconfirmed_exposures": {"type": "array", "items": {"type": "string"}},
+        "sources_unresolved": {"type": "array", "items": {"type": "string"}},
+        "constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowed_regions", "forbidden_clouds"],
+          "properties": {
+            "allowed_regions": {"type": "array", "items": {"type": "string"}},
+            "forbidden_clouds": {"type": "array", "items": {"type": "string", "enum": ["aws", "azure", "scaleway", "ovhcloud"]}}
+          }
+        },
+        "environment": {"type": "string", "enum": ["dev", "staging", "prod"]},
+        "observability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["metrics", "logs"],
+          "properties": {"metrics": {"type": "boolean"}, "logs": {"type": "boolean"}}
+        },
+        "workload_roles": {"type": "object", "additionalProperties": {"type": "string", "enum": ["gitops_controller", "observability_stack"]}}
+      }
+    }
+  },
+  "definitions": {
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "attrs"],
+      "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string", "enum": ["Internet", "Network", "Compute", "K8sCluster", "K8sWorkload", "LoadBalancer", "DataStore", "Identity", "Account"]},
+        "attrs": {"$ref": "#/definitions/node_attrs"}
+      }
+    },
+    "node_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cloud": {"type": "string"},
+        "region": {"type": "string"},
+        "env": {"type": "string"},
+        "subtype": {"type": "string"},
+        "cidr": {"type": "string"},
+        "tier": {"type": "string"},
+        "count": {"type": "integer"},
+        "os": {"type": "string"},
+        "public": {"type": "boolean"},
+        "listeners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["protocol", "port"],
+            "properties": {"protocol": {"type": "string"}, "port": {"type": "integer"}}
+          }
+        },
+        "behind": {"$ref": "#/definitions/strings"},
+        "classification": {"type": "string"},
+        "regulation": {"$ref": "#/definitions/strings"},
+        "residency": {"type": "string"},
+        "encrypted": {"type": "boolean"},
+        "public_access": {"type": "boolean"},
+        "api_public": {"type": "boolean"},
+        "credential": {"type": "string"},
+        "public_ip": {"type": "boolean"},
+        "api_allowed_sources": {"$ref": "#/definitions/strings"},
+        "audit_log": {"type": "boolean"},
+        "secrets_encryption": {"type": "boolean"},
+        "network_policy_default_deny": {"type": "boolean"},
+        "admission_policy": {"type": "boolean"},
+        "workload_identity": {"type": "boolean"}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "src", "dst", "attrs"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"type": "string", "enum": ["MEMBER_OF", "EXPOSES", "CAN_REACH", "STORES", "RUNS_AS", "HAS_PERMISSION"]},
+        "src": {"type": "string"},
+        "dst": {"type": "string"},
+        "attrs": {"$ref": "#/definitions/edge_attrs"}
+      }
+    },
+    "edge_attrs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {"type": "string"},
+        "port_from": {"type": "integer"},
+        "port_to": {"type": "integer"},
+        "via": {"type": "string"},
+        "path": {"$ref": "#/definitions/strings"},
+        "allowed_sources": {"$ref": "#/definitions/strings"},
+        "actions": {"$ref": "#/definitions/strings"}
+      }
+    },
+    "hop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["src", "dst", "proto", "ports", "world"],
+      "properties": {
+        "src": {"type": "string"},
+        "dst": {"type": "string"},
+        "proto": {"type": "string", "enum": ["tcp", "udp"]},
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "to"],
+            "properties": {"from": {"type": "integer"}, "to": {"type": "integer"}}
+          }
+        },
+        "world": {"type": "boolean"},
+        "sources": {"$ref": "#/definitions/strings"}
+      }
+    },
+    "path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "nodes"],
+      "properties": {
+        "target": {"type": "string"},
+        "nodes": {"$ref": "#/definitions/strings"}
+      }
+    }
+  }
+}

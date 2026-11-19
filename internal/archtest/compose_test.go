@@ -1194,7 +1194,7 @@ func TestMakeDevUsesWait(t *testing.T) {
 		valid := referenceDevMakefile(t)
 		// D8 of docs/plans/M0-make-subcalls.md: parseMakefile refuses the include
 		// directive itself, before checkDevTargets.
-		includeEnv := mustReplace(t, valid, "OPA ?= opa\n", "OPA ?= opa\n-include .env.dev\n")
+		includeEnv := mustReplace(t, valid, "POLICIES_DIR ?= policies\n", "POLICIES_DIR ?= policies\n-include .env.dev\n")
 		const (
 			upLine     = "\tbash scripts/dev-env.sh run docker compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d --wait --wait-timeout 240 --quiet-pull\n"
 			ensureLine = "\tbash scripts/dev-env.sh ensure\n"

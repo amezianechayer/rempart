@@ -85,12 +85,12 @@ const makeSelfRule = "Makefile: ;"
 
 // makeVariables: the only variables the Makefile may assign (D8 step 3).
 func makeVariables() []string {
-	return []string{"SHELL", ".SHELLFLAGS", ".DEFAULT_GOAL", "EVAL", "EVAL_BASE", "POLICIES_DIR", "OPA", "SCENARIO", "GOWORK", "GOFLAGS"}
+	return []string{"SHELL", ".SHELLFLAGS", ".DEFAULT_GOAL", "EVAL", "EVAL_BASE", "POLICIES_DIR", "SCENARIO", "GOWORK", "GOFLAGS"}
 }
 
 // makeExportable: the only names "export" may list (D8 step 4).
 func makeExportable() []string {
-	return []string{"SCENARIO", "EVAL", "EVAL_BASE", "POLICIES_DIR", "OPA", "GOWORK", "GOFLAGS"}
+	return []string{"SCENARIO", "EVAL", "EVAL_BASE", "POLICIES_DIR", "GOWORK", "GOFLAGS"}
 }
 
 // makeAssignForms: whole-line forms allowed for the variables of makeVariables,
@@ -101,7 +101,7 @@ var makeAssignForms = []*regexp.Regexp{
 	regexp.MustCompile(`^SHELL := /bin/bash$`),
 	regexp.MustCompile(`^\.SHELLFLAGS := -eu -o pipefail -c$`),
 	regexp.MustCompile(`^\.DEFAULT_GOAL := verify-quick$`),
-	regexp.MustCompile(`^(EVAL|POLICIES_DIR|OPA) \?= [A-Za-z0-9._/-]+$`),
+	regexp.MustCompile(`^(EVAL|POLICIES_DIR) \?= [A-Za-z0-9._/-]+$`),
 	regexp.MustCompile(`^export GOWORK := off$`),
 	regexp.MustCompile(`^override GOFLAGS := -mod=readonly$`),
 }
@@ -366,12 +366,14 @@ func requiredMakeTargets() []string {
 var (
 	makeCallRe        = regexp.MustCompile(`\$[({]MAKE[)}]|\bmake\b`)
 	makeTokenRe       = regexp.MustCompile(`[A-Za-z0-9._/-]+`)
-	callerVarRe       = regexp.MustCompile(`(^|[^$])\$[({](SCENARIO|EVAL|POLICIES_DIR|OPA)[)}:]`)
+	callerVarRe       = regexp.MustCompile(`(^|[^$])\$[({](SCENARIO|EVAL|POLICIES_DIR)[)}:]`)
 	readRe            = regexp.MustCompile(`\bread\b`)
 	ttyRedirectRe     = regexp.MustCompile(`(^|\s)0?<\s*/dev/tty(\s|$)`)
 	notInVerifyQuick  = regexp.MustCompile(`\bdocker\b|govulncheck|-tags[= ]?integration|\bcurl\b|\bwget\b|\bgo (get|install)\b`)
 	regoGlobRe        = regexp.MustCompile(`\*\.rego`)
-	opaTestRe         = regexp.MustCompile(`(opa|\$\(OPA\)'?|"\$\$OPA") test`)
+	opaTestRe         = regexp.MustCompile(`\bgo tool opa test\b`)
+	opaCommandRe      = regexp.MustCompile(`\bopa (check|test|eval|run|build|exec|fmt|bench|parse|capabilities|inspect|sign|deps)\b`)
+	opaEnvRe          = regexp.MustCompile(`\$\$\{?OPA\b|\$[({]OPA[)}:]`)
 	templateOpaCondRe = regexp.MustCompile(`\[\s*-d\s+policies\s*\]`)
 	overrideValueRe   = regexp.MustCompile(`^override\s+([A-Za-z0-9_]+)\s*:=\s*\$\(value ([A-Za-z0-9_]+)\)\s*$`)
 	evalsGuardRe      = regexp.MustCompile(`^test\s+-d\s+cmd/rempart-evals\s*\|\|`)
@@ -549,7 +551,7 @@ func shellUnquoted(s string) string {
 // the recipes from the environment (threat T8). EVAL_BASE (M0-T23): the base
 // commit of the targeted evals of make verify, read by the shell, never by make.
 func callerVariables() []string {
-	return []string{"SCENARIO", "EVAL", "EVAL_BASE", "POLICIES_DIR", "OPA"}
+	return []string{"SCENARIO", "EVAL", "EVAL_BASE", "POLICIES_DIR"}
 }
 
 // checkCallerVariables: rule 13 (R1-a). Each caller variable is frozen by
@@ -723,14 +725,32 @@ func reachableTargets(mf parsedMakefile, root string) []string {
 	return names
 }
 
-// checkOpaTest: rule 10.
+// opaCheckCommand is the check of ADR 0011 D6: strict mode, the capabilities
+// of the embedded engine and the input schema, through the OPA of go.mod.
+const opaCheckCommand = `go tool opa check --strict --capabilities internal/policy/adapters/opa/capabilities.json --schema schemas/policy/design-input-v1.json "$$POLICIES_DIR"`
+
+// checkOpaTest: rule 10, amended by ADR 0011 D6: OPA runs only through go tool
+// (the version pinned by go.mod), never a binary found in PATH or named by the
+// caller (T8); the check is strict, with the capabilities and the schema.
 func checkOpaTest(mf parsedMakefile, problems *problemList) {
 	recipe := strings.Join(mf.Rules["opa-test"].Recipe, "\n")
 	if !regoGlobRe.MatchString(recipe) {
 		problems.addf("Makefile: target opa-test must look for *.rego files before running OPA")
 	}
-	if !strings.Contains(recipe, "command -v") {
-		problems.addf("Makefile: target opa-test must fail when opa is missing (command -v) instead of skipping silently")
+	if !strings.Contains(recipe, opaCheckCommand) {
+		problems.addf("Makefile: target opa-test must run %s (ADR 0011 D6)", opaCheckCommand)
+	}
+	for _, loc := range opaCommandRe.FindAllStringIndex(recipe, -1) {
+		if !strings.HasSuffix(recipe[:loc[0]], "go tool ") {
+			problems.addf("Makefile: target opa-test runs opa outside go tool (a binary chosen by PATH, T8): %q", recipe[loc[0]:loc[1]])
+			break
+		}
+	}
+	if opaEnvRe.MatchString(recipe) {
+		problems.addf("Makefile: target opa-test reads OPA from the environment (a binary chosen by the caller, T8)")
+	}
+	if chk := strings.Index(recipe, "opa check"); chk >= 0 && strings.Index(recipe, ".rego") > chk {
+		problems.addf("Makefile: target opa-test runs opa check before looking for .rego files")
 	}
 	rego := strings.Index(recipe, ".rego")
 	loc := opaTestRe.FindStringIndex(recipe)
@@ -767,7 +787,6 @@ SHELL := /bin/bash
 
 EVAL ?= all
 POLICIES_DIR ?= policies
-OPA ?= opa
 
 # Variables fournies par l'appelant (menace T8). $(value ...) fige le texte brut : une valeur
 # passée en ligne de commande, par exemple SCENARIO='$(shell ...)', n'est jamais développée
@@ -776,8 +795,7 @@ override SCENARIO := $(value SCENARIO)
 override EVAL := $(value EVAL)
 override EVAL_BASE := $(value EVAL_BASE)
 override POLICIES_DIR := $(value POLICIES_DIR)
-override OPA := $(value OPA)
-export SCENARIO EVAL EVAL_BASE POLICIES_DIR OPA
+export SCENARIO EVAL EVAL_BASE POLICIES_DIR
 
 .PHONY: verify-quick verify opa-test arch-test evals update-baseline
 .PHONY: dev dev-preflight dev-down sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
@@ -797,16 +815,13 @@ verify: verify-quick
 	go tool govulncheck ./...
 
 # Étape OPA active seulement s'il existe au moins un fichier .rego sous POLICIES_DIR.
-# Dans ce cas, opa absent est une erreur : jamais de saut silencieux.
+# OPA est celui de go.mod (go tool opa, ADR 0011) : jamais un binaire choisi par l'appelant.
 opa-test:
 	@if [ -z "$$(find "$$POLICIES_DIR" -type f -name '*.rego' -print -quit 2>/dev/null)" ]; then \
 		echo "opa-test : aucun fichier .rego sous $$POLICIES_DIR, étape OPA sans objet."; \
-	elif ! command -v "$$OPA" >/dev/null 2>&1; then \
-		echo "opa-test : fichiers .rego présents sous $$POLICIES_DIR mais $$OPA introuvable (voir docs/SETUP.md)." >&2; \
-		exit 2; \
 	else \
-		"$$OPA" check "$$POLICIES_DIR"; \
-		"$$OPA" test "$$POLICIES_DIR"; \
+		go tool opa check --strict --capabilities internal/policy/adapters/opa/capabilities.json --schema schemas/policy/design-input-v1.json "$$POLICIES_DIR"; \
+		go tool opa test "$$POLICIES_DIR"; \
 	fi
 
 arch-test:
@@ -919,7 +934,7 @@ func TestMakefileTargets(t *testing.T) {
 			destroyConfirm = "\t@read -r -p \"Détruire $$SCENARIO sur le compte SANDBOX ? Tape 'oui' : \" a </dev/tty; [ \"$$a\" = \"oui\" ]\n"
 			destroyLines   = destroyConfirm + "\t./scripts/sandbox.sh destroy \"$$SCENARIO\"\n"
 			guardMessage   = "echo \"sandbox : scripts/sandbox.sh absent (livré en M3) ; aucune action.\" >&2; exit 2; }\n"
-			callerExports  = "export SCENARIO EVAL EVAL_BASE POLICIES_DIR OPA\n"
+			callerExports  = "export SCENARIO EVAL EVAL_BASE POLICIES_DIR\n"
 			evalCheck      = "\t@[[ \"$${EVAL:-}\" =~ ^[a-z0-9][a-z0-9/_-]{0,126}$$ ]] || " +
 				"{ echo \"EVAL requis, au format [a-z0-9/_-] (ex. EVAL=demo).\" >&2; exit 2; }"
 		)
@@ -1009,18 +1024,46 @@ func TestMakefileTargets(t *testing.T) {
 			{
 				name: "opa_unconditional",
 				src:  setRecipe(t, valid, "opa-test", "opa check policies && opa test policies"),
-				want: []string{"target opa-test must look for *.rego files", "target opa-test must fail when opa is missing"},
+				want: []string{"target opa-test must look for *.rego files", "target opa-test runs opa outside go tool"},
 			},
 			{
 				name: "opa_test_before_rego_lookup",
 				src: setRecipe(t, valid, "opa-test",
-					"command -v opa >/dev/null || exit 2", "opa test policies", "find policies -name '*.rego' -print -quit"),
+					"go tool opa test policies", "find policies -name '*.rego' -print -quit"),
 				want: []string{"target opa-test runs opa test before looking for .rego files"},
 			},
 			{
 				name: "template_opa_condition",
-				src:  setRecipe(t, valid, "opa-test", "@if [ -d policies ]; then opa check policies && opa test policies; fi"),
+				src:  setRecipe(t, valid, "opa-test", "@if [ -d policies ]; then go tool opa check policies && go tool opa test policies; fi"),
 				want: []string{"template condition [ -d policies ]"},
+			},
+			{
+				// ADR 0011 D6: the opa of PATH is not the version of go.mod (T6, T8).
+				name: "opa_bare_binary",
+				src:  mustReplace(t, valid, "\t\tgo tool opa test \"$$POLICIES_DIR\"", "\t\topa test \"$$POLICIES_DIR\""),
+				want: []string{"target opa-test runs opa outside go tool"},
+			},
+			{
+				name: "opa_check_not_strict",
+				src:  mustReplace(t, valid, "go tool opa check --strict ", "go tool opa check "),
+				want: []string{"target opa-test must run go tool opa check --strict"},
+			},
+			{
+				name: "opa_check_without_schema",
+				src:  mustReplace(t, valid, " --schema schemas/policy/design-input-v1.json", ""),
+				want: []string{"target opa-test must run go tool opa check --strict"},
+			},
+			{
+				name: "opa_check_before_rego_lookup",
+				src: setRecipe(t, valid, "opa-test",
+					opaCheckCommand, "find \"$$POLICIES_DIR\" -name '*.rego' -print -quit", "go tool opa test \"$$POLICIES_DIR\""),
+				want: []string{"target opa-test runs opa check before looking for .rego files"},
+			},
+			{
+				// ADR 0011 D6: the OPA variable is gone, no caller chooses the binary.
+				name:    "opa_variable_reintroduced",
+				src:     mustReplace(t, valid, "POLICIES_DIR ?= policies\n", "POLICIES_DIR ?= policies\nOPA ?= opa\n"),
+				wantErr: `variable "OPA" not allowed in the Makefile (D8)`,
 			},
 			{
 				name: "docker_reachable_from_verify_quick",
@@ -1097,20 +1140,13 @@ func TestMakefileTargets(t *testing.T) {
 			},
 			{
 				name: "opa_dir_interpolated_by_make",
-				src:  mustReplace(t, valid, "\"$$OPA\" check \"$$POLICIES_DIR\"", "\"$$OPA\" check '$(POLICIES_DIR)'"),
+				src:  mustReplace(t, valid, "go tool opa test \"$$POLICIES_DIR\"", "go tool opa test '$(POLICIES_DIR)'"),
 				want: []string{"POLICIES_DIR interpolated by make"},
 			},
 			{
-				name: "opa_binary_interpolated_by_make",
-				src:  mustReplace(t, valid, "command -v \"$$OPA\"", "command -v '$(OPA)'"),
-				want: []string{"OPA interpolated by make"},
-			},
-			{
-				name: "opa_env_test_before_rego_lookup",
-				src: setRecipe(t, valid, "opa-test",
-					`command -v "$$OPA" >/dev/null || exit 2`, `"$$OPA" test "$$POLICIES_DIR"`,
-					`find "$$POLICIES_DIR" -name '*.rego' -print -quit`),
-				want: []string{"target opa-test runs opa test before looking for .rego files"},
+				name: "opa_binary_from_environment",
+				src:  mustReplace(t, valid, "go tool opa test \"$$POLICIES_DIR\"", "\"$$OPA\" test \"$$POLICIES_DIR\""),
+				want: []string{"target opa-test reads OPA from the environment"},
 			},
 			{
 				name: "caller_variable_not_frozen",
@@ -1119,8 +1155,8 @@ func TestMakefileTargets(t *testing.T) {
 			},
 			{
 				name: "override_only_in_comment",
-				src:  mustReplace(t, valid, "override OPA := $(value OPA)\n", "# override OPA := $(value OPA)\n"),
-				want: []string{"caller variable OPA is not frozen"},
+				src:  mustReplace(t, valid, "override POLICIES_DIR := $(value POLICIES_DIR)\n", "# override POLICIES_DIR := $(value POLICIES_DIR)\n"),
+				want: []string{"caller variable POLICIES_DIR is not frozen"},
 			},
 			{
 				// M0-make-subcalls D8: the only override of SCENARIO is $(value SCENARIO).
@@ -1142,12 +1178,12 @@ func TestMakefileTargets(t *testing.T) {
 			},
 			{
 				name: "caller_variable_not_exported",
-				src:  mustReplace(t, valid, callerExports, "export SCENARIO EVAL POLICIES_DIR\n"),
-				want: []string{"caller variable OPA is not exported"},
+				src:  mustReplace(t, valid, callerExports, "export SCENARIO EVAL EVAL_BASE\n"),
+				want: []string{"caller variable POLICIES_DIR is not exported"},
 			},
 			{
 				name: "caller_variable_exported_only_in_recipe",
-				src: editRule(t, mustReplace(t, valid, callerExports, "export SCENARIO EVAL OPA\n"), "arch-test",
+				src: editRule(t, mustReplace(t, valid, callerExports, "export SCENARIO EVAL EVAL_BASE\n"), "arch-test",
 					func(rule string, recipe []string) []string {
 						return append([]string{rule, "\texport POLICIES_DIR"}, recipe...)
 					}),
@@ -1221,7 +1257,7 @@ func TestMakefileTargets(t *testing.T) {
 			},
 			{
 				name:    "unsupported_conditional",
-				src:     mustReplace(t, valid, "OPA ?= opa\n", "OPA ?= opa\nifeq ($(CI),true)\nEVAL := changed\nendif\n"),
+				src:     mustReplace(t, valid, "POLICIES_DIR ?= policies\n", "POLICIES_DIR ?= policies\nifeq ($(CI),true)\nEVAL := changed\nendif\n"),
 				wantErr: `unsupported directive "ifeq ($(CI),true)"`,
 			},
 			{
@@ -1615,16 +1651,16 @@ func errAlreadyNamed(num int, target string, first int) string {
 func TestMakefileGrammar(t *testing.T) {
 	valid := targetMakefile
 	const (
-		opaLine      = "OPA ?= opa\n"
-		opaOverride  = "override OPA := $(value OPA)\n"
-		exportLine   = "export SCENARIO EVAL EVAL_BASE POLICIES_DIR OPA\n"
+		policiesLine = "POLICIES_DIR ?= policies\n"
+		lastOverride = "override POLICIES_DIR := $(value POLICIES_DIR)\n"
+		exportLine   = "export SCENARIO EVAL EVAL_BASE POLICIES_DIR\n"
 		secondPhony  = ".PHONY: dev dev-preflight dev-down sandbox-guard sandbox-plan sandbox-apply sandbox-destroy\n"
 		archCall     = "\t" + subMakePrefix + "arch-test\n"
 		evilInclude  = "$(eval include evil.mk)"
 		recipePrefix = ".RECIPEPREFIX"
 	)
-	// afterOPA inserts lines (newline included) after "OPA ?= opa".
-	afterOPA := func(lines string) string { return mustReplace(t, valid, opaLine, opaLine+lines) }
+	// afterPolicies inserts lines (newline included) after "POLICIES_DIR ?= policies".
+	afterPolicies := func(lines string) string { return mustReplace(t, valid, policiesLine, policiesLine+lines) }
 
 	type testCase struct {
 		name    string
@@ -1644,7 +1680,7 @@ func TestMakefileGrammar(t *testing.T) {
 	g1 := valid + evilInclude + " # :\n"
 	g2 := valid + "X := evil.mk\n$(eval -include $(X)) # :\n"
 	g3 := valid + recipePrefix + " := >\nverify-quick:\n>@echo SHADOW # :\n"
-	g15 := mustReplace(t, afterOPA("SUB := $(MAKE)\n"), archCall, "\t$(SUB) -f Makefile --no-print-directory dev\n")
+	g15 := mustReplace(t, afterPolicies("SUB := $(MAKE)\n"), archCall, "\t$(SUB) -f Makefile --no-print-directory dev\n")
 	g25 := valid + "%:\n\t@echo x\n"
 	g32 := valid + "arch-test: opa-test\n"
 	g32Lines := exactLines(g32, "arch-test:")
@@ -1658,7 +1694,7 @@ func TestMakefileGrammar(t *testing.T) {
 		})
 	}
 	n1 := valid + "# fin \\\\\ninclude evil.mk\n"
-	n1b := afterOPA("  # x \\\\\n-include evil.mk\n")
+	n1b := afterPolicies("  # x \\\\\n-include evil.mk\n")
 	n1c := valid + "# fin \\\\\nverify-quick:\n\t@echo SHADOW-dup\n"
 	n3 := addRecipeLines("dev", "\t@echo ok \\\\", "include evil.mk")
 	n4 := mustReplace(t, valid, "SHELL := /bin/bash\n", "SHELL := /bin/bash\r\n")
@@ -1679,20 +1715,20 @@ func TestMakefileGrammar(t *testing.T) {
 	selfRecipe := withSelf(selfRule + "\t@cp Makefile.sh Makefile\n")
 	selfRecipeAfterBlank := withSelf(selfRule + "\n# x\n\t@cp Makefile.sh Makefile\n")
 	negatives := []testCase{
-		at("eval_include_comment_colon", g1, evilInclude, errTrailingComment),                                       // G1, BLOCK finding 1
-		at("eval_include_indirect", g2, "X := evil.mk", errVariableNotAllowed("X")),                                 // G2, BLOCK finding 1
-		at("recipeprefix", g3, recipePrefix, errVariableNotAllowed(recipePrefix)),                                   // G3, BLOCK finding 3
-		at("include_directive", afterOPA("include evil.mk\n"), "include evil.mk", errOutsideGrammar),                // G4
-		at("dash_include_directive", afterOPA("-include evil.mk\n"), "-include evil.mk", errOutsideGrammar),         // G5
-		at("sinclude_directive", afterOPA("sinclude evil.mk\n"), "sinclude evil.mk", errOutsideGrammar),             // G6
-		at("vpath_directive", afterOPA("vpath %.mk evil\n"), "vpath %.mk", errOutsideGrammar),                       // G7
-		at("unexport_directive", afterOPA("unexport OPA\n"), "unexport OPA", errOutsideGrammar),                     // G8
-		at("define_block", afterOPA("define X\nendef\n"), "define X", errUnsupported),                               // G9
-		at("assign_make", afterOPA("MAKE := make -f GNUmakefile\n"), "MAKE := make", errVariableNotAllowed("MAKE")), // G10
-		at("redefine_make", mustReplace(t, valid, opaOverride, opaOverride+"override MAKE := make -f GNUmakefile\n"), // G11
+		at("eval_include_comment_colon", g1, evilInclude, errTrailingComment),                                            // G1, BLOCK finding 1
+		at("eval_include_indirect", g2, "X := evil.mk", errVariableNotAllowed("X")),                                      // G2, BLOCK finding 1
+		at("recipeprefix", g3, recipePrefix, errVariableNotAllowed(recipePrefix)),                                        // G3, BLOCK finding 3
+		at("include_directive", afterPolicies("include evil.mk\n"), "include evil.mk", errOutsideGrammar),                // G4
+		at("dash_include_directive", afterPolicies("-include evil.mk\n"), "-include evil.mk", errOutsideGrammar),         // G5
+		at("sinclude_directive", afterPolicies("sinclude evil.mk\n"), "sinclude evil.mk", errOutsideGrammar),             // G6
+		at("vpath_directive", afterPolicies("vpath %.mk evil\n"), "vpath %.mk", errOutsideGrammar),                       // G7
+		at("unexport_directive", afterPolicies("unexport EVAL\n"), "unexport EVAL", errOutsideGrammar),                   // G8
+		at("define_block", afterPolicies("define X\nendef\n"), "define X", errUnsupported),                               // G9
+		at("assign_make", afterPolicies("MAKE := make -f GNUmakefile\n"), "MAKE := make", errVariableNotAllowed("MAKE")), // G10
+		at("redefine_make", mustReplace(t, valid, lastOverride, lastOverride+"override MAKE := make -f GNUmakefile\n"), // G11
 			"override MAKE", errVariableNotAllowed("MAKE")),
-		at("assign_make_command", afterOPA("MAKE_COMMAND := evil\n"), "MAKE_COMMAND", errVariableNotAllowed("MAKE_COMMAND")), // G12
-		at("assign_makeflags", afterOPA("MAKEFLAGS := -i\n"), "MAKEFLAGS", errVariableNotAllowed("MAKEFLAGS")),               // G13
+		at("assign_make_command", afterPolicies("MAKE_COMMAND := evil\n"), "MAKE_COMMAND", errVariableNotAllowed("MAKE_COMMAND")), // G12
+		at("assign_makeflags", afterPolicies("MAKEFLAGS := -i\n"), "MAKEFLAGS", errVariableNotAllowed("MAKEFLAGS")),               // G13
 		at("makefiles_assignment", mustReplace(t, valid, exportLine, exportLine+"export MAKEFILES := evil.mk\n"), // G14
 			"MAKEFILES", errVariableNotAllowed("MAKEFILES")),
 		at("indirect_variable", g15, "SUB := $(MAKE)", errVariableNotAllowed("SUB")), // G15
@@ -1704,7 +1740,7 @@ func TestMakefileGrammar(t *testing.T) {
 			errFormNotAllowed("SHELL")),
 		at("shellflags_changed", mustReplace(t, valid, ".SHELLFLAGS := -eu -o pipefail -c\n", ".SHELLFLAGS := -c evil\n"), // G20
 			".SHELLFLAGS := -c evil", errFormNotAllowed(".SHELLFLAGS")),
-		atExact("bare_export", afterOPA("export\n"), "export", errExportNotAllowed),                                                          // G21
+		atExact("bare_export", afterPolicies("export\n"), "export", errExportNotAllowed),                                                     // G21
 		at("export_other_name", mustReplace(t, valid, exportLine, exportLine+"export MAKEFLAGS\n"), "export MAKEFLAGS", errExportNotAllowed), // G22
 		at("unknown_special_var", valid+".SECONDEXPANSION:\n", ".SECONDEXPANSION:", errOutsideGrammar),                                       // G23
 		at("ignore_special_target", valid+".IGNORE:\n", ".IGNORE:", errOutsideGrammar),                                                       // G24
@@ -1733,20 +1769,20 @@ func TestMakefileGrammar(t *testing.T) {
 		// are refused, the error naming the physical line at fault. N1 to N3:
 		// second BLOCK, an even number of trailing backslashes does not continue
 		// a line for make, the V1 parser swallowed the next line that make reads.
-		atExact("comment_even_backslash_include", n1, `# fin \\`, errEvenBackslashes),                    // N1
-		atExact("indented_comment_even_backslash", n1b, `  # x \\`, errEvenBackslashes),                  // N1b
-		atExact("comment_even_backslash_shadow_rule", n1c, `# fin \\`, errEvenBackslashes),               // N1c
-		atExact("recipe_even_backslash_include", n3, "\t@echo ok \\\\", errEvenBackslashes),              // N3
-		at("crlf_line", n4, "SHELL := /bin/bash", errControlByte(0x0d)),                                  // N4
-		at("nul_byte", afterOPA("# a\x00b\n"), "# a\x00b", errControlByte(0x00)),                         // N5
-		at("nbsp_before_comment", afterOPA("\u00a0# include evil.mk\n"), "\u00a0# include", errNonASCII), // N6
-		at("control_char", n7, "\x1b[8m", errControlByte(0x1b)),                                          // N7, continuation line
-		atExact("even_backslash_recipe", n8, "\t@echo a \\\\\\\\", errEvenBackslashes),                   // N8
-		atExact("comment_continuation", valid+"# fin \\\ninclude evil.mk\n", `# fin \`, errContinuation), // N9
-		at("assign_continuation", n10, "EVAL ?= \\", errContinuation),                                    // N10
-		at("bidi_in_recipe", n11, "a\u202eb", errCharacter('\u202e')),                                    // N11
-		at("invalid_utf8_comment", afterOPA("# a\xffb\n"), "# a\xffb", errCharacter('\ufffd')),           // N12
-		at("nonascii_indented_comment", afterOPA("  # arrêt\n"), "  # arrêt", errNonASCII),               // N13
+		atExact("comment_even_backslash_include", n1, `# fin \\`, errEvenBackslashes),                         // N1
+		atExact("indented_comment_even_backslash", n1b, `  # x \\`, errEvenBackslashes),                       // N1b
+		atExact("comment_even_backslash_shadow_rule", n1c, `# fin \\`, errEvenBackslashes),                    // N1c
+		atExact("recipe_even_backslash_include", n3, "\t@echo ok \\\\", errEvenBackslashes),                   // N3
+		at("crlf_line", n4, "SHELL := /bin/bash", errControlByte(0x0d)),                                       // N4
+		at("nul_byte", afterPolicies("# a\x00b\n"), "# a\x00b", errControlByte(0x00)),                         // N5
+		at("nbsp_before_comment", afterPolicies("\u00a0# include evil.mk\n"), "\u00a0# include", errNonASCII), // N6
+		at("control_char", n7, "\x1b[8m", errControlByte(0x1b)),                                               // N7, continuation line
+		atExact("even_backslash_recipe", n8, "\t@echo a \\\\\\\\", errEvenBackslashes),                        // N8
+		atExact("comment_continuation", valid+"# fin \\\ninclude evil.mk\n", `# fin \`, errContinuation),      // N9
+		at("assign_continuation", n10, "EVAL ?= \\", errContinuation),                                         // N10
+		at("bidi_in_recipe", n11, "a\u202eb", errCharacter('\u202e')),                                         // N11
+		at("invalid_utf8_comment", afterPolicies("# a\xffb\n"), "# a\xffb", errCharacter('\ufffd')),           // N12
+		at("nonascii_indented_comment", afterPolicies("  # arrêt\n"), "  # arrêt", errNonASCII),               // N13
 		{name: "continuation_at_eof", src: n14, wantErr: fmt.Sprintf("line %d: %s", // N14
 			exactLine(t, n14, "\t@echo x \\"), errContinuationAtEOF)},
 
@@ -1800,7 +1836,7 @@ func TestMakefileGrammar(t *testing.T) {
 			".DEFAULT_GOAL := verify-quick\n# "+evilInclude+" # :\n  # include evil.mk\n")},
 		{name: "reference_dev_makefile", src: referenceDevMakefile(t)}, // GP4
 		// V2, D13: French text in a column-0 comment and in a recipe line.
-		{name: "french_text", src: editRule(t, afterOPA("# Étape « démo » d’essai, arrêt : à revoir\n"), "dev-down", // GP5
+		{name: "french_text", src: editRule(t, afterPolicies("# Étape « démo » d’essai, arrêt : à revoir\n"), "dev-down", // GP5
 			func(rule string, recipe []string) []string {
 				return slices.Concat([]string{rule}, recipe, []string{"\t@echo \"arrêt : terminé, « rien » à faire\""})
 			})},

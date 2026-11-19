@@ -451,6 +451,7 @@ func defaultRuleNames() []string {
 		"domain-pure", "adapters-edge", "sdk-confine-anthropic", "sdk-confine-temporal",
 		"sdk-confine-sql", "loops-agnostic", "fakes-wired-in-cmd", "loops-fake-tests-only",
 		"llm-adapters-evals-cli-only", "llm-calibration-evals-cli-only", "secrets-fake-dev-only",
+		"opa-confined",
 	}
 }
 
@@ -469,7 +470,7 @@ func TestDefaultRules(t *testing.T) {
 	}
 
 	t.Run("names_and_kinds", func(t *testing.T) {
-		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine, Confine, Confine, Confine}
+		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine, Confine, Confine, Confine, Confine}
 		names := defaultRuleNames()
 		if len(rules) != len(names) {
 			t.Fatalf("DefaultRules returned %d rules, want %d (%q)", len(rules), len(names), names)
@@ -557,7 +558,7 @@ func TestDefaultRules(t *testing.T) {
 				if strings.Contains(p, "amezianechayer") {
 					t.Errorf("rule %s: pattern %q is bound to the real module", r.Name, p)
 				}
-				if strings.Contains(p, "/internal/") || strings.Contains(p, "/cmd/") {
+				if strings.Contains(p, "/internal/") || strings.Contains(p, "/cmd/") || strings.HasSuffix(p, "/policies/...") {
 					if !strings.HasPrefix(p, other+"/") {
 						t.Errorf("rule %s: internal pattern %q does not start with %s/", r.Name, p, other)
 					}
@@ -676,6 +677,12 @@ func TestRuleDetectsViolation(t *testing.T) {
 			// M1-T02 D11, obligation (cw): the fake KeyWrapper (fixed seed) is
 			// wired only by the evaluation command, never by the worker.
 			v("secrets-fake-dev-only", m+"/cmd/rempart-worker", m+"/internal/secrets/fake"),
+		}},
+		{"opa-confined", []Violation{
+			// ADR 0011 D6: OPA and the embedded pack are imported by the OPA
+			// adapter only (T6, T109); cmd wires the adapter, never the pack.
+			v("opa-confined", m+"/cmd/rempart-worker", m+"/policies"),
+			v("opa-confined", m+"/internal/policy", "github.com/open-policy-agent/opa/v1/rego"),
 		}},
 	}
 	if len(cases) != len(defaultRuleNames()) {

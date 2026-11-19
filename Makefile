@@ -7,7 +7,6 @@ SHELL := /bin/bash
 
 EVAL ?= all
 POLICIES_DIR ?= policies
-OPA ?= opa
 
 # Variables fournies par l'appelant (menace T8). $(value ...) fige le texte brut : une valeur
 # passée en ligne de commande, par exemple SCENARIO='$(shell ...)', n'est jamais développée
@@ -16,8 +15,7 @@ override SCENARIO := $(value SCENARIO)
 override EVAL := $(value EVAL)
 override EVAL_BASE := $(value EVAL_BASE)
 override POLICIES_DIR := $(value POLICIES_DIR)
-override OPA := $(value OPA)
-export SCENARIO EVAL EVAL_BASE POLICIES_DIR OPA
+export SCENARIO EVAL EVAL_BASE POLICIES_DIR
 export GOWORK := off
 override GOFLAGS := -mod=readonly
 export GOFLAGS
@@ -45,16 +43,13 @@ verify: verify-quick
 	go tool govulncheck ./...
 
 # Étape OPA active seulement s'il existe au moins un fichier .rego sous POLICIES_DIR.
-# Dans ce cas, opa absent est une erreur : jamais de saut silencieux.
+# OPA est celui de go.mod (go tool opa, ADR 0011) : jamais un binaire choisi par l'appelant.
 opa-test:
 	@if [ -z "$$(find "$$POLICIES_DIR" -type f -name '*.rego' -print -quit 2>/dev/null)" ]; then \
 		echo "opa-test : aucun fichier .rego sous $$POLICIES_DIR, étape OPA sans objet."; \
-	elif ! command -v "$$OPA" >/dev/null 2>&1; then \
-		echo "opa-test : fichiers .rego présents sous $$POLICIES_DIR mais $$OPA introuvable (voir docs/SETUP.md)." >&2; \
-		exit 2; \
 	else \
-		"$$OPA" check "$$POLICIES_DIR"; \
-		"$$OPA" test "$$POLICIES_DIR"; \
+		go tool opa check --strict --capabilities internal/policy/adapters/opa/capabilities.json --schema schemas/policy/design-input-v1.json "$$POLICIES_DIR"; \
+		go tool opa test "$$POLICIES_DIR"; \
 	fi
 
 arch-test:

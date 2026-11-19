@@ -127,6 +127,28 @@ func checkGoMod(m goMod) []string {
 	return problems
 }
 
+// opaTool is the OPA command line, run by the opa-test target through go tool
+// at the version of the library that the policy engine embeds (ADR 0011 D2, T6).
+const opaTool = "github.com/open-policy-agent/opa"
+
+// opaReplaceRe finds a replace of the OPA module, on one line or inside a
+// replace block (a line holding the module path and "=>"), outside comments.
+var opaReplaceRe = regexp.MustCompile(`(?m)^[ \t]*(replace[ \t]+)?github\.com/open-policy-agent/opa[^ \t]*[ \t][^\n]*=>`)
+
+// checkOPATool requires the OPA tool directive and no replace of the module:
+// one require line pins the engine and the command line together (ADR 0011 D2).
+func checkOPATool(src string, m goMod) []string {
+	var problems []string
+	if !slices.Contains(m.Tools, opaTool) {
+		problems = append(problems, "go.mod: tool directive "+opaTool+
+			" missing (the opa-test target runs go tool opa at the version of the embedded engine)")
+	}
+	if opaReplaceRe.MatchString(src) {
+		problems = append(problems, "go.mod: replace of "+opaTool+" (the engine and the command line must come from the pinned require)")
+	}
+	return problems
+}
+
 func checkGoVersion(v string) []string {
 	match := goVersionRe.FindStringSubmatch(v)
 	if match == nil {
@@ -227,6 +249,31 @@ func TestGoDirective(t *testing.T) {
 		}
 	})
 
+	t.Run("opa_tool_negative_controls", func(t *testing.T) {
+		const base = "module github.com/amezianechayer/rempart\n\ngo 1.27.4\n\n"
+		const tools = "tool (\n\tgithub.com/open-policy-agent/opa\n\tgolang.org/x/vuln/cmd/govulncheck\n)\n\n"
+		const req = "require github.com/open-policy-agent/opa v1.22.4\n"
+		cases := []struct {
+			name, src string
+			want      []string
+		}{
+			{name: "valid", src: base + tools + req},
+			{name: "missing_tool", src: base + "tool golang.org/x/vuln/cmd/govulncheck\n\n" + req, want: []string{"tool directive " + opaTool + " missing"}},
+			{name: "replace_line", src: base + tools + req + "replace github.com/open-policy-agent/opa => ../opa\n", want: []string{"replace"}},
+			{name: "replace_block", src: base + tools + req + "replace (\n\tgithub.com/open-policy-agent/opa v1.22.4 => github.com/example/opa v1.0.0\n)\n", want: []string{"replace"}},
+			{name: "replace_commented", src: base + tools + req + "// replace github.com/open-policy-agent/opa => ../opa\n"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				m, err := parseGoMod(tc.src)
+				if err != nil {
+					t.Fatalf("parseGoMod: %v", err)
+				}
+				expectProblems(t, checkOPATool(tc.src, m), tc.want)
+			})
+		}
+	})
+
 	t.Run("repository", func(t *testing.T) {
 		_, fsys := repoRoot(t)
 		src, err := readRepoFile(fsys, "go.mod", "created by M0-T01 step 0")
@@ -238,5 +285,6 @@ func TestGoDirective(t *testing.T) {
 			t.Fatalf("go.mod: %v", err)
 		}
 		reportProblems(t, checkGoMod(m))
+		reportProblems(t, checkOPATool(src, m))
 	})
 }
