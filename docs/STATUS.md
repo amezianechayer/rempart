@@ -391,6 +391,8 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
       - (fu) [bas, M4, T107, T18] `Verify` et `Finalize` font confiance à `confirmed`, `overrides_cite_address` et `context` de la charge (intégrité par l'AEAD du codec, liée au tenant et non à l'exécution) ; l'empreinte porte sur la valeur décodée et non sur les octets : formulation de T107 corrigée, celle de l'ADR 0012 D3 (« un octet changé ») à amender par l'humain ; confirmation signée transportée et revérifiée en M4.
       - (fv) [bas, avant L3 (M3), T116] `move_to_data_tier` laisse dans les `CAN_REACH` un `path` qui cite l'ancien sous-réseau : mettre à jour ou déclarer `path` non normatif.
     - Points examinés sans constat par la revue : isolation par tenant, confirmation et couverture, `Escape`, sortie d'escalade, worker, dépendances (aucun `internal/llm` ni OPA sous L2). T121 garde son numéro.
+    - **Seconde passe ciblée : PASS** (`d15733a`) : correctif vérifié par retrait de la ligne dans une copie (les deux nouveaux tests repassent au rouge) ; aucun autre décodage d'activité de L2 ni du worker dans une valeur préremplie ; obligations (fp) à (fv) fidèles ; T107, T110, T121 et T122 conformes. Réserve non bloquante : T112 n'est pas encore insérée dans le modèle de menace (seule (fs) la cite), à faire à `/close-milestone M2` avec T108, T109, T111, T113 à T117.
+  - **M2-T05 `l2-loop` close** : critères 1 à 4 tenus ; critère 5 (`make l2-demo`) et étape d'intégration du critère 6 à constater par l'humain ou en CI (pas de Docker ici), `TestL2DemoInputConverges` et `govulncheck` en substitut ; revue sécurité PASS en seconde passe.
 
 
 ## En cours
@@ -1325,3 +1327,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 15:40 [harnais] phase : impl -> tests
 
 - 2026-11-19 15:41 [harnais] phase : tests -> impl
+
+- 2026-11-19 15:46 [harnais] PHASE FREE (discipline TDD suspendue) : tâche l2-loop terminée
+
+- 2026-11-19 15:46 [harnais] phase : impl -> free
