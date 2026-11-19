@@ -12,8 +12,8 @@ import (
 	"github.com/amezianechayer/rempart/internal/design/cidr"
 	"github.com/amezianechayer/rempart/internal/graph"
 	graphdomain "github.com/amezianechayer/rempart/internal/graph/domain"
-	"github.com/amezianechayer/rempart/internal/intent"
 	intentdomain "github.com/amezianechayer/rempart/internal/intent/domain"
+	"github.com/amezianechayer/rempart/internal/intent/irvalid"
 )
 
 // Options are the technical choices of Build, never taken from the IR.
@@ -48,7 +48,7 @@ type needKey struct{ cloud, region, env string }
 // graph with the safe defaults and identities of ADR 0010 (D7),
 // graph.ValidateSchema. No model, no input or output, no global state.
 func Build(ir intentdomain.IR, o Options) (graphdomain.Graph, cidr.Plan, error) {
-	if err := intent.ValidateIR(ir); err != nil {
+	if err := irvalid.ValidateIR(ir); err != nil {
 		return graphdomain.Graph{}, cidr.Plan{}, err
 	}
 	env := ir.Environment

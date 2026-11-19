@@ -24,8 +24,8 @@ import (
 	"github.com/amezianechayer/rempart/internal/graph"
 	graphdomain "github.com/amezianechayer/rempart/internal/graph/domain"
 	"github.com/amezianechayer/rempart/internal/graph/reach"
-	"github.com/amezianechayer/rempart/internal/intent"
 	intentdomain "github.com/amezianechayer/rempart/internal/intent/domain"
+	"github.com/amezianechayer/rempart/internal/intent/irvalid"
 	"github.com/amezianechayer/rempart/internal/loops"
 	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
 	"github.com/amezianechayer/rempart/internal/policy"
@@ -140,7 +140,7 @@ func (a *Activities) Prepare(_ context.Context, in Input) (Prepared, error) {
 	var doc any
 	if in.IR != nil {
 		ir := *in.IR
-		if ir.TenantID != string(a.Tenant) || intent.ValidateIR(ir) != nil {
+		if ir.TenantID != string(a.Tenant) || irvalid.ValidateIR(ir) != nil {
 			return Prepared{}, invalidInput()
 		}
 		p.Subject, doc, p.Context = confirm.SubjectIR, ir, contextOf(ir)
