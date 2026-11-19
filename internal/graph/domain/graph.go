@@ -23,6 +23,8 @@ const (
 	KindK8sWorkload  NodeKind = "K8sWorkload"
 	KindLoadBalancer NodeKind = "LoadBalancer"
 	KindDataStore    NodeKind = "DataStore"
+	KindIdentity     NodeKind = "Identity" // workload identity (ADR 0010, D6)
+	KindAccount      NodeKind = "Account"  // cloud account or subscription
 )
 
 // EdgeType is the closed type of an edge.
@@ -33,6 +35,20 @@ const (
 	EdgeExposes  EdgeType = "EXPOSES"
 	EdgeCanReach EdgeType = "CAN_REACH"
 	EdgeStores   EdgeType = "STORES"
+	// EdgeRunsAs: Compute, K8sCluster or K8sWorkload to its Identity.
+	EdgeRunsAs EdgeType = "RUNS_AS"
+	// EdgeHasPermission: Identity to DataStore, Account or K8sCluster, with
+	// abstract actions (ADR 0010, D8).
+	EdgeHasPermission EdgeType = "HAS_PERMISSION"
+)
+
+// Abstract permissions of HAS_PERMISSION (ADR 0010, D8): never a concrete IAM
+// action before L3.
+const (
+	ActionRead  = "read"  // data plane read
+	ActionWrite = "write" // data plane write and delete
+	ActionAdmin = "admin" // control plane: configuration, access policy, grants
+	ActionAll   = "*"     // any present or future action: describes a trap, never built
 )
 
 // Graph is a graph of schemas/graph/v1.json.
@@ -89,6 +105,15 @@ type NodeAttrs struct {
 	Encrypted      *bool       `json:"encrypted,omitempty"`
 	PublicAccess   *bool       `json:"public_access,omitempty"`
 	APIPublic      *bool       `json:"api_public,omitempty"`
+	// ADR 0010, D6.
+	Credential               *string  `json:"credential,omitempty"`
+	PublicIP                 *bool    `json:"public_ip,omitempty"`
+	APIAllowedSources        []string `json:"api_allowed_sources,omitempty"`
+	AuditLog                 *bool    `json:"audit_log,omitempty"`
+	SecretsEncryption        *bool    `json:"secrets_encryption,omitempty"`
+	NetworkPolicyDefaultDeny *bool    `json:"network_policy_default_deny,omitempty"`
+	AdmissionPolicy          *bool    `json:"admission_policy,omitempty"`
+	WorkloadIdentity         *bool    `json:"workload_identity,omitempty"`
 }
 
 // EdgeAttrs are the closed attributes of an edge ($defs/edge_attrs).
@@ -99,6 +124,7 @@ type EdgeAttrs struct {
 	Via            *string  `json:"via,omitempty"`
 	Path           []string `json:"path,omitempty"`
 	AllowedSources []string `json:"allowed_sources,omitempty"`
+	Actions        []string `json:"actions,omitempty"`
 }
 
 // GraphText is the free text of the graph.

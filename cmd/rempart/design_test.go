@@ -127,7 +127,7 @@ func TestDesignCommand(t *testing.T) {
 			`^exposure\s+internet -> lb:app-cluster-443 https/443 -> app-cluster$`,
 			`^flow\s+app-cluster -> legacy-vms tcp/5432 via vpn_site_to_site$`,
 			`^data\s+customer-db confidential on legacy-vms \(tier data\)$`,
-			`^graph\s+12 nodes, 13 edges$`,
+			`^graph\s+16 nodes, 18 edges$`,
 			`^cidr check\s+0 findings$`,
 		} {
 			lineMatches(t, r.stdout, p)
@@ -169,7 +169,7 @@ func TestDesignCommand(t *testing.T) {
 			t.Fatalf("decoded graph: ValidateSchema: %v", err)
 		}
 		g := doc.Graph
-		if len(g.Nodes) != 12 || len(g.Edges) != 13 || g.Source != "design" || g.TenantID != "3f6c2a9e-8b1d-4c7a-9e2f-5d4b3a2c1e0f" {
+		if len(g.Nodes) != 16 || len(g.Edges) != 18 || g.Source != "design" || g.TenantID != "3f6c2a9e-8b1d-4c7a-9e2f-5d4b3a2c1e0f" {
 			t.Fatalf("graph: %d nodes, %d edges, source %q, tenant %q", len(g.Nodes), len(g.Edges), g.Source, g.TenantID)
 		}
 		if g.Edges[0].ID != "can_reach|lb:app-cluster-443|wl:app-cluster|https/443" {

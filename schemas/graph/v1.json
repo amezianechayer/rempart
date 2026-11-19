@@ -54,15 +54,21 @@
   "$defs": {
     "free_text": {
       "type": "string",
-      "maxLength": 500
+      "maxLength": 500,
+      "pattern": "^[^\\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]*$"
     },
     "node_id": {
       "type": "string",
-      "pattern": "^(internet|(net|wl|lb|data):[a-z0-9][a-z0-9.-]{0,80})$"
+      "pattern": "^(internet|(net|wl|lb|data|id|acct):[a-z0-9][a-z0-9.-]{0,80})$"
     },
     "cidr": {
       "type": "string",
       "pattern": "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}/([0-9]|[12][0-9]|3[0-2])$"
+    },
+    "source_cidr": {
+      "description": "Préfixe IPv4 canonique de longueur 1 à 32. « Tout Internet » s'écrit seulement par une liste vide ou absente, jamais 0.0.0.0/0 (ADR 0006 A2.3, ADR 0010 D6).",
+      "type": "string",
+      "pattern": "^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}/([1-9]|[12][0-9]|3[0-2])$"
     },
     "port": {
       "type": "integer",
@@ -90,7 +96,9 @@
             "K8sCluster",
             "K8sWorkload",
             "LoadBalancer",
-            "DataStore"
+            "DataStore",
+            "Identity",
+            "Account"
           ]
         },
         "attrs": {
@@ -194,7 +202,8 @@
                   "subtype",
                   "cloud",
                   "region",
-                  "count"
+                  "count",
+                  "public_ip"
                 ]
               }
             }
@@ -221,7 +230,12 @@
                   "cloud",
                   "region",
                   "count",
-                  "api_public"
+                  "api_public",
+                  "audit_log",
+                  "secrets_encryption",
+                  "network_policy_default_deny",
+                  "admission_policy",
+                  "workload_identity"
                 ]
               }
             }
@@ -278,6 +292,64 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "Identity"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "subtype",
+                  "cloud",
+                  "credential"
+                ],
+                "properties": {
+                  "subtype": {
+                    "enum": [
+                      "role",
+                      "k8s_service_account"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "Account"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "cloud"
+                ]
+              }
+            }
+          }
         }
       ]
     },
@@ -311,7 +383,9 @@
             "vm",
             "managed_db",
             "object_storage",
-            "dataset"
+            "dataset",
+            "role",
+            "k8s_service_account"
           ]
         },
         "cidr": {
@@ -411,6 +485,38 @@
         },
         "api_public": {
           "type": "boolean"
+        },
+        "credential": {
+          "enum": [
+            "workload_identity",
+            "static_key"
+          ]
+        },
+        "public_ip": {
+          "type": "boolean"
+        },
+        "api_allowed_sources": {
+          "description": "Sources admises sur l'API publique du cluster ; vide ou absent : tout Internet.",
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/source_cidr"
+          }
+        },
+        "audit_log": {
+          "type": "boolean"
+        },
+        "secrets_encryption": {
+          "type": "boolean"
+        },
+        "network_policy_default_deny": {
+          "type": "boolean"
+        },
+        "admission_policy": {
+          "type": "boolean"
+        },
+        "workload_identity": {
+          "type": "boolean"
         }
       }
     },
@@ -435,7 +541,9 @@
             "MEMBER_OF",
             "EXPOSES",
             "CAN_REACH",
-            "STORES"
+            "STORES",
+            "RUNS_AS",
+            "HAS_PERMISSION"
           ]
         },
         "src": {
@@ -459,7 +567,85 @@
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "HAS_PERMISSION"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "actions"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "EXPOSES"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "protocol",
+                  "port_from",
+                  "port_to"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "CAN_REACH"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "attrs"
+            ],
+            "properties": {
+              "attrs": {
+                "required": [
+                  "protocol",
+                  "port_from",
+                  "port_to"
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     "edge_attrs": {
       "type": "object",
@@ -497,10 +683,26 @@
           }
         },
         "allowed_sources": {
+          "description": "Sources admises d'une exposition ; vide ou absent : tout Internet.",
           "type": "array",
           "maxItems": 64,
           "items": {
-            "$ref": "#/$defs/cidr"
+            "$ref": "#/$defs/source_cidr"
+          }
+        },
+        "actions": {
+          "description": "Permissions abstraites (ADR 0010 D8) : read, write, admin, * ; jamais d'action IAM concrète.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "read",
+              "write",
+              "admin",
+              "*"
+            ]
           }
         }
       }

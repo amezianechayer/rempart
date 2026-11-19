@@ -45,7 +45,8 @@ type needKey struct{ cloud, region, env string }
 
 // Build turns a validated IR into a graph and a CIDR plan: ValidateIR, needs by
 // the table of plan section 6.2, cidr.Allocate, cidr.Check (empty required),
-// graph, graph.ValidateSchema. No model, no input or output, no global state.
+// graph with the safe defaults and identities of ADR 0010 (D7),
+// graph.ValidateSchema. No model, no input or output, no global state.
 func Build(ir intentdomain.IR, o Options) (graphdomain.Graph, cidr.Plan, error) {
 	if err := intent.ValidateIR(ir); err != nil {
 		return graphdomain.Graph{}, cidr.Plan{}, err
@@ -162,6 +163,9 @@ func Build(ir intentdomain.IR, o Options) (graphdomain.Graph, cidr.Plan, error) 
 			}
 			sources = append(sources, p.String())
 		}
+		if slices.Contains(sources, "0.0.0.0/0") {
+			sources = nil // the whole Internet is written as an empty list (ADR 0010, D6): equivalence
+		}
 		ex := exposure{e: e, target: x, port: port, lbID: "lb:" + x.w.ID + "-" + strconv.Itoa(port), sources: sources}
 		if lbIDs[ex.lbID] {
 			return fail(refused("duplicate exposure"))
@@ -251,8 +255,10 @@ func Build(ir intentdomain.IR, o Options) (graphdomain.Graph, cidr.Plan, error) 
 		switch x.p.kind {
 		case graphdomain.KindK8sCluster:
 			a.Count, a.APIPublic = ptr(count(x.w, defaultK8sNodes)), ptr(false)
+			a.AuditLog, a.SecretsEncryption, a.NetworkPolicyDefaultDeny = ptr(true), ptr(true), ptr(true)
+			a.AdmissionPolicy, a.WorkloadIdentity = ptr(true), ptr(true)
 		case graphdomain.KindCompute:
-			a.Subtype, a.Count = ptr(x.p.subtype), ptr(count(x.w, defaultVMs))
+			a.Subtype, a.Count, a.PublicIP = ptr(x.p.subtype), ptr(count(x.w, defaultVMs)), ptr(false)
 			if x.w.Size != nil && x.w.Size.OS != nil {
 				a.OS = ptr(*x.w.Size.OS)
 			}
@@ -336,6 +342,8 @@ func Build(ir intentdomain.IR, o Options) (graphdomain.Graph, cidr.Plan, error) 
 		}
 	}
 
+	addIdentities(&g, order, wls, addEdge)
+
 	slices.SortFunc(g.Nodes, func(a, b graphdomain.Node) int { return cmp.Compare(a.ID, b.ID) })
 	slices.SortFunc(g.Edges, func(a, b graphdomain.Edge) int {
 		return cmp.Or(cmp.Compare(a.Type, b.Type), cmp.Compare(a.Src, b.Src), cmp.Compare(a.Dst, b.Dst),
@@ -352,6 +360,47 @@ func Build(ir intentdomain.IR, o Options) (graphdomain.Graph, cidr.Plan, error) 
 		return fail(fmt.Errorf("%w: %w", ErrDesignRefused, err))
 	}
 	return g, plan, nil
+}
+
+// addIdentities gives each workload that runs code (K8sCluster, Compute,
+// K8sWorkload) its own workload identity and RUNS_AS edge, and that identity
+// read and write on the data stores the workload hosts (STORES) or reaches
+// (CAN_REACH), and on none other: never admin, never "*", never an Account
+// (ADR 0010, D7, D8).
+func addIdentities(g *graphdomain.Graph, order []string, wls map[string]*wl,
+	addEdge func(graphdomain.EdgeType, string, string, graphdomain.EdgeAttrs, graphdomain.EdgeText),
+) {
+	kinds := make(map[string]graphdomain.NodeKind, len(g.Nodes))
+	for _, n := range g.Nodes {
+		kinds[n.ID] = n.Kind
+	}
+	targets := map[string][]string{}
+	for _, e := range g.Edges {
+		if e.Type == graphdomain.EdgeStores || (e.Type == graphdomain.EdgeCanReach && kinds[e.Dst] == graphdomain.KindDataStore) {
+			targets[e.Src] = append(targets[e.Src], e.Dst)
+		}
+	}
+	for _, id := range order {
+		x := wls[id]
+		subtype, cloud := "role", x.w.Cloud
+		switch x.p.kind {
+		case graphdomain.KindCompute, graphdomain.KindK8sCluster:
+		case graphdomain.KindK8sWorkload:
+			subtype, cloud = "k8s_service_account", wls[*x.w.RunsOn].w.Cloud
+		default:
+			continue
+		}
+		ident := "id:" + id
+		g.Nodes = append(g.Nodes, graphdomain.Node{ID: ident, Kind: graphdomain.KindIdentity, Attrs: graphdomain.NodeAttrs{
+			Subtype: ptr(subtype), Cloud: ptr(cloud), Credential: ptr("workload_identity"),
+		}})
+		addEdge(graphdomain.EdgeRunsAs, "wl:"+id, ident, graphdomain.EdgeAttrs{}, graphdomain.EdgeText{})
+		for _, dst := range slices.Compact(slices.Sorted(slices.Values(targets["wl:"+id]))) {
+			addEdge(graphdomain.EdgeHasPermission, ident, dst, graphdomain.EdgeAttrs{
+				Actions: []string{graphdomain.ActionRead, graphdomain.ActionWrite},
+			}, graphdomain.EdgeText{})
+		}
+	}
 }
 
 func fail(err error) (graphdomain.Graph, cidr.Plan, error) {

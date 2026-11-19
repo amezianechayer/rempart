@@ -219,6 +219,7 @@ evals: evals/design/
   4. `go run ./cmd/rempart design internal/intent/testdata/reference-ir.json | jq -e '([.graph.nodes[] | select(.kind == "Identity")] | length) > 0 and ([.graph.edges[] | select(.type == "HAS_PERMISSION" and (.attrs.actions | index("*")))] | length) == 0'` : `true`.
   5. `make -f Makefile verify-quick; echo rc=$?` : `rc=0`.
 - **Sécurité** : non par tâche (code pur, couvert par la revue de T05 qui le consomme et par la revue de clôture).
+- **Écarts reportés (ADR 0010, section « Écarts au plan M2 »)** : (1) section 3.1 : aucune règle deny implicite dans `FromGraph` ; (2) section 3.1 : `FromGraph`, `Revision` et `Analyze` prennent un `FactsGraph`, `domain.FactsOf` ajouté, `Analyze` reçoit un `Pack`, `pack_digest` et `ErrPackMismatch`, `Limits` sans défaut implicite et `DefaultLimits` exporté ; (3) D10 : `accepted` hors du schéma v1 de menace ; (4) critère 4 de cette fiche : la commande porte `--json` (vérification 4 de l'ADR) ; (5) sous-cas ajoutés à des tests existants sans en changer le nombre. Écarts de mise en oeuvre (`World` sur les deux familles, ordre total des sauts, `*` qui couvre `internet`, `ErrAttrKind`, faits illisibles refusés) : `docs/STATUS.md`, entrée M2-T02, à valider par l'humain.
 
 ### M2-T03 `policy-design` : moteur OPA embarqué et pack de conception
 

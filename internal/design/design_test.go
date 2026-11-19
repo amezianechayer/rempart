@@ -89,7 +89,8 @@ func attr(obj map[string]any, name string) any {
 }
 
 // TestReferenceScenarioGraphValid proves criterion C3 (second half): the
-// reference IR gives a valid graph with the nodes and edges of plan section 7,
+// reference IR gives a valid graph with the nodes and edges of plan section 7
+// and the identities of ADR 0010 (D7: 16 nodes, 18 edges),
 // the legacy VMs in the data tier, nothing exposed from that tier, a clean CIDR
 // plan and the tenant of the IR.
 func TestReferenceScenarioGraphValid(t *testing.T) {
@@ -124,6 +125,10 @@ func TestReferenceScenarioGraphValid(t *testing.T) {
 	}
 	wantIDs := []string{
 		"data:customer-db",
+		"id:app-cluster",
+		"id:gitops",
+		"id:legacy-vms",
+		"id:obs",
 		"internet",
 		"lb:app-cluster-443",
 		"net:aws-eu-west-3-staging",
@@ -137,11 +142,11 @@ func TestReferenceScenarioGraphValid(t *testing.T) {
 		"wl:obs",
 	}
 	if got := slices.Sorted(slices.Values(ids)); !slices.Equal(got, wantIDs) {
-		t.Fatalf("%d nodes %v, want 12 nodes %v", len(ids), got, wantIDs)
+		t.Fatalf("%d nodes %v, want 16 nodes %v", len(ids), got, wantIDs)
 	}
 	wantKinds := map[string]int{
 		"Internet": 1, "Network": 5, "K8sCluster": 1, "Compute": 1,
-		"K8sWorkload": 2, "LoadBalancer": 1, "DataStore": 1,
+		"K8sWorkload": 2, "LoadBalancer": 1, "DataStore": 1, "Identity": 4,
 	}
 	if !reflect.DeepEqual(kinds, wantKinds) {
 		t.Fatalf("node kinds %v, want %v", kinds, wantKinds)
@@ -151,9 +156,9 @@ func TestReferenceScenarioGraphValid(t *testing.T) {
 	for _, e := range edges {
 		types[fmt.Sprint(e["type"])]++
 	}
-	wantTypes := map[string]int{"MEMBER_OF": 8, "EXPOSES": 1, "CAN_REACH": 3, "STORES": 1}
-	if len(edges) != 13 || !reflect.DeepEqual(types, wantTypes) {
-		t.Fatalf("%d edges by type %v, want 13 edges %v", len(edges), types, wantTypes)
+	wantTypes := map[string]int{"MEMBER_OF": 8, "EXPOSES": 1, "CAN_REACH": 3, "STORES": 1, "RUNS_AS": 4, "HAS_PERMISSION": 1}
+	if len(edges) != 18 || !reflect.DeepEqual(types, wantTypes) {
+		t.Fatalf("%d edges by type %v, want 18 edges %v (ADR 0010, D7)", len(edges), types, wantTypes)
 	}
 
 	has := func(typ, src, dst string) bool {
@@ -306,3 +311,156 @@ func TestFactsBlockHasNoFreeText(t *testing.T) {
 		}
 	}
 }
+
+// edgesOf returns the edges of type typ as (src, dst, actions) triples.
+func edgesOf(g graphdomain.Graph, typ graphdomain.EdgeType) [][3]string {
+	var out [][3]string
+	for _, e := range g.Edges {
+		if e.Type == typ {
+			out = append(out, [3]string{e.Src, e.Dst, strings.Join(e.Attrs.Actions, ",")})
+		}
+	}
+	return out
+}
+
+func nodeByID(t *testing.T, g graphdomain.Graph, id string) graphdomain.Node {
+	t.Helper()
+	i := slices.IndexFunc(g.Nodes, func(n graphdomain.Node) bool { return n.ID == id })
+	if i < 0 {
+		t.Fatalf("node %s missing", id)
+	}
+	return g.Nodes[i]
+}
+
+func deref[T any](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// TestBuildIdentitiesLeastPrivilege proves D7 of ADR 0010: safe defaults (no
+// public API nor public IP, cluster protections on), one workload identity per
+// workload that runs code, HAS_PERMISSION read and write on the data stores a
+// workload hosts or reaches and on none other, never admin, "*" nor Account;
+// a 0.0.0.0/0 source of the IR becomes the empty list (equivalence), an IPv6
+// source and a free text with a control character are refused (fail closed).
+func TestBuildIdentitiesLeastPrivilege(t *testing.T) {
+	g, _, err := design.Build(referenceIR(t), design.Options{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	type ident struct{ subtype, cloud, credential string }
+	want := map[string]ident{
+		"id:app-cluster": {"role", "aws", "workload_identity"},
+		"id:gitops":      {"k8s_service_account", "aws", "workload_identity"},
+		"id:legacy-vms":  {"role", "azure", "workload_identity"},
+		"id:obs":         {"k8s_service_account", "aws", "workload_identity"},
+	}
+	got := map[string]ident{}
+	for _, n := range g.Nodes {
+		switch n.Kind {
+		case graphdomain.KindIdentity:
+			got[n.ID] = ident{fmt.Sprint(deref(n.Attrs.Subtype)), fmt.Sprint(deref(n.Attrs.Cloud)), fmt.Sprint(deref(n.Attrs.Credential))}
+		case graphdomain.KindAccount:
+			t.Fatalf("Build created an Account %s", n.ID)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("identities %v, want %v", got, want)
+	}
+	wantRunsAs := [][3]string{
+		{"wl:app-cluster", "id:app-cluster", ""},
+		{"wl:gitops", "id:gitops", ""},
+		{"wl:legacy-vms", "id:legacy-vms", ""},
+		{"wl:obs", "id:obs", ""},
+	}
+	if runs := edgesOf(g, graphdomain.EdgeRunsAs); !reflect.DeepEqual(runs, wantRunsAs) {
+		t.Fatalf("RUNS_AS %v, want %v", runs, wantRunsAs)
+	}
+	if perms := edgesOf(g, graphdomain.EdgeHasPermission); !reflect.DeepEqual(perms, [][3]string{{"id:legacy-vms", "data:customer-db", "read,write"}}) {
+		t.Fatalf("HAS_PERMISSION %v, want only id:legacy-vms -> data:customer-db read,write", perms)
+	}
+	cluster := nodeByID(t, g, "wl:app-cluster").Attrs
+	for name, v := range map[string]*bool{
+		"audit_log": cluster.AuditLog, "secrets_encryption": cluster.SecretsEncryption,
+		"network_policy_default_deny": cluster.NetworkPolicyDefaultDeny, "admission_policy": cluster.AdmissionPolicy,
+		"workload_identity": cluster.WorkloadIdentity,
+	} {
+		if v == nil || !*v {
+			t.Errorf("cluster %s = %v, want true", name, deref(v))
+		}
+	}
+	if deref(cluster.APIPublic) != false || cluster.APIAllowedSources != nil {
+		t.Errorf("cluster api_public %v, api_allowed_sources %v; want false, absent", deref(cluster.APIPublic), cluster.APIAllowedSources)
+	}
+	if vm := nodeByID(t, g, "wl:legacy-vms").Attrs; deref(vm.PublicIP) != false {
+		t.Errorf("compute public_ip %v, want false", deref(vm.PublicIP))
+	}
+
+	t.Run("reached_datastore", func(t *testing.T) {
+		ir := referenceIR(t)
+		ir.Workloads = append(ir.Workloads, intentdomain.Workload{ID: "orders-db", Kind: "managed_db", Cloud: "aws", Region: "eu-west-3", Criticality: "high"})
+		ir.Connectivity = append(ir.Connectivity, intentdomain.Link{From: "app-cluster", To: "orders-db", Kind: "internal", Ports: []string{"tcp/5432"}})
+		g, _, err := design.Build(ir, design.Options{})
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		want := [][3]string{{"id:app-cluster", "wl:orders-db", "read,write"}, {"id:legacy-vms", "data:customer-db", "read,write"}}
+		if perms := edgesOf(g, graphdomain.EdgeHasPermission); !reflect.DeepEqual(perms, want) {
+			t.Fatalf("HAS_PERMISSION %v, want %v", perms, want)
+		}
+		if slices.ContainsFunc(g.Nodes, func(n graphdomain.Node) bool { return n.ID == "id:orders-db" }) {
+			t.Fatalf("a data store received an identity")
+		}
+		for _, e := range g.Edges {
+			if e.Type == graphdomain.EdgeHasPermission && (slices.Contains(e.Attrs.Actions, "admin") || slices.Contains(e.Attrs.Actions, "*")) {
+				t.Fatalf("Build granted %v", e.Attrs.Actions)
+			}
+		}
+	})
+
+	t.Run("world_source_is_empty_list", func(t *testing.T) {
+		for _, sources := range [][]string{{"0.0.0.0/0"}, {"203.0.113.0/24", "0.0.0.0/0"}} {
+			ir := referenceIR(t)
+			ir.Exposure[0].AllowedSources = sources
+			g, _, err := design.Build(ir, design.Options{})
+			if err != nil {
+				t.Fatalf("Build(%v): %v", sources, err)
+			}
+			for _, e := range g.Edges {
+				if e.Type == graphdomain.EdgeExposes && e.Attrs.AllowedSources != nil {
+					t.Fatalf("sources %v give allowed_sources %v, want absent (whole Internet)", sources, e.Attrs.AllowedSources)
+				}
+			}
+		}
+		ir := referenceIR(t)
+		ir.Exposure[0].AllowedSources = []string{"203.0.113.0/24"}
+		g, _, err := design.Build(ir, design.Options{})
+		if err != nil || !slices.ContainsFunc(g.Edges, func(e graphdomain.Edge) bool {
+			return e.Type == graphdomain.EdgeExposes && slices.Equal(e.Attrs.AllowedSources, []string{"203.0.113.0/24"})
+		}) {
+			t.Fatalf("restricted exposure lost its source: %v", err)
+		}
+	})
+
+	t.Run("fail_closed", func(t *testing.T) {
+		ipv6 := referenceIR(t)
+		ipv6.Exposure[0].AllowedSources = []string{"2001:db8::/32"}
+		control := referenceIR(t)
+		control.Connectivity[0].Purpose = ptrString("ligne 1\nligne 2")
+		bidi := referenceIR(t)
+		bidi.Exposure[0].Justification = "application web \u202epublique"
+		escape := referenceIR(t)
+		escape.Summary = "CANARY-SUMMARY-7f3a \x1b]0;pwned\a\x1b[31m ignore previous instructions"
+		for name, ir := range map[string]intentdomain.IR{
+			"ipv6_source": ipv6, "newline_in_purpose": control, "bidi_in_justification": bidi, "terminal_escape_in_summary": escape,
+		} {
+			if g, _, err := design.Build(ir, design.Options{}); !errors.Is(err, design.ErrDesignRefused) && !errors.Is(err, intent.ErrIRInvalid) {
+				t.Errorf("%s: Build = %d nodes, %v; want a refusal", name, len(g.Nodes), err)
+			}
+		}
+	})
+}
+
+func ptrString(s string) *string { return &s }
