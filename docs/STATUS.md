@@ -1258,3 +1258,9 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 14:56 [harnais] passage en impl avec tests verts (caractérisation) : M2-T05 step 3: lint fix done
 
 - 2026-11-19 14:56 [harnais] phase : tests -> impl
+
+- 2026-11-19 14:58 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 step 4: tests of PlanOf and internal/design/verify
+
+- 2026-11-19 14:58 [harnais] phase : impl -> tests
+
+- 2026-11-19 14:58 [harnais] phase : tests -> impl
