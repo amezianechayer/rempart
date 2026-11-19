@@ -244,6 +244,7 @@ evals: evals/design/
   7. `make -f Makefile verify-quick; echo rc=$?` : `rc=0`.
 - **Sécurité** : oui (T6, T8, T108, T109, T114).
 - **Garde de taille** : au-delà de 6 cycles, couper en T03a (moteur, archtest, 15 règles réseau et données) et T03b (30 autres), sans changer les critères.
+- **Écarts reportés (ADR 0011, section « Écarts au plan M2 »)** : `DesignInput`, `DesignContext`, `NewDesignInput`, `ErrDesignInput` dans `internal/policy`, `Evaluator.Digest` ; `Jurisdiction` dans `internal/policy/domain` (rend `Zone`) ; fichiers ajoutés `policies/design/lib.rego`, `internal/policy/adapters/opa/capabilities.json`, `schemas/policy/design-input-v1.json` ; variable `OPA` retirée du `Makefile`, `opa check` avec `--capabilities` et `--schema` ; skill `policy-as-code` aligné (`remediation`, sortie `control_id` et `resource`) ; empreinte du pack par netstrings ; `TestRegionZonesAgreeWithJurisdiction` ; obligation (fd). Écarts de mise en oeuvre consignés dans `docs/STATUS.md`.
 
 ### M2-T04 `threat-stride` : STRIDE versionné et delta
 

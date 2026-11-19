@@ -1,6 +1,6 @@
 # 0011. Moteur de politiques OPA embarqué
 
-- Statut : proposé
+- Statut : accepté le 2026-11-19 (décision humaine : « continue » en réponse à la demande d'acceptation, recommandations de l'agent retenues pour les questions 1 à 5)
 - Date : 2026-11-19
 - Jalon : M2 (étape humaine H0-M2.3), à accepter avant la phase tests de M2-T03 `policy-design`, qui met en oeuvre D1 à D9. M2-T04 consomme D4 (empreinte, `Controls`) ; M2-T05 consomme D5 (entrée) et D8 (`Evaluator`).
 - Base : M2-T02 livrée (entrée du 2026-11-19 de `docs/STATUS.md`).
