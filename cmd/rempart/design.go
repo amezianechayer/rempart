@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
-	"os"
 
 	"github.com/amezianechayer/rempart/internal/design"
 	"github.com/amezianechayer/rempart/internal/design/cidr"
+	"github.com/amezianechayer/rempart/internal/design/fsread"
 	graphdomain "github.com/amezianechayer/rempart/internal/graph/domain"
 	"github.com/amezianechayer/rempart/internal/intent"
 	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
@@ -108,19 +108,11 @@ func runDesign(args []string, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-// readIR reads a regular file of at most intent.MaxIRBytes.
+// readIR reads a regular file of at most intent.MaxIRBytes (fsread: Stat
+// before open, no blocking on a pipe, obligation (cr)).
 func readIR(path string) ([]byte, error) {
-	f, err := os.Open(path) //nolint:gosec // G304: the user names the IR file on the command line; regular file only, bounded read.
+	raw, err := fsread.Regular(path, intent.MaxIRBytes)
 	if err != nil {
-		return nil, errFileRead
-	}
-	defer func() { _ = f.Close() }()
-	st, err := f.Stat()
-	if err != nil || !st.Mode().IsRegular() || st.Size() > intent.MaxIRBytes {
-		return nil, errFileRead
-	}
-	raw, err := io.ReadAll(io.LimitReader(f, intent.MaxIRBytes+1))
-	if err != nil || len(raw) > intent.MaxIRBytes {
 		return nil, errFileRead
 	}
 	return raw, nil

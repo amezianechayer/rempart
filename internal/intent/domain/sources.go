@@ -187,3 +187,12 @@ func checkSources(text string, d Draft) []loopsdomain.Finding {
 	}
 	return nil
 }
+
+// CitesAddress reports whether s cites an address or a prefix, by the reader
+// of exposure sources (rearmed forms included), or an address-like token that
+// stays unreadable (fail closed). L2 reads explicit overrides with it only to
+// block (obligation (ey), ADR 0012 D4), never to relax a control.
+func CitesAddress(s string) bool {
+	addrs, unreadable := readAddresses(s)
+	return len(addrs) > 0 || len(unreadable) > 0
+}

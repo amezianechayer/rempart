@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
+	"github.com/amezianechayer/rempart/internal/design/fsread"
 	"github.com/amezianechayer/rempart/internal/graph"
 	graphdomain "github.com/amezianechayer/rempart/internal/graph/domain"
 	"github.com/amezianechayer/rempart/internal/graph/reach"
@@ -131,17 +131,8 @@ func modelOf(e *opa.Engine, path string) (threat.Model, string) {
 // readGraph reads a regular file of at most threat.MaxDecodeBytes holding one
 // graph: unknown keys and trailing data refused, then schemas/graph/v1.json.
 func readGraph(path string) (graphdomain.Graph, error) {
-	fh, err := os.Open(path) //nolint:gosec // G304: the user names the graph file on the command line; regular file only, bounded read.
+	raw, err := fsread.Regular(path, threat.MaxDecodeBytes)
 	if err != nil {
-		return graphdomain.Graph{}, errFileRead
-	}
-	defer func() { _ = fh.Close() }()
-	st, err := fh.Stat()
-	if err != nil || !st.Mode().IsRegular() || st.Size() > threat.MaxDecodeBytes {
-		return graphdomain.Graph{}, errFileRead
-	}
-	raw, err := io.ReadAll(io.LimitReader(fh, threat.MaxDecodeBytes+1))
-	if err != nil || len(raw) > threat.MaxDecodeBytes {
 		return graphdomain.Graph{}, errFileRead
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))

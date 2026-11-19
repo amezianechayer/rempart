@@ -1228,3 +1228,13 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 14:35 [harnais] PHASE FREE (discipline TDD suspendue) : obligations fe ff fg fh fi fm soldées avant M2-T05
 
 - 2026-11-19 14:35 [harnais] phase : impl -> free
+
+- 2026-11-19 14:50 [harnais] phase : free -> tests
+
+- 2026-11-19 14:50 [harnais] phase : tests -> impl
+
+- 2026-11-19 14:51 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05: move fsread_test.go to internal/design/fsread (new top-level domain refused by TestLayoutMatchesVision), test unchanged
+
+- 2026-11-19 14:51 [harnais] phase : impl -> tests
+
+- 2026-11-19 14:51 [harnais] phase : tests -> impl

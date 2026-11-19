@@ -208,3 +208,28 @@ func TestExposureSourcesRearmNeverRemoves(t *testing.T) {
 		})
 	}
 }
+
+// TestCitesAddress proves ADR 0012 D4 and obligation (ey): the reader of L1,
+// exported, says whether a text cites an address or a prefix, rearmed forms
+// and unreadable address-like tokens included (fail closed); a text without
+// one, ports and versions included, does not.
+func TestCitesAddress(t *testing.T) {
+	for _, s := range []string{
+		"autoriser seulement 203.0.113.10",
+		"restreindre au bureau 198.51.100.0/24",
+		"source 203[.]0[.]113[.]10",
+		"allow 2001:db8::1 only",
+		"bureau 203 . 0 . 113 . 10",
+		"accès depuis 203,0,113,10",
+		"source 999.1.2.3.4",
+	} {
+		if !CitesAddress(s) {
+			t.Errorf("CitesAddress(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "exposer en https sur le port 443", "version 1.2 du schéma", "à 10:30 le matin", "ouvert à tous"} {
+		if CitesAddress(s) {
+			t.Errorf("CitesAddress(%q) = true, want false", s)
+		}
+	}
+}
