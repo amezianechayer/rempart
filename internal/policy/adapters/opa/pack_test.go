@@ -17,16 +17,34 @@ import (
 
 // catalog freezes the controls of the pack (fiche M2-T03): control_id,
 // severity, remediation. Lowering a severity changes this test file, frozen in
-// the impl phase (T108). M2-T03a: network and data; M2-T03b adds the rest.
+// the impl phase (T108). The 45 controls of the fiche M2-T03.
 var catalog = []struct {
 	id  string
 	sev loopsdomain.Severity
 	rem policydomain.Remediation
 }{
+	{"AVL-001", "medium", "advisory"},
+	{"AVL-002", "low", "advisory"},
 	{"DATA-001", "critical", "make_private"},
 	{"DATA-002", "high", "enable_encryption"},
 	{"DATA-003", "medium", "advisory"},
 	{"DATA-004", "high", "escalate"},
+	{"IAM-001", "critical", "least_privilege"},
+	{"IAM-002", "critical", "least_privilege"},
+	{"IAM-003", "high", "dedicated_identity"},
+	{"IAM-004", "high", "least_privilege"},
+	{"IAM-005", "high", "use_workload_identity"},
+	{"IAM-006", "medium", "advisory"},
+	{"IAM-007", "high", "least_privilege"},
+	{"K8S-001", "critical", "make_private"},
+	{"K8S-002", "high", "enable_audit_log"},
+	{"K8S-003", "high", "enable_secrets_encryption"},
+	{"K8S-004", "medium", "advisory"},
+	{"K8S-010", "high", "enable_admission"},
+	{"K8S-020", "high", "default_deny_netpol"},
+	{"K8S-030", "critical", "least_privilege"},
+	{"K8S-040", "high", "use_workload_identity"},
+	{"K8S-050", "high", "remove_exposure"},
 	{"NET-001", "critical", "make_private"},
 	{"NET-002", "high", "escalate"},
 	{"NET-003", "critical", "remove_exposure"},
@@ -42,6 +60,14 @@ var catalog = []struct {
 	{"NET-013", "medium", "advisory"},
 	{"NET-014", "high", "remove_exposure"},
 	{"NET-015", "high", "escalate"},
+	{"OBS-001", "medium", "advisory"},
+	{"RES-001", "critical", "escalate"},
+	{"RES-002", "critical", "escalate"},
+	{"RES-003", "high", "escalate"},
+	{"RES-004", "high", "escalate"},
+	{"RES-005", "high", "escalate"},
+	{"RES-006", "high", "escalate"},
+	{"RES-007", "medium", "advisory"},
 }
 
 // packFiles returns the paths of the pack under policies/, tests apart.

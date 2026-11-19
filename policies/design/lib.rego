@@ -92,3 +92,51 @@ port_count(e) := (e.attrs.port_to - e.attrs.port_from) + 1
 # never a call nested in not: OPA moves the call out of the negation and an
 # absent bound would then silence the rule (T119).
 bounded_flow(e) if port_count(e) <= 100
+
+# zone of a node (ADR 0011 D7); absent from the jurisdiction map: unknown.
+zone(id) := object.get(input.derived.jurisdiction, id, "unknown")
+
+# regulated: classification regulated or a regulation listed.
+regulated(d) if d.attrs.classification == "regulated"
+
+regulated(d) if count(object.get(d.attrs, "regulation", [])) > 0
+
+# sensitive_placed: hosts of sensitive data and sensitive data stores with a
+# placement of their own (every subtype but a dataset).
+sensitive_placed contains id if some id in sensitive_hosts
+
+sensitive_placed contains n.id if {
+	some n in input.graph.nodes
+	sensitive_data(n)
+	not n.attrs.subtype == "dataset"
+}
+
+# exposed: reached directly from the Internet, or opened by an exposure.
+exposed(id) if {
+	some h in internet_hops
+	h.dst == id
+}
+
+exposed(id) if {
+	some e in input.graph.edges
+	e.type == "EXPOSES"
+	id in exposure_targets(e)
+}
+
+# identities of a workload, runners of an identity (RUNS_AS).
+identities(w) := {e.dst |
+	some e in input.graph.edges
+	e.type == "RUNS_AS"
+	e.src == w
+}
+
+runners(i) := {e.src |
+	some e in input.graph.edges
+	e.type == "RUNS_AS"
+	e.dst == i
+}
+
+# actions of a permission; absent: every action (widest).
+actions(e) := object.get(e.attrs, "actions", ["*"])
+
+workload_kinds := {"Compute", "K8sCluster", "K8sWorkload"}

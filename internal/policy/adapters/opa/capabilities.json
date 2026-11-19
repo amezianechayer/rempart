@@ -1,8 +1,7 @@
 {
+  "allow_net": [],
   "builtins": [
     {
-      "name": "abs",
-      "description": "Returns the number without its sign.",
       "categories": [
         "numbers"
       ],
@@ -20,11 +19,11 @@
           "type": "number"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns the number without its sign.",
+      "name": "abs"
     },
     {
-      "name": "and",
-      "description": "Returns the intersection of two sets.",
       "categories": [
         "sets"
       ],
@@ -57,11 +56,11 @@
         },
         "type": "function"
       },
-      "infix": "\u0026"
+      "description": "Returns the intersection of two sets.",
+      "infix": "\u0026",
+      "name": "and"
     },
     {
-      "name": "array.concat",
-      "description": "Concatenates two arrays.",
       "decl": {
         "args": [
           {
@@ -90,11 +89,11 @@
           "type": "array"
         },
         "type": "function"
-      }
+      },
+      "description": "Concatenates two arrays.",
+      "name": "array.concat"
     },
     {
-      "name": "array.slice",
-      "description": "Returns a slice of a given array. If `start` is greater or equal than `stop`, `slice` is `[]`.",
       "decl": {
         "args": [
           {
@@ -125,10 +124,11 @@
           "type": "array"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns a slice of a given array. If `start` is greater or equal than `stop`, `slice` is `[]`.",
+      "name": "array.slice"
     },
     {
-      "name": "assign",
       "decl": {
         "args": [
           {
@@ -143,11 +143,10 @@
         },
         "type": "function"
       },
-      "infix": ":="
+      "infix": ":=",
+      "name": "assign"
     },
     {
-      "name": "concat",
-      "description": "Joins a set or array of strings with a delimiter.",
       "categories": [
         "strings"
       ],
@@ -184,11 +183,11 @@
           "type": "string"
         },
         "type": "function"
-      }
+      },
+      "description": "Joins a set or array of strings with a delimiter.",
+      "name": "concat"
     },
     {
-      "name": "contains",
-      "description": "Returns `true` if the search string is included in the base string",
       "categories": [
         "strings"
       ],
@@ -211,11 +210,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns `true` if the search string is included in the base string",
+      "name": "contains"
     },
     {
-      "name": "count",
-      "description": "Count takes a collection or string and returns the number of elements (or characters) in it.",
       "categories": [
         "aggregates"
       ],
@@ -261,11 +260,11 @@
           "type": "number"
         },
         "type": "function"
-      }
+      },
+      "description": "Count takes a collection or string and returns the number of elements (or characters) in it.",
+      "name": "count"
     },
     {
-      "name": "div",
-      "description": "Divides the first number by the second number.",
       "categories": [
         "numbers"
       ],
@@ -289,11 +288,11 @@
         },
         "type": "function"
       },
-      "infix": "/"
+      "description": "Divides the first number by the second number.",
+      "infix": "/",
+      "name": "div"
     },
     {
-      "name": "endswith",
-      "description": "Returns true if the search string ends with the base string.",
       "categories": [
         "strings"
       ],
@@ -316,10 +315,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns true if the search string ends with the base string.",
+      "name": "endswith"
     },
     {
-      "name": "eq",
       "decl": {
         "args": [
           {
@@ -334,10 +334,10 @@
         },
         "type": "function"
       },
-      "infix": "="
+      "infix": "=",
+      "name": "eq"
     },
     {
-      "name": "equal",
       "categories": [
         "comparison"
       ],
@@ -359,10 +359,10 @@
         },
         "type": "function"
       },
-      "infix": "=="
+      "infix": "==",
+      "name": "equal"
     },
     {
-      "name": "gt",
       "categories": [
         "comparison"
       ],
@@ -384,10 +384,10 @@
         },
         "type": "function"
       },
-      "infix": "\u003e"
+      "infix": "\u003e",
+      "name": "gt"
     },
     {
-      "name": "gte",
       "categories": [
         "comparison"
       ],
@@ -409,10 +409,10 @@
         },
         "type": "function"
       },
-      "infix": "\u003e="
+      "infix": "\u003e=",
+      "name": "gte"
     },
     {
-      "name": "internal.member_2",
       "decl": {
         "args": [
           {
@@ -427,10 +427,10 @@
         },
         "type": "function"
       },
-      "infix": "in"
+      "infix": "in",
+      "name": "internal.member_2"
     },
     {
-      "name": "internal.member_3",
       "decl": {
         "args": [
           {
@@ -448,11 +448,10 @@
         },
         "type": "function"
       },
-      "infix": "in"
+      "infix": "in",
+      "name": "internal.member_3"
     },
     {
-      "name": "intersection",
-      "description": "Returns the intersection of the given input sets.",
       "categories": [
         "sets"
       ],
@@ -479,11 +478,11 @@
           "type": "set"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns the intersection of the given input sets.",
+      "name": "intersection"
     },
     {
-      "name": "is_array",
-      "description": "Returns `true` if the input value is an array.",
       "categories": [
         "types"
       ],
@@ -501,11 +500,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns `true` if the input value is an array.",
+      "name": "is_array"
     },
     {
-      "name": "is_boolean",
-      "description": "Returns `true` if the input value is a boolean.",
       "categories": [
         "types"
       ],
@@ -523,11 +522,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns `true` if the input value is a boolean.",
+      "name": "is_boolean"
     },
     {
-      "name": "is_null",
-      "description": "Returns `true` if the input value is null.",
       "categories": [
         "types"
       ],
@@ -545,11 +544,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns `true` if the input value is null.",
+      "name": "is_null"
     },
     {
-      "name": "is_number",
-      "description": "Returns `true` if the input value is a number.",
       "categories": [
         "types"
       ],
@@ -567,11 +566,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns `true` if the input value is a number.",
+      "name": "is_number"
     },
     {
-      "name": "is_object",
-      "description": "Returns true if the input value is an object",
       "categories": [
         "types"
       ],
@@ -589,11 +588,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns true if the input value is an object",
+      "name": "is_object"
     },
     {
-      "name": "is_set",
-      "description": "Returns `true` if the input value is a set.",
       "categories": [
         "types"
       ],
@@ -611,11 +610,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns `true` if the input value is a set.",
+      "name": "is_set"
     },
     {
-      "name": "is_string",
-      "description": "Returns `true` if the input value is a string.",
       "categories": [
         "types"
       ],
@@ -633,10 +632,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns `true` if the input value is a string.",
+      "name": "is_string"
     },
     {
-      "name": "lt",
       "categories": [
         "comparison"
       ],
@@ -658,10 +658,10 @@
         },
         "type": "function"
       },
-      "infix": "\u003c"
+      "infix": "\u003c",
+      "name": "lt"
     },
     {
-      "name": "lte",
       "categories": [
         "comparison"
       ],
@@ -683,11 +683,10 @@
         },
         "type": "function"
       },
-      "infix": "\u003c="
+      "infix": "\u003c=",
+      "name": "lte"
     },
     {
-      "name": "max",
-      "description": "Returns the maximum value in a collection.",
       "categories": [
         "aggregates"
       ],
@@ -719,11 +718,11 @@
           "type": "any"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns the maximum value in a collection.",
+      "name": "max"
     },
     {
-      "name": "min",
-      "description": "Returns the minimum value in a collection.",
       "categories": [
         "aggregates"
       ],
@@ -755,11 +754,11 @@
           "type": "any"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns the minimum value in a collection.",
+      "name": "min"
     },
     {
-      "name": "minus",
-      "description": "Minus subtracts the second number from the first number or computes the difference between two sets.",
       "categories": [
         "sets",
         "numbers"
@@ -815,11 +814,11 @@
         },
         "type": "function"
       },
-      "infix": "-"
+      "description": "Minus subtracts the second number from the first number or computes the difference between two sets.",
+      "infix": "-",
+      "name": "minus"
     },
     {
-      "name": "mul",
-      "description": "Multiplies two numbers.",
       "categories": [
         "numbers"
       ],
@@ -841,10 +840,11 @@
         },
         "type": "function"
       },
-      "infix": "*"
+      "description": "Multiplies two numbers.",
+      "infix": "*",
+      "name": "mul"
     },
     {
-      "name": "neq",
       "categories": [
         "comparison"
       ],
@@ -866,11 +866,10 @@
         },
         "type": "function"
       },
-      "infix": "!="
+      "infix": "!=",
+      "name": "neq"
     },
     {
-      "name": "object.get",
-      "description": "Returns value of an object's key if present, otherwise a default. If the supplied `key` is an `array`, then `object.get` will search through a nested object or array using each key in turn. For example: `object.get({\"a\": [{ \"b\": true }]}, [\"a\", 0, \"b\"], false)` results in `true`.",
       "decl": {
         "args": [
           {
@@ -903,11 +902,11 @@
           "type": "any"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns value of an object's key if present, otherwise a default. If the supplied `key` is an `array`, then `object.get` will search through a nested object or array using each key in turn. For example: `object.get({\"a\": [{ \"b\": true }]}, [\"a\", 0, \"b\"], false)` results in `true`.",
+      "name": "object.get"
     },
     {
-      "name": "object.keys",
-      "description": "Returns a set of an object's keys. For example: `object.keys({\"a\": 1, \"b\": true, \"c\": \"d\")` results in `{\"a\", \"b\", \"c\"}`.",
       "decl": {
         "args": [
           {
@@ -933,11 +932,11 @@
           "type": "set"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns a set of an object's keys. For example: `object.keys({\"a\": 1, \"b\": true, \"c\": \"d\")` results in `{\"a\", \"b\", \"c\"}`.",
+      "name": "object.keys"
     },
     {
-      "name": "object.union",
-      "description": "Creates a new object of the asymmetric union of two objects. For example: `object.union({\"a\": 1, \"b\": 2, \"c\": {\"d\": 3}}, {\"a\": 7, \"c\": {\"d\": 4, \"e\": 5}})` will result in `{\"a\": 7, \"b\": 2, \"c\": {\"d\": 4, \"e\": 5}}`.",
       "decl": {
         "args": [
           {
@@ -981,11 +980,11 @@
           "type": "object"
         },
         "type": "function"
-      }
+      },
+      "description": "Creates a new object of the asymmetric union of two objects. For example: `object.union({\"a\": 1, \"b\": 2, \"c\": {\"d\": 3}}, {\"a\": 7, \"c\": {\"d\": 4, \"e\": 5}})` will result in `{\"a\": 7, \"b\": 2, \"c\": {\"d\": 4, \"e\": 5}}`.",
+      "name": "object.union"
     },
     {
-      "name": "or",
-      "description": "Returns the union of two sets.",
       "categories": [
         "sets"
       ],
@@ -1016,11 +1015,11 @@
         },
         "type": "function"
       },
-      "infix": "|"
+      "description": "Returns the union of two sets.",
+      "infix": "|",
+      "name": "or"
     },
     {
-      "name": "plus",
-      "description": "Plus adds two numbers together.",
       "categories": [
         "numbers"
       ],
@@ -1042,11 +1041,11 @@
         },
         "type": "function"
       },
-      "infix": "+"
+      "description": "Plus adds two numbers together.",
+      "infix": "+",
+      "name": "plus"
     },
     {
-      "name": "rego.metadata.rule",
-      "description": "Returns annotations declared for the active rule and using the _rule_ scope.",
       "decl": {
         "result": {
           "description": "\"rule\" scope annotations for this rule; empty object if no annotations exist",
@@ -1054,11 +1053,11 @@
           "type": "any"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns annotations declared for the active rule and using the _rule_ scope.",
+      "name": "rego.metadata.rule"
     },
     {
-      "name": "rem",
-      "description": "Returns the remainder for of `x` divided by `y`, for `y != 0`.",
       "categories": [
         "numbers"
       ],
@@ -1080,11 +1079,11 @@
         },
         "type": "function"
       },
-      "infix": "%"
+      "description": "Returns the remainder for of `x` divided by `y`, for `y != 0`.",
+      "infix": "%",
+      "name": "rem"
     },
     {
-      "name": "sort",
-      "description": "Returns a sorted array.",
       "categories": [
         "aggregates"
       ],
@@ -1119,11 +1118,11 @@
           "type": "array"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns a sorted array.",
+      "name": "sort"
     },
     {
-      "name": "startswith",
-      "description": "Returns true if the search string begins with the base string.",
       "categories": [
         "strings"
       ],
@@ -1146,11 +1145,11 @@
           "type": "boolean"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns true if the search string begins with the base string.",
+      "name": "startswith"
     },
     {
-      "name": "sum",
-      "description": "Sums elements of an array or set of numbers.",
       "categories": [
         "aggregates"
       ],
@@ -1182,11 +1181,11 @@
           "type": "number"
         },
         "type": "function"
-      }
+      },
+      "description": "Sums elements of an array or set of numbers.",
+      "name": "sum"
     },
     {
-      "name": "type_name",
-      "description": "Returns the type of its input value.",
       "categories": [
         "types"
       ],
@@ -1204,11 +1203,11 @@
           "type": "string"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns the type of its input value.",
+      "name": "type_name"
     },
     {
-      "name": "union",
-      "description": "Returns the union of the given input sets.",
       "categories": [
         "sets"
       ],
@@ -1235,13 +1234,10 @@
           "type": "set"
         },
         "type": "function"
-      }
+      },
+      "description": "Returns the union of the given input sets.",
+      "name": "union"
     }
-  ],
-  "future_keywords": [
-    "and",
-    "not",
-    "or"
   ],
   "features": [
     "keywords_in_refs",
@@ -1249,5 +1245,10 @@
     "rego_v2",
     "rego_v2_import",
     "template_strings"
+  ],
+  "future_keywords": [
+    "and",
+    "not",
+    "or"
   ]
 }

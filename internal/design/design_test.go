@@ -413,6 +413,10 @@ func TestBuildIdentitiesLeastPrivilege(t *testing.T) {
 		if slices.ContainsFunc(g.Nodes, func(n graphdomain.Node) bool { return n.ID == "id:orders-db" }) {
 			t.Fatalf("a data store received an identity")
 		}
+		// M2-T03b (AVL-001): a managed database carries its node count.
+		if c := nodeByID(t, g, "wl:orders-db").Attrs.Count; c == nil || *c != 2 {
+			t.Fatalf("managed_db count %v, want 2 (default)", deref(c))
+		}
 		for _, e := range g.Edges {
 			if e.Type == graphdomain.EdgeHasPermission && (slices.Contains(e.Attrs.Actions, "admin") || slices.Contains(e.Attrs.Actions, "*")) {
 				t.Fatalf("Build granted %v", e.Attrs.Actions)

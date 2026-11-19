@@ -35,10 +35,21 @@ func capabilities() *ast.Capabilities {
 }
 
 // capabilitiesJSON is capabilities.json, read by opa check in make opa-test.
+// allow_net is written as [] (no host): OPA omits an empty list, and an
+// absent allow_net means every host.
 func capabilitiesJSON() ([]byte, error) {
-	raw, err := json.MarshalIndent(capabilities(), "", "  ")
+	raw, err := json.Marshal(capabilities())
 	if err != nil {
 		return nil, err
 	}
-	return append(raw, '\n'), nil
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	doc["allow_net"] = []string{}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(out, '\n'), nil
 }

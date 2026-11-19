@@ -38,7 +38,7 @@ var _ policy.Evaluator = (*Engine)(nil)
 
 // referenceFacts is the graph of the reference IR, optionally edited, with
 // its reachability recomputed.
-func referenceInput(t *testing.T, edit func(f *graphdomain.FactsGraph)) policy.DesignInput {
+func referenceInput(t testing.TB, edit func(f *graphdomain.FactsGraph)) policy.DesignInput {
 	t.Helper()
 	raw, err := os.ReadFile(repo + "internal/intent/testdata/reference-ir.json")
 	if err != nil {

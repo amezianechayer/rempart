@@ -1125,3 +1125,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 08:21 [harnais] PHASE FREE (discipline TDD suspendue) : increment M2-T03a done, T03b follows
 
 - 2026-11-19 08:21 [harnais] phase : tests -> free
+
+- 2026-11-19 08:22 [harnais] phase : free -> tests
+
+- 2026-11-19 08:24 [harnais] phase : tests -> impl
+
+- 2026-11-19 08:27 [harnais] PHASE FREE (discipline TDD suspendue) : tâche policy-design T03b implémentée, mesure et revue à suivre
+
+- 2026-11-19 08:27 [harnais] phase : impl -> free

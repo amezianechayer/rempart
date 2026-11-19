@@ -265,6 +265,9 @@ func Build(ir intentdomain.IR, o Options) (graphdomain.Graph, cidr.Plan, error) 
 		case graphdomain.KindDataStore:
 			class := cmp.Or(dataClass[id], "internal")
 			a.Subtype, a.Classification, a.Encrypted, a.PublicAccess = ptr(x.p.subtype), ptr(class), ptr(true), ptr(false)
+			if x.p.subtype == "managed_db" {
+				a.Count = ptr(count(x.w, defaultDBNodes)) // AVL-001 reads the node count
+			}
 		case graphdomain.KindLoadBalancer:
 			a.Public, a.Listeners = ptr(false), &[]graphdomain.Listener{}
 		}
