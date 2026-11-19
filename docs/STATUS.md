@@ -1284,3 +1284,17 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 15:12 [harnais] passage en impl avec tests verts (caractérisation) : M2-T05 step 6: lint fixes done
 
 - 2026-11-19 15:12 [harnais] phase : tests -> impl
+
+- 2026-11-19 15:16 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 step 7: tests of the worker L2 mode, demo input fixture and make l2-demo
+
+- 2026-11-19 15:16 [harnais] phase : impl -> tests
+
+- 2026-11-19 15:17 [harnais] phase : tests -> impl
+
+- 2026-11-19 15:18 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 step 7: Config field list of TestConfigNeverPrintsSecrets gains L2Once and L2Input (no secret); unknown-key case of TestReadL2Input did not match the indented fixture
+
+- 2026-11-19 15:18 [harnais] phase : impl -> tests
+
+- 2026-11-19 15:18 [harnais] passage en impl avec tests verts (caractérisation) : M2-T05 step 7: test fixes done
+
+- 2026-11-19 15:18 [harnais] phase : tests -> impl

@@ -293,7 +293,7 @@ func TestConfigNeverPrintsSecrets(t *testing.T) {
 		want := []string{
 			"TemporalAddress string", "Namespace string", "LLMProvider string", "FakeScript string",
 			"Dev bool", "DemoOnce bool", "Tenant tenancy.ID", "OpenBaoAddress string",
-			"L1Once bool", "L1Request string", // M1-T05
+			"L1Once bool", "L1Request string", "L2Input string", "L2Once bool", // M1-T05
 		}
 		typ := reflect.TypeFor[Config]()
 		var got []string

@@ -1472,6 +1472,41 @@ func TestMakefileL1DemoTarget(t *testing.T) {
 	}
 }
 
+// l2RunFlags are the flags of go run in the l2-demo recipe (M2-T05, ADR 0012
+// D6): those of demo, -l2-once for -demo-once and the input of the reference
+// scenario confirmed for the demo tenant.
+func l2RunFlags() []string {
+	return []string{
+		"-dev", "-l2-once", "-llm=fake", "-tenant=0d3e0000-0000-4000-8000-000000000001",
+		"-temporal-address=127.0.0.1:7233", "-namespace=rempart", "-openbao-addr=http://127.0.0.1:8200",
+		"-fake-script=internal/loops/demo/testdata/scripts/converge.json",
+		"-l2-input=internal/loops/l2/testdata/demo-input.json",
+	}
+}
+
+// TestMakefileL2DemoTarget (M2-T05, criterion 5): l2-demo runs the worker
+// once like demo, with the flags of L2; the checker is the one of demo.
+func TestMakefileL2DemoTarget(t *testing.T) {
+	_, fsys := repoRoot(t)
+	src, err := readRepoFile(fsys, "Makefile", "created by M0-T01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mf, err := parseMakefile(src)
+	if err != nil {
+		t.Fatalf("Makefile: %v", err)
+	}
+	reportProblems(t, checkWorkerTarget(mf, "l2-demo", l2RunFlags()))
+	for _, f := range []string{"internal/loops/demo/testdata/scripts/converge.json", "internal/loops/l2/testdata/demo-input.json"} {
+		if _, err := readRepoFile(fsys, f, "M2-T05"); err != nil {
+			t.Errorf("file of the l2-demo target: %v", err)
+		}
+	}
+	if slices.Contains(reachableTargets(mf, "verify-quick"), "l2-demo") {
+		t.Error("target l2-demo is reachable from verify-quick (it needs the dev stack)")
+	}
+}
+
 // TestMakefileDemoTarget (M0-T20, criterion 8): the demo target of the
 // repository, and negative controls of its checker.
 func TestMakefileDemoTarget(t *testing.T) {

@@ -21,7 +21,7 @@ override GOFLAGS := -mod=readonly
 export GOFLAGS
 
 .PHONY: verify-quick verify opa-test arch-test evals update-baseline
-.PHONY: dev dev-preflight dev-down demo l1-demo sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
+.PHONY: dev dev-preflight dev-down demo l1-demo l2-demo sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
 
 # Menace T32 : sans règle explicite pour lui, GNU make referait le Makefile par une règle
 # implicite intégrée (Makefile.sh, Makefile,v, RCS/, SCCS/) avant toute recette, même sous -n.
@@ -91,6 +91,15 @@ l1-demo:
 		-tenant=0d3e0000-0000-4000-8000-000000000001 -temporal-address=127.0.0.1:7233 -namespace=rempart \
 		-openbao-addr=http://127.0.0.1:8200 -fake-script=internal/loops/l1/testdata/scripts/converge.json \
 		-l1-request=internal/intent/testdata/reference-request.txt
+
+# Boucle L2 de bout en bout (M2-T05) : IR de référence confirmée pour le tenant de démo,
+# réviseur déterministe et pack OPA embarqué, sans modèle. Sortie standard : un seul document JSON.
+l2-demo:
+	@$(MAKE) -f Makefile --no-print-directory dev >&2
+	@bash scripts/dev-bootstrap.sh worker-token | go run ./cmd/rempart-worker -dev -l2-once -llm=fake \
+		-tenant=0d3e0000-0000-4000-8000-000000000001 -temporal-address=127.0.0.1:7233 -namespace=rempart \
+		-openbao-addr=http://127.0.0.1:8200 -fake-script=internal/loops/demo/testdata/scripts/converge.json \
+		-l2-input=internal/loops/l2/testdata/demo-input.json
 
 # Vérifie Docker Engine, le plugin compose v2 et l'accès au démon, sans rien démarrer.
 dev-preflight:

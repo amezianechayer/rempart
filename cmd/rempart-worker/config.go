@@ -19,7 +19,7 @@ var (
 	ErrConfig           = errors.New("rempart-worker: invalid configuration")
 	ErrFakeRequiresDev  = errors.New("rempart-worker: -llm=fake requires -dev")
 	ErrProviderRefused  = errors.New("rempart-worker: -llm=anthropic is not wired before M1")
-	ErrDemoOnceRequired = errors.New("rempart-worker: -demo-once or -l1-once is required")
+	ErrDemoOnceRequired = errors.New("rempart-worker: -demo-once, -l1-once or -l2-once is required")
 )
 
 // Config holds no secret (D1): no key, no token, no environment value.
@@ -30,6 +30,8 @@ type Config struct {
 	OpenBaoAddress                                      string // M1-T02 D9: http on loopback only
 	L1Once                                              bool   // M1-T05: run one L1 workflow (target l1-demo)
 	L1Request                                           string // relative .txt path of the request, with -l1-once only
+	L2Once                                              bool   // M2-T05: run one L2 workflow (target l2-demo)
+	L2Input                                             string // relative .json path of the L2 input, with -l2-once only
 }
 
 // once is a string flag that refuses a second occurrence (D2).
@@ -66,8 +68,8 @@ func (o *onceBool) Set(s string) error {
 func LoadConfig(args []string) (Config, error) {
 	set := flag.NewFlagSet("rempart-worker", flag.ContinueOnError)
 	set.SetOutput(io.Discard) // flag errors quote values
-	var addr, ns, provider, script, tenant, bao, l1Req once
-	var dev, demoOnce, l1Once onceBool
+	var addr, ns, provider, script, tenant, bao, l1Req, l2In once
+	var dev, demoOnce, l1Once, l2Once onceBool
 	var cfg Config
 	set.Var(&addr, "temporal-address", "")
 	set.Var(&ns, "namespace", "")
@@ -79,10 +81,12 @@ func LoadConfig(args []string) (Config, error) {
 	set.Var(&demoOnce, "demo-once", "")
 	set.Var(&l1Once, "l1-once", "")
 	set.Var(&l1Req, "l1-request", "")
+	set.Var(&l2Once, "l2-once", "")
+	set.Var(&l2In, "l2-input", "")
 	if err := set.Parse(args); err != nil || set.NArg() != 0 {
 		return Config{}, fmt.Errorf("%w: command line refused", ErrConfig)
 	}
-	cfg.Dev, cfg.DemoOnce, cfg.L1Once = dev.v, demoOnce.v, l1Once.v
+	cfg.Dev, cfg.DemoOnce, cfg.L1Once, cfg.L2Once = dev.v, demoOnce.v, l1Once.v, l2Once.v
 	switch provider.v {
 	case "fake":
 	case "anthropic":
@@ -93,13 +97,15 @@ func LoadConfig(args []string) (Config, error) {
 	if !cfg.Dev {
 		return Config{}, ErrFakeRequiresDev
 	}
-	switch {
-	case cfg.DemoOnce && cfg.L1Once:
-		return Config{}, fmt.Errorf("%w: -demo-once and -l1-once exclude each other", ErrConfig)
-	case !cfg.DemoOnce && !cfg.L1Once:
+	switch modes := cfg.modes(); {
+	case modes > 1:
+		return Config{}, fmt.Errorf("%w: -demo-once, -l1-once and -l2-once exclude each other", ErrConfig)
+	case modes == 0:
 		return Config{}, ErrDemoOnceRequired
 	case cfg.L1Once != l1Req.set || l1Req.set && (!fs.ValidPath(l1Req.v) || path.Ext(l1Req.v) != ".txt"):
 		return Config{}, fmt.Errorf("%w: -l1-request", ErrConfig)
+	case cfg.L2Once != l2In.set || l2In.set && (!fs.ValidPath(l2In.v) || path.Ext(l2In.v) != ".json"):
+		return Config{}, fmt.Errorf("%w: -l2-input", ErrConfig)
 	}
 	id, err := tenancy.ParseID(tenant.v)
 	if err != nil || id == tenancy.System {
@@ -112,8 +118,19 @@ func LoadConfig(args []string) (Config, error) {
 		return Config{}, fmt.Errorf("%w: -openbao-addr", ErrConfig)
 	}
 	cfg.TemporalAddress, cfg.Namespace, cfg.LLMProvider, cfg.FakeScript, cfg.Tenant = addr.v, ns.v, provider.v, script.v, id
-	cfg.OpenBaoAddress, cfg.L1Request = bao.v, l1Req.v
+	cfg.OpenBaoAddress, cfg.L1Request, cfg.L2Input = bao.v, l1Req.v, l2In.v
 	return cfg, nil
+}
+
+// modes counts the run modes set: exactly one is admitted.
+func (c Config) modes() int {
+	n := 0
+	for _, m := range []bool{c.DemoOnce, c.L1Once, c.L2Once} {
+		if m {
+			n++
+		}
+	}
+	return n
 }
 
 func loopbackAddr(a string) bool {

@@ -55,12 +55,15 @@ type demoResult struct {
 }
 
 func run(ctx context.Context, cfg Config, s *envelope.Sealer, stdout io.Writer) error {
-	if !cfg.Dev || cfg.LLMProvider != "fake" || cfg.DemoOnce == cfg.L1Once { // T41, even if LoadConfig is bypassed
+	if !cfg.Dev || cfg.LLMProvider != "fake" || cfg.modes() != 1 { // T41, even if LoadConfig is bypassed
 		return ErrFakeRequiresDev
 	}
 	opts, err := clientOptions(cfg, s)
 	if err != nil {
 		return err
+	}
+	if cfg.L2Once { // no model: the fake client is never built
+		return runL2(ctx, cfg, opts, stdout)
 	}
 	cl, err := fakeClient(cfg)
 	if err != nil {
