@@ -1,6 +1,6 @@
 # 0012. Boucle L2 : réviseur déterministe, confirmation, dérogations
 
-- Statut : proposé (à accepter par l'humain avant la phase tests de M2-T05, étape H0-M2.3)
+- Statut : accepté par l'humain le 2026-11-19 (réponse « Continue » à la demande d'acceptation, avec les recommandations de l'agent aux questions 1 à 5)
 - Date : 2026-11-19
 - Jalon : M2. M2-T05 `l2-loop` met en oeuvre D1 à D8 ; M2-T07 `evals-design` consomme D2, D3 et D5 (graders sur `status`, `initial_findings`, `applied`, `explanation`).
 - Base : M2-T04 livrée ; obligations (fe) à (fi) et (fm) soldées (`920e3b8`) : `DesignInput.Check()` revalide l'entrée dans `Evaluate` (recalcul par `NewDesignInput`, schéma à l'exécution), `NewDesignInput` refuse une atteignabilité qui nomme un nœud hors du graphe, `Derived.WorldSources` est calculé en Go, une règle `deny` n'est admise que sous la forme `deny contains <var>` à sortie `{control_id: <m>.custom.control_id, resource}`.
