@@ -80,6 +80,10 @@ base := {
 		"environment": "prod",
 		"observability": {"metrics": true, "logs": true},
 		"workload_roles": {},
+		# Computed in Go (obligation (fg)): the flows and cluster APIs whose
+		# sources cover the whole Internet. Empty here: an absent or empty list
+		# of sources is read as the world by the policies themselves.
+		"world_sources": [],
 	},
 }
 
@@ -103,6 +107,20 @@ set_edge(inp, id, attrs) := object.union(inp, {"graph": {"edges": [patched(e, id
 
 # without_edge removes edge id.
 without_edge(inp, id) := object.union(inp, {"graph": {"edges": [e | some e in inp.graph.edges; e.id != id]}})
+
+# without_attr removes the attribute key of node id; without_attrs removes
+# the attrs object itself (an input not produced by NewDesignInput).
+without_attr(inp, id, key) := object.union(inp, {"graph": {"nodes": [stripped(n, id, key) | some n in inp.graph.nodes]}})
+
+without_attrs(inp, id) := object.union(inp, {"graph": {"nodes": [bare(n, id) | some n in inp.graph.nodes]}})
+
+stripped(n, id, key) := {"id": n.id, "kind": n.kind, "attrs": {k: v | some k, v in n.attrs; k != key}} if n.id == id
+
+stripped(n, id, _) := n if n.id != id
+
+bare(n, id) := {"id": n.id, "kind": n.kind} if n.id == id
+
+bare(n, id) := n if n.id != id
 
 patched(x, id, attrs) := object.union(x, {"attrs": attrs}) if x.id == id
 

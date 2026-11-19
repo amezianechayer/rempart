@@ -88,3 +88,48 @@ test_res_006_ko_reverse if lib.ko("RES-006", lib.with_edges(us, [lib.edge("CAN_R
 test_res_006_ko_unknown_source if lib.ko("RES-006", lib.with_derived(lib.base, {"jurisdiction": {"wl:web": "unknown"}}))
 
 test_res_006_ok_eu_to_eu if lib.ok("RES-006", lib.with_edges(lib.base, [lib.edge("CAN_REACH", "wl:db", "wl:web", {"protocol": "tcp", "port_from": 443, "port_to": 443, "via": "internal", "path": ["net:vpc-data"]})]))
+
+# Obligation (fh) (T115, T119): an absent region or cloud on a placed
+# component is outside the constraints; a dataset is placed by its host.
+test_res_003_ko_region_absent if {
+	inp := lib.without_attr(lib.base, "wl:web", "region")
+	lib.ko("RES-003", lib.with_derived(inp, {"constraints": {"allowed_regions": ["eu-west-3"]}}))
+}
+
+test_res_004_ko_cloud_absent if {
+	inp := lib.without_attr(lib.base, "wl:web", "cloud")
+	lib.ko("RES-004", lib.with_derived(inp, {"constraints": {"forbidden_clouds": ["azure"]}}))
+}
+
+# Obligation (fi) (T110): data with an EU or French residency, sensitive or
+# not, on a host of unknown zone is RES-005 (blocking), not RES-007 alone.
+internal_data(residency) := lib.set_node(lib.base, "data:customers", {"classification": "internal", "regulation": [], "residency": residency})
+
+unknown_db(inp) := lib.with_derived(inp, {"jurisdiction": {"wl:db": "unknown"}})
+
+test_res_005_ko_eu_residency_internal if lib.ko("RES-005", unknown_db(internal_data("eu")))
+
+test_res_005_ko_fr_residency_internal if lib.ko("RES-005", unknown_db(internal_data("fr")))
+
+test_res_007_ok_eu_residency_internal if lib.ok("RES-007", unknown_db(internal_data("eu")))
+
+test_res_005_ok_any_residency_internal if lib.ok("RES-005", unknown_db(internal_data("any")))
+
+test_res_007_ko_any_residency_internal if lib.ko("RES-007", unknown_db(internal_data("any")))
+
+# Obligation (fm) (T114): French data is transferred by a flow, in either
+# direction, with a component located outside France, even inside the EU.
+fr_data := lib.set_node(lib.base, "data:customers", {"residency": "fr"})
+
+eu_vm := lib.node("wl:de", "Compute", {"subtype": "vm", "cloud": "aws", "region": "eu-central-1", "count": 1, "public_ip": false})
+
+test_res_006_ok_fr_in_fr if lib.ok("RES-006", fr_data)
+
+test_res_006_ko_fr_data_eu_source if lib.ko("RES-006", lib.with_derived(fr_data, {"jurisdiction": {"wl:web": "eu"}}))
+
+test_res_006_ko_fr_host_to_eu if {
+	inp := lib.with_derived(lib.with_nodes(fr_data, [eu_vm]), {"jurisdiction": {"wl:de": "eu"}})
+	lib.ko("RES-006", lib.with_edges(inp, [lib.edge("CAN_REACH", "wl:db", "wl:de", {"protocol": "tcp", "port_from": 443, "port_to": 443, "via": "internal", "path": ["net:vpc-data"]})]))
+}
+
+test_res_006_ok_eu_data_eu_source if lib.ok("RES-006", lib.with_derived(lib.base, {"jurisdiction": {"wl:web": "eu"}}))

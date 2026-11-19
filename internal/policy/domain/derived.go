@@ -28,4 +28,8 @@ type Derived struct {
 	Environment          string            `json:"environment"`
 	Observability        Observability     `json:"observability"`
 	WorkloadRoles        map[string]string `json:"workload_roles"`
+	// WorldSources are the EXPOSES edges, the CAN_REACH edges leaving the
+	// Internet and the K8sCluster nodes whose sources cover the whole Internet
+	// once merged (absent or empty included), sorted (obligation (fg), T102).
+	WorldSources []string `json:"world_sources"`
 }

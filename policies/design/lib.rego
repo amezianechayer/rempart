@@ -93,6 +93,22 @@ port_count(e) := (e.attrs.port_to - e.attrs.port_from) + 1
 # absent bound would then silence the rule (T119).
 bounded_flow(e) if port_count(e) <= 100
 
+# open_to_world: the sources of a flow or of a cluster API are the whole
+# Internet: absent or empty, or covering 0.0.0.0/0 once merged, as computed in
+# Go into derived.world_sources (obligation (fg), T102).
+open_to_world(id, _) if id in input.derived.world_sources
+
+open_to_world(_, sources) if count(sources) == 0
+
+# placed: a component with a location of its own (a dataset is placed by its
+# host); a data store without subtype is placed (safe side).
+placed(n) if n.kind in {"Compute", "K8sCluster", "K8sWorkload", "LoadBalancer"}
+
+placed(n) if {
+	n.kind == "DataStore"
+	not n.attrs.subtype == "dataset"
+}
+
 # zone of a node (ADR 0011 D7); absent from the jurisdiction map: unknown.
 zone(id) := object.get(input.derived.jurisdiction, id, "unknown")
 

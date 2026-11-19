@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -131,6 +132,7 @@ func TestEngineInputHasNoFreeText(t *testing.T) {
 	for _, want := range []string{
 		`"unconfirmed_exposures":[]`, `"sources_unresolved":[]`, `"forbidden_clouds":[]`,
 		`"allowed_regions":["eu-west-3","francecentral"]`, `"environment":"staging"`, `"workload_roles":{}`,
+		`"world_sources":["exposes|lb:app-cluster-443|internet|https/443","wl:app-cluster"]`,
 	} {
 		if !bytes.Contains(raw, []byte(want)) {
 			t.Errorf("policy input lacks %s:\n%s", want, raw)
@@ -208,6 +210,71 @@ func TestEngineInputHasNoFreeText(t *testing.T) {
 		})
 		if err != nil || len(in.Derived.UnconfirmedExposures) != 1 || in.Derived.WorkloadRoles["wl:gitops"] != "gitops_controller" {
 			t.Fatalf("valid context: %v, %+v", err, in.Derived)
+		}
+	})
+}
+
+// TestDesignInputWorldSources proves obligation (fg) (T102): an exposure, a
+// flow from the Internet or a cluster API is open to the whole Internet when
+// its sources are absent, empty, or cover 0.0.0.0/0 once merged, whatever the
+// number of prefixes; a partial cover is not.
+func TestDesignInputWorldSources(t *testing.T) {
+	f, r := facts(t, referenceIR)
+	const exposure = "exposes|lb:app-cluster-443|internet|https/443"
+	worldOf := func(t *testing.T, sources, api []string) []string {
+		t.Helper()
+		g := f
+		g.Nodes = slices.Clone(f.Nodes)
+		g.Edges = slices.Clone(f.Edges)
+		for i := range g.Edges {
+			if g.Edges[i].ID == exposure {
+				g.Edges[i].Attrs.AllowedSources = sources
+			}
+		}
+		for i := range g.Nodes {
+			if g.Nodes[i].Kind == graphdomain.KindK8sCluster {
+				g.Nodes[i].Attrs.APIAllowedSources = api
+			}
+		}
+		in, err := policy.NewDesignInput(g, r, policy.DesignContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return in.Derived.WorldSources
+	}
+	halves := []string{"128.0.0.0/1", "0.0.0.0/1"}
+	for name, c := range map[string]struct {
+		sources, api []string
+		want         []string
+	}{
+		"absent":       {nil, nil, []string{exposure, "wl:app-cluster"}},
+		"empty":        {[]string{}, []string{}, []string{exposure, "wl:app-cluster"}},
+		"two_halves":   {halves, halves, []string{exposure, "wl:app-cluster"}},
+		"quarters":     {[]string{"0.0.0.0/2", "64.0.0.0/2", "128.0.0.0/2", "192.0.0.0/2"}, []string{"10.0.0.0/8"}, []string{exposure}},
+		"overlapping":  {[]string{"0.0.0.0/1", "64.0.0.0/2", "128.0.0.0/1", "10.0.0.0/8"}, []string{"203.0.113.0/24"}, []string{exposure}},
+		"partial":      {[]string{"0.0.0.0/1", "128.0.0.0/2", "192.0.0.0/3"}, []string{"0.0.0.0/1"}, []string{}},
+		"one_prefix":   {[]string{"203.0.113.0/24"}, []string{"198.51.100.0/24"}, []string{}},
+		"last_address": {[]string{"0.0.0.0/1", "128.0.0.0/2", "192.0.0.0/3", "224.0.0.0/4", "240.0.0.0/5", "248.0.0.0/6", "252.0.0.0/7", "254.0.0.0/8", "255.0.0.0/9", "255.128.0.0/9"}, []string{"10.0.0.0/8"}, []string{exposure}},
+		"last_missing": {[]string{"0.0.0.0/1", "128.0.0.0/2", "192.0.0.0/3", "224.0.0.0/4", "240.0.0.0/5", "248.0.0.0/6", "252.0.0.0/7", "254.0.0.0/8", "255.0.0.0/9"}, []string{"10.0.0.0/8"}, []string{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := worldOf(t, c.sources, c.api); !slices.Equal(got, c.want) || got == nil {
+				t.Fatalf("world_sources = %#v, want %#v", got, c.want)
+			}
+		})
+	}
+
+	t.Run("reach_outside_graph_refused", func(t *testing.T) {
+		// Obligation (ff) (T3): the reachability of another graph is refused.
+		ghost := r
+		ghost.Hops = append(slices.Clone(r.Hops), reach.Hop{Src: "internet", Dst: "wl:ghost", Proto: "tcp", Ports: reach.PortSet{{From: 22, To: 22}}, World: true})
+		if _, err := policy.NewDesignInput(f, ghost, policy.DesignContext{}); !errors.Is(err, policy.ErrDesignInput) {
+			t.Errorf("hop to a node outside the graph: %v, want ErrDesignInput", err)
+		}
+		ghost = r
+		ghost.FromInternet = append(slices.Clone(r.FromInternet), reach.Path{Target: "wl:legacy-vms", Nodes: []string{"internet", "wl:ghost", "wl:legacy-vms"}})
+		if _, err := policy.NewDesignInput(f, ghost, policy.DesignContext{}); !errors.Is(err, policy.ErrDesignInput) {
+			t.Errorf("path through a node outside the graph: %v, want ErrDesignInput", err)
 		}
 	})
 }

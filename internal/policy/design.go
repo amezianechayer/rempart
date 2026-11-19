@@ -1,15 +1,23 @@
 package policy
 
 import (
+	"bytes"
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/netip"
+	"reflect"
 	"regexp"
 	"slices"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	graphdomain "github.com/amezianechayer/rempart/internal/graph/domain"
 	"github.com/amezianechayer/rempart/internal/graph/reach"
 	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
 	policydomain "github.com/amezianechayer/rempart/internal/policy/domain"
+	"github.com/amezianechayer/rempart/schemas"
 )
 
 // ErrDesignInput: a context NewDesignInput cannot check. Fixed message: it
@@ -75,6 +83,9 @@ func NewDesignInput(g graphdomain.FactsGraph, r reach.Result, c DesignContext) (
 			env = max(env, envRank[*n.Attrs.Env])
 		}
 	}
+	if !reachWithin(r, kinds) {
+		return DesignInput{}, ErrDesignInput
+	}
 	exposes := map[string]bool{}
 	cluster := map[string]string{}
 	for _, e := range g.Edges {
@@ -86,7 +97,19 @@ func NewDesignInput(g graphdomain.FactsGraph, r reach.Result, c DesignContext) (
 		}
 	}
 
-	d := policydomain.Derived{Jurisdiction: map[string]policydomain.Zone{}, WorkloadRoles: map[string]string{}}
+	d := policydomain.Derived{Jurisdiction: map[string]policydomain.Zone{}, WorkloadRoles: map[string]string{}, WorldSources: []string{}}
+	for _, e := range g.Edges {
+		fromInternet := e.Type == graphdomain.EdgeCanReach && kinds[e.Src] == graphdomain.KindInternet
+		if (e.Type == graphdomain.EdgeExposes || fromInternet) && coversInternet(e.Attrs.AllowedSources) {
+			d.WorldSources = append(d.WorldSources, e.ID)
+		}
+	}
+	for _, n := range g.Nodes {
+		if n.Kind == graphdomain.KindK8sCluster && coversInternet(n.Attrs.APIAllowedSources) {
+			d.WorldSources = append(d.WorldSources, n.ID)
+		}
+	}
+	d.WorldSources = sortedSet(d.WorldSources)
 	var err error
 	if d.UnconfirmedExposures, err = exposureIDs(c.UnconfirmedExposures, exposes); err != nil {
 		return DesignInput{}, err
@@ -133,6 +156,91 @@ func NewDesignInput(g graphdomain.FactsGraph, r reach.Result, c DesignContext) (
 	g.Nodes, g.Edges = orEmpty(g.Nodes), orEmpty(g.Edges)
 	r.Hops, r.FromInternet = orEmpty(r.Hops), orEmpty(r.FromInternet)
 	return DesignInput{Graph: g, Reach: r, Derived: d}, nil
+}
+
+// Check revalidates in before an evaluation (obligation (ff), T3, T119): the
+// input must be the one NewDesignInput produces from its graph, its
+// reachability and the context it carries (the identifiers of the
+// reachability in the graph, the jurisdiction, the environment, the world
+// sources and every list recomputed, no list written null), whatever the
+// order of its nodes, edges and hops. Fixed error.
+func (in DesignInput) Check() error {
+	d := in.Derived
+	if d.Environment == "" || in.Graph.Nodes == nil || in.Graph.Edges == nil || in.Reach.Hops == nil || in.Reach.FromInternet == nil {
+		return ErrDesignInput
+	}
+	want, err := NewDesignInput(in.Graph, in.Reach, DesignContext{
+		UnconfirmedExposures: d.UnconfirmedExposures, SourcesUnresolved: d.SourcesUnresolved,
+		Constraints: d.Constraints, Environment: d.Environment, Observability: d.Observability, WorkloadRoles: d.WorkloadRoles,
+	})
+	if err != nil || !reflect.DeepEqual(want.Derived, d) {
+		return ErrDesignInput
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return ErrDesignInput
+	}
+	sch, err := schemas.Compile(schemas.PolicyDesignInput)
+	if err != nil {
+		return ErrDesignInput
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil || sch.Validate(doc) != nil {
+		return ErrDesignInput
+	}
+	return nil
+}
+
+// reachWithin: every node named by r (hops, paths) is a node of the graph, the
+// Internet included (obligation (ff)).
+func reachWithin(r reach.Result, kinds map[string]graphdomain.NodeKind) bool {
+	in := func(id string) bool { _, ok := kinds[id]; return ok }
+	for _, h := range r.Hops {
+		if !in(h.Src) || !in(h.Dst) {
+			return false
+		}
+	}
+	for _, p := range r.FromInternet {
+		if !in(p.Target) || len(p.Nodes) == 0 || p.Nodes[len(p.Nodes)-1] != p.Target {
+			return false
+		}
+		for _, id := range p.Nodes {
+			if !in(id) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// coversInternet: sources absent or empty, or whose IPv4 prefixes, merged,
+// cover 0.0.0.0/0 (obligation (fg)). An unparsable source is read as the
+// world (fail closed; the graph schema refuses it before).
+func coversInternet(sources []string) bool {
+	type span struct{ lo, hi uint64 }
+	spans := make([]span, 0, len(sources))
+	for _, s := range sources {
+		p, err := netip.ParsePrefix(s)
+		if err != nil || !p.Addr().Is4() {
+			return true
+		}
+		p = p.Masked()
+		a := p.Addr().As4()
+		lo := uint64(a[0])<<24 | uint64(a[1])<<16 | uint64(a[2])<<8 | uint64(a[3])
+		spans = append(spans, span{lo, lo + 1<<(32-p.Bits()) - 1})
+	}
+	if len(spans) == 0 {
+		return true
+	}
+	slices.SortFunc(spans, func(x, y span) int { return cmp.Compare(x.lo, y.lo) })
+	next := uint64(0) // first address not yet covered
+	for _, sp := range spans {
+		if sp.lo > next {
+			return false
+		}
+		next = max(next, sp.hi+1)
+	}
+	return next > 0xFFFFFFFF
 }
 
 // exposureIDs requires identifiers of EXPOSES edges of the graph.

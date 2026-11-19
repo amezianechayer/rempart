@@ -10,6 +10,10 @@ clusters contains n if {
 	n.kind == "K8sCluster"
 }
 
+# world_api: the API sources are the whole Internet (obligation (fg)); a named
+# predicate, negated by not in K8S-004.
+world_api(n) if lib.open_to_world(n.id, object.get(n.attrs, "api_allowed_sources", []))
+
 # METADATA
 # title: API du cluster publique sans restriction de source
 # custom:
@@ -20,7 +24,7 @@ clusters contains n if {
 deny contains f if {
 	some n in clusters
 	not n.attrs.api_public == false
-	count(object.get(n.attrs, "api_allowed_sources", [])) == 0
+	world_api(n)
 	meta := rego.metadata.rule()
 	f := {"control_id": meta.custom.control_id, "resource": n.id}
 }
@@ -63,7 +67,7 @@ deny contains f if {
 deny contains f if {
 	some n in clusters
 	n.attrs.api_public == true
-	count(object.get(n.attrs, "api_allowed_sources", [])) > 0
+	not world_api(n)
 	meta := rego.metadata.rule()
 	f := {"control_id": meta.custom.control_id, "resource": n.id}
 }

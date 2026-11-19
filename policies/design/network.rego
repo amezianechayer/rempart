@@ -4,6 +4,14 @@ import data.rempart.design.lib
 
 admin_ports := {22, 3389, 5985, 5986}
 
+# Named predicates, negated by not (obligation (fh), T119): an absent cloud is
+# not the same cloud, absent attributes are not behind a WAF.
+same_cloud(a, b) if lib.nodes[a].attrs.cloud == lib.nodes[b].attrs.cloud
+
+from_internet(e) if lib.nodes[e.src].kind == "Internet"
+
+behind_waf(id) if "waf" in object.get(object.get(lib.nodes[id], "attrs", {}), "behind", [])
+
 db_ports := {1433, 1521, 3306, 5432, 6379, 9042, 9200, 11211, 27017}
 
 # METADATA
@@ -86,7 +94,7 @@ deny contains f if {
 deny contains f if {
 	some e in lib.internet_flows
 	not e.attrs.protocol in {"http", "https"}
-	count(object.get(e.attrs, "allowed_sources", [])) == 0
+	lib.open_to_world(e.id, object.get(e.attrs, "allowed_sources", []))
 	meta := rego.metadata.rule()
 	f := {"control_id": meta.custom.control_id, "resource": e.id}
 }
@@ -162,7 +170,8 @@ deny contains f if {
 deny contains f if {
 	some e in input.graph.edges
 	e.type == "CAN_REACH"
-	lib.nodes[e.src].attrs.cloud != lib.nodes[e.dst].attrs.cloud
+	not from_internet(e)
+	not same_cloud(e.src, e.dst)
 	not e.attrs.via in {"vpn_site_to_site", "private_link"}
 	meta := rego.metadata.rule()
 	f := {"control_id": meta.custom.control_id, "resource": e.id}
@@ -193,7 +202,7 @@ deny contains f if {
 deny contains f if {
 	some e in input.graph.edges
 	e.type == "EXPOSES"
-	not "waf" in object.get(lib.nodes[e.src].attrs, "behind", [])
+	not behind_waf(e.src)
 	some p in input.reach.from_internet
 	count(p.nodes) > 1
 	p.nodes[1] == e.src

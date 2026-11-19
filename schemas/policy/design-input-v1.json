@@ -31,7 +31,7 @@
     "derived": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["jurisdiction", "unconfirmed_exposures", "sources_unresolved", "constraints", "environment", "observability", "workload_roles"],
+      "required": ["jurisdiction", "unconfirmed_exposures", "sources_unresolved", "constraints", "environment", "observability", "workload_roles", "world_sources"],
       "properties": {
         "jurisdiction": {"type": "object", "additionalProperties": {"type": "string", "enum": ["fr", "eu", "non_eu", "unknown"]}},
         "unconfirmed_exposures": {"type": "array", "items": {"type": "string"}},
@@ -52,7 +52,8 @@
           "required": ["metrics", "logs"],
           "properties": {"metrics": {"type": "boolean"}, "logs": {"type": "boolean"}}
         },
-        "workload_roles": {"type": "object", "additionalProperties": {"type": "string", "enum": ["gitops_controller", "observability_stack"]}}
+        "workload_roles": {"type": "object", "additionalProperties": {"type": "string", "enum": ["gitops_controller", "observability_stack"]}},
+        "world_sources": {"type": "array", "items": {"type": "string"}}
       }
     }
   },

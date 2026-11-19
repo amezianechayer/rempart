@@ -210,12 +210,77 @@ func checkModule(m *ast.Module) error {
 	if bad != nil {
 		return bad
 	}
+	// Obligation (fe) (T108, T120): no string of the grammar of a control_id
+	// anywhere in a module, so a rule cannot emit the identifier of another.
+	ast.NewGenericVisitor(func(x any) bool {
+		if t, ok := x.(*ast.Term); ok {
+			if str, isStr := t.Value.(ast.String); isStr && controlIDRe.MatchString(string(str)) && bad == nil {
+				bad = invalid("control_id literal")
+			}
+		}
+		return false
+	}).Walk(m)
+	if bad != nil {
+		return bad
+	}
 	// Before compilation: the compiler replaces rego.metadata.rule() by the
 	// annotations of the rule.
 	for _, r := range m.Rules {
-		if r.Head.Ref().Equal(ast.Ref{ast.VarTerm("deny")}) && !callsMetadata(r) {
-			return invalid("deny rule without rego.metadata.rule()")
+		if head := r.Head.Ref(); len(head) > 0 && head[0].Equal(ast.VarTerm("deny")) {
+			if err := checkDeny(r); err != nil {
+				return err
+			}
 		}
+	}
+	return nil
+}
+
+// checkDeny admits a rule named deny only in the form of ADR 0011 D4, checked
+// on its syntax (obligation (fe)): deny contains <f> if { ... }, where the body
+// binds <m> := rego.metadata.rule() once and <f> once, to an object literal of
+// exactly control_id and resource whose control_id is the term
+// <m>.custom.control_id. A rule can then emit only its own control.
+func checkDeny(r *ast.Rule) error {
+	h := r.Head
+	f, isVar := h.Key.Value.(ast.Var)
+	if h.Key == nil || !isVar || h.Value != nil || len(h.Args) > 0 || r.Else != nil || r.Default ||
+		!h.Ref().Equal(ast.Ref{ast.VarTerm("deny")}) || !callsMetadata(r) {
+		return invalid("deny rule outside the form deny contains <var>")
+	}
+	var meta ast.Var
+	metas, outputs := 0, 0
+	var out *ast.Term
+	for _, e := range r.Body {
+		if !e.IsAssignment() && !e.IsEquality() {
+			continue
+		}
+		lhs, rhs := e.Operand(0), e.Operand(1)
+		for _, side := range [][2]*ast.Term{{lhs, rhs}, {rhs, lhs}} {
+			v, ok := side[0].Value.(ast.Var)
+			if !ok {
+				continue
+			}
+			if call, isCall := side[1].Value.(ast.Call); isCall && len(call) == 1 && call[0].Value.Compare(metadataCall) == 0 {
+				meta = v
+				metas++
+			}
+			if v.Equal(f) {
+				out = side[1]
+				outputs++
+			}
+		}
+	}
+	if metas != 1 || outputs != 1 {
+		return invalid("deny rule without one metadata binding and one output binding")
+	}
+	obj, ok := out.Value.(ast.Object)
+	if !ok || obj.Len() != 2 || obj.Get(ast.StringTerm("resource")) == nil {
+		return invalid("deny output outside {control_id, resource}")
+	}
+	id := obj.Get(ast.StringTerm("control_id"))
+	want := ast.Ref{ast.NewTerm(meta), ast.StringTerm("custom"), ast.StringTerm("control_id")}
+	if id == nil || id.Value.Compare(want) != 0 {
+		return invalid("deny output control_id other than <m>.custom.control_id")
 	}
 	return nil
 }
@@ -331,6 +396,9 @@ func callsMetadata(r *ast.Rule) bool {
 
 // Evaluate evaluates the pack on in (ADR 0011 D3, D4).
 func (e *Engine) Evaluate(ctx context.Context, in policy.DesignInput) ([]loopsdomain.Finding, error) {
+	if err := in.Check(); err != nil {
+		return nil, err
+	}
 	raw, err := json.Marshal(in)
 	if err != nil {
 		return nil, ErrEvaluation

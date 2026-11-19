@@ -27,6 +27,7 @@ import (
 	"github.com/amezianechayer/rempart/internal/intent"
 	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
 	"github.com/amezianechayer/rempart/internal/policy"
+	policydomain "github.com/amezianechayer/rempart/internal/policy/domain"
 )
 
 var update = flag.Bool("update", false, "rewrite capabilities.json from the construction of the engine")
@@ -83,6 +84,11 @@ func module(pkg, header, body string) string {
 // computeBody yields one output per Compute node (one in the reference graph).
 const computeBody = "\tsome n in input.graph.nodes\n\tn.kind == \"Compute\"\n\tmeta := rego.metadata.rule()\n" +
 	"\tf := {\"control_id\": meta.custom.control_id, \"resource\": n.id}"
+
+// outBody yields one output per Compute node, the output being fields.
+func outBody(fields string) string {
+	return "\tsome n in input.graph.nodes\n\tn.kind == \"Compute\"\n\tmeta := rego.metadata.rule()\n\tmeta.custom.control_id != \"\"\n\tf := " + fields
+}
 
 func pack(files map[string]string) fstest.MapFS {
 	fsys := fstest.MapFS{}
@@ -206,6 +212,24 @@ func TestEngineFailsClosed(t *testing.T) {
 			"\tsome n in input.graph.nodes\n\tnot n.attrs.encrpted == true\n\tmeta := rego.metadata.rule()\n\tf := {\"control_id\": meta.custom.control_id, \"resource\": n.id}")},
 		"data_file":  {"t.rego": module("t", meta("TST-001", "high", "escalate"), computeBody)},
 		"empty_pack": {},
+		// Obligation (fe) (T108, T120): a rule can only emit its own control_id.
+		"control_literal":     {"t.rego": module("t", meta("TST-001", "high", "escalate"), outBody(`{"control_id": "TST-001", "resource": n.id}`))},
+		"control_substituted": {"a.rego": module("a", meta("TST-001", "critical", "escalate"), computeBody), "b.rego": module("b", meta("TST-002", "low", "advisory"), outBody(`{"control_id": "TST-001", "resource": n.id}`))},
+		"control_in_helper":   {"t.rego": module("t", meta("TST-001", "high", "escalate"), computeBody) + "\nother_id := \"TST-002\"\n"},
+		"control_from_var":    {"t.rego": module("t", meta("TST-001", "high", "escalate"), outBody(`{"control_id": id, "resource": n.id}`)+"\n\tid := meta.custom.control_id")},
+		"control_other_field": {"t.rego": module("t", meta("TST-001", "high", "escalate"), outBody(`{"control_id": meta.title, "resource": n.id}`))},
+		"control_other_meta":  {"t.rego": module("t", meta("TST-001", "high", "escalate"), outBody(`{"control_id": other.custom.control_id, "resource": n.id}`)+"\n\tother := {\"custom\": {\"control_id\": meta.custom.control_id}}")},
+		"output_extra_key":    {"t.rego": module("t", meta("TST-001", "high", "escalate"), outBody(`{"control_id": meta.custom.control_id, "resource": n.id, "severity": "low"}`))},
+		"output_no_resource":  {"t.rego": module("t", meta("TST-001", "high", "escalate"), outBody(`{"control_id": meta.custom.control_id}`))},
+		"output_not_object":   {"t.rego": module("t", meta("TST-001", "high", "escalate"), outBody(`n.id`))},
+		"output_computed":     {"t.rego": module("t", meta("TST-001", "high", "escalate"), outBody(`object.union({"control_id": meta.custom.control_id}, {"resource": n.id})`))},
+		"output_twice":        {"t.rego": module("t", meta("TST-001", "high", "escalate"), outBody(`{"control_id": meta.custom.control_id, "resource": n.id}`)+"\n\tf = {\"control_id\": \"TST-001\", \"resource\": n.id}")},
+		"deny_ref_head": {"t.rego": "package rempart.design.t\n\ndeny[k] := v if {\n\tsome n in input.graph.nodes\n\tk := n.id\n\t" +
+			"v := {\"control_id\": \"TST-001\", \"resource\": n.id}\n}\n" + meta("TST-002", "high", "escalate") + "deny contains f if {\n" + computeBody + "\n}\n"},
+		"deny_ref_head_meta": {"t.rego": "package rempart.design.t\n\n" + meta("TST-001", "high", "escalate") + "deny[k] := v if {\n\tsome n in input.graph.nodes\n\tk := n.id\n\t" +
+			"meta := rego.metadata.rule()\n\tv := {\"control_id\": meta.custom.control_id, \"resource\": n.id}\n}\n"},
+		"deny_contains_term": {"t.rego": "package rempart.design.t\n\n" + meta("TST-001", "high", "escalate") + "deny contains {\"control_id\": meta.custom.control_id, \"resource\": n.id} if {\n" +
+			"\tsome n in input.graph.nodes\n\tmeta := rego.metadata.rule()\n}\n"},
 	}
 	for name, files := range compileCases {
 		t.Run("compile_"+name, func(t *testing.T) {
@@ -228,21 +252,14 @@ func TestEngineFailsClosed(t *testing.T) {
 	})
 
 	in := referenceInput(t, nil)
-	out := func(fields string) string {
-		return "\tsome n in input.graph.nodes\n\tn.kind == \"Compute\"\n\tmeta := rego.metadata.rule()\n\tmeta.custom.control_id != \"\"\n\tf := " + fields
-	}
 	evalCases := []struct {
 		name string
 		body string
 		opts Options
 		want error
 	}{
-		{"extra_key", out(`{"control_id": meta.custom.control_id, "resource": n.id, "severity": "low"}`), DefaultOptions, ErrPolicyOutput},
-		{"missing_resource", out(`{"control_id": meta.custom.control_id}`), DefaultOptions, ErrPolicyOutput},
-		{"unknown_resource", out(`{"control_id": meta.custom.control_id, "resource": "wl:ghost"}`), DefaultOptions, ErrPolicyOutput},
-		{"resource_not_string", out(`{"control_id": meta.custom.control_id, "resource": 3}`), DefaultOptions, ErrPolicyOutput},
-		{"unknown_control", out(`{"control_id": "ZZZ-999", "resource": n.id}`), DefaultOptions, ErrPolicyOutput},
-		{"output_not_object", out(`n.id`), DefaultOptions, ErrPolicyOutput},
+		{"unknown_resource", outBody(`{"control_id": meta.custom.control_id, "resource": "wl:ghost"}`), DefaultOptions, ErrPolicyOutput},
+		{"resource_not_string", outBody(`{"control_id": meta.custom.control_id, "resource": 3}`), DefaultOptions, ErrPolicyOutput},
 		{"builtin_error", "\tsome n in input.graph.nodes\n\tx := count(input.graph.nodes) / 0\n\tx > 0\n\tmeta := rego.metadata.rule()\n\tf := {\"control_id\": meta.custom.control_id, \"resource\": n.id}", DefaultOptions, ErrEvaluation},
 		{"timeout", computeBody, Options{Timeout: time.Nanosecond, MaxInputBytes: DefaultOptions.MaxInputBytes, MaxFindings: DefaultOptions.MaxFindings}, ErrEvaluation},
 		{"input_too_large", computeBody, Options{Timeout: DefaultOptions.Timeout, MaxInputBytes: 64, MaxFindings: DefaultOptions.MaxFindings}, ErrInputTooLarge},
@@ -282,6 +299,62 @@ func TestEngineFailsClosed(t *testing.T) {
 		want := []loopsdomain.Finding{{Code: "TST-001", Source: "policy:design", Severity: loopsdomain.SeverityHigh, Resource: "wl:legacy-vms", Message: "Contrôle de test"}}
 		if err != nil || !slices.Equal(got, want) {
 			t.Fatalf("Evaluate = %+v, %v; want %+v", got, err, want)
+		}
+	})
+}
+
+// TestEvaluateRevalidatesInput proves obligation (ff) (T3, T119): Evaluate
+// refuses, before any evaluation, an input that NewDesignInput would not have
+// produced from its graph and its reachability (zero value, null list,
+// environment absent or below that of the networks, jurisdiction or world
+// sources forged, reachability naming a node outside the graph), and accepts
+// the same input permuted.
+func TestEvaluateRevalidatesInput(t *testing.T) {
+	e, err := NewDesign()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]func(in *policy.DesignInput){
+		"zero_value":          func(in *policy.DesignInput) { *in = policy.DesignInput{} },
+		"environment_empty":   func(in *policy.DesignInput) { in.Derived.Environment = "" },
+		"environment_lowered": func(in *policy.DesignInput) { in.Derived.Environment = "dev" },
+		"null_list":           func(in *policy.DesignInput) { in.Derived.UnconfirmedExposures = nil },
+		"null_nodes":          func(in *policy.DesignInput) { in.Graph.Nodes = nil },
+		"jurisdiction_forged": func(in *policy.DesignInput) {
+			j := map[string]policydomain.Zone{}
+			for k := range in.Derived.Jurisdiction {
+				j[k] = policydomain.ZoneFR
+			}
+			j["wl:legacy-vms"] = policydomain.ZoneEU
+			in.Derived.Jurisdiction = j
+		},
+		"world_sources_forged": func(in *policy.DesignInput) { in.Derived.WorldSources = []string{} },
+		"reach_other_graph": func(in *policy.DesignInput) {
+			in.Reach.Hops = append(slices.Clone(in.Reach.Hops), reach.Hop{Src: "internet", Dst: "wl:ghost", Proto: "tcp", Ports: []reach.PortRange{{From: 22, To: 22}}, World: true})
+		},
+		"path_other_graph": func(in *policy.DesignInput) {
+			in.Reach.FromInternet = append(slices.Clone(in.Reach.FromInternet), reach.Path{Target: "wl:ghost", Nodes: []string{"internet", "wl:ghost"}})
+		},
+	}
+	for name, edit := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := referenceInput(t, nil)
+			if len(in.Derived.WorldSources) == 0 {
+				t.Fatalf("control: the reference exposure is open to the world, world_sources %v", in.Derived.WorldSources)
+			}
+			edit(&in)
+			got, err := e.Evaluate(context.Background(), in)
+			if !errors.Is(err, policy.ErrDesignInput) || got != nil {
+				t.Fatalf("Evaluate = %v, %v; want nil, ErrDesignInput", got, err)
+			}
+		})
+	}
+	t.Run("permuted_accepted", func(t *testing.T) {
+		in := referenceInput(t, nil)
+		in.Graph.Nodes = slices.Clone(in.Graph.Nodes)
+		slices.Reverse(in.Graph.Nodes)
+		if got, err := e.Evaluate(context.Background(), in); err != nil || len(got) != 0 {
+			t.Fatalf("Evaluate(permuted reference) = %v, %v; want no finding", got, err)
 		}
 	})
 }

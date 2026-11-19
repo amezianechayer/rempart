@@ -173,3 +173,25 @@ test_net_015_ko_behind_lb if {
 }
 
 test_net_015_ko_direct if lib.ko("NET-015", lib.with_edges(lib.base, [lib.edge("EXPOSES", "wl:db", "internet", {"protocol": "https", "port_from": 443, "port_to": 443})]))
+
+# Obligation (fg) (T102): sources that cover the whole Internet, as computed
+# in Go into derived.world_sources, are the world even when listed.
+halves := ["0.0.0.0/1", "128.0.0.0/1"]
+
+test_net_006_ko_world_cover if {
+	inp := lib.set_edge(lib.base, exposes, {"protocol": "tcp", "allowed_sources": halves})
+	lib.ko("NET-006", lib.with_derived(inp, {"world_sources": [exposes]}))
+}
+
+test_net_006_ok_restricted_not_world if {
+	inp := lib.set_edge(lib.base, exposes, {"protocol": "tcp", "allowed_sources": ["203.0.113.0/24"]})
+	lib.ok("NET-006", lib.with_derived(inp, {"world_sources": []}))
+}
+
+# Obligation (fh) (T119): an absent cloud is not the same cloud (NET-011), an
+# absent attrs object is not behind a WAF (NET-013).
+test_net_011_ko_cloud_absent if lib.ko("NET-011", lib.without_attr(lib.base, "wl:db", "cloud"))
+
+test_net_011_ko_cloud_absent_source if lib.ko("NET-011", lib.without_attr(lib.base, "wl:web", "cloud"))
+
+test_net_013_ko_attrs_absent if lib.ko("NET-013", lib.without_attrs(lib.base, "lb:web-443"))

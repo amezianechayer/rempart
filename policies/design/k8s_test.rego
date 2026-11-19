@@ -84,3 +84,11 @@ test_k8s_050_ok_other_role if {
 	inp := lib.with_derived(gitops, {"workload_roles": {"wl:argo": "observability_stack"}})
 	lib.ok("K8S-050", lib.with_hops(inp, [lib.hop_world("wl:argo", "tcp", 443, 443)]))
 }
+
+# Obligation (fg) (T102): an API whose sources cover the whole Internet is
+# public to the world (K8S-001), not merely restricted (K8S-004).
+world_api := lib.with_derived(cluster({"api_public": true, "api_allowed_sources": ["0.0.0.0/1", "128.0.0.0/1"]}), {"world_sources": ["wl:k8s"]})
+
+test_k8s_001_ko_world_cover if lib.ko("K8S-001", world_api)
+
+test_k8s_004_ok_world_cover if lib.ok("K8S-004", world_api)
