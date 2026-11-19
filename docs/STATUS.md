@@ -1270,3 +1270,17 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 15:01 [harnais] phase : impl -> tests
 
 - 2026-11-19 15:02 [harnais] phase : tests -> impl
+
+- 2026-11-19 15:07 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 step 6: tests of internal/loops/l2
+
+- 2026-11-19 15:07 [harnais] phase : impl -> tests
+
+- 2026-11-19 15:08 [harnais] phase : tests -> impl
+
+- 2026-11-19 15:12 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 step 6: lint-only fixes of l2_test.go (errcheck on type assertions, gofumpt, gosec G304), assertions unchanged
+
+- 2026-11-19 15:12 [harnais] phase : impl -> tests
+
+- 2026-11-19 15:12 [harnais] passage en impl avec tests verts (caractérisation) : M2-T05 step 6: lint fixes done
+
+- 2026-11-19 15:12 [harnais] phase : tests -> impl
