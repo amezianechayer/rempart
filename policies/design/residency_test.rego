@@ -75,3 +75,16 @@ test_res_007_ok if lib.ok("RES-007", lib.base)
 test_res_007_ko if lib.ko("RES-007", lib.with_derived(lib.base, {"jurisdiction": {"wl:web": "unknown"}}))
 
 test_res_007_ok_sensitive_host if lib.ok("RES-007", lib.with_derived(lib.base, {"jurisdiction": {"wl:db": "unknown"}}))
+
+# Security recheck of M2-T03 (high): the host of EU-bound data opening a flow
+# towards a workload outside the EU transfers it as well; a zone unknown at
+# either end is read outside the EU (fail closed).
+us_vm := lib.node("wl:us", "Compute", {"subtype": "vm", "cloud": "aws", "region": "us-east-1", "count": 1, "public_ip": false})
+
+us := lib.with_derived(lib.with_nodes(lib.base, [us_vm]), {"jurisdiction": {"wl:us": "non_eu"}})
+
+test_res_006_ko_reverse if lib.ko("RES-006", lib.with_edges(us, [lib.edge("CAN_REACH", "wl:db", "wl:us", {"protocol": "tcp", "port_from": 443, "port_to": 443, "via": "vpn_site_to_site", "path": ["net:vpc-data"]})]))
+
+test_res_006_ko_unknown_source if lib.ko("RES-006", lib.with_derived(lib.base, {"jurisdiction": {"wl:web": "unknown"}}))
+
+test_res_006_ok_eu_to_eu if lib.ok("RES-006", lib.with_edges(lib.base, [lib.edge("CAN_REACH", "wl:db", "wl:web", {"protocol": "tcp", "port_from": 443, "port_to": 443, "via": "internal", "path": ["net:vpc-data"]})]))

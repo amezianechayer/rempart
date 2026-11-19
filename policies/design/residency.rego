@@ -18,6 +18,21 @@ eu_bound_target(t) if {
 	eu_bound(lib.nodes[s.dst])
 }
 
+# outside_eu: located outside the EU, or of unknown zone (fail closed).
+outside_eu(id) if lib.zone(id) in {"non_eu", "unknown"}
+
+# transfer: a flow between EU-bound data (or its host) and a component outside
+# the EU, in either direction: the host opening a flow outward transfers too.
+transfer(e) if {
+	outside_eu(e.src)
+	eu_bound_target(e.dst)
+}
+
+transfer(e) if {
+	outside_eu(e.dst)
+	eu_bound_target(e.src)
+}
+
 # METADATA
 # title: Donnée à résidence UE ou réglementée sur un hôte localisé hors UE
 # custom:
@@ -98,7 +113,7 @@ deny contains f if {
 }
 
 # METADATA
-# title: Flux d'un workload localisé hors UE vers une donnée liée à l'UE (résidence UE ou France, ou réglementée)
+# title: Flux entre une donnée liée à l'UE et un composant localisé hors UE ou inconnu
 # custom:
 #   control_id: RES-006
 #   severity: high
@@ -107,8 +122,7 @@ deny contains f if {
 deny contains f if {
 	some e in input.graph.edges
 	e.type == "CAN_REACH"
-	lib.zone(e.src) == "non_eu"
-	eu_bound_target(e.dst)
+	transfer(e)
 	meta := rego.metadata.rule()
 	f := {"control_id": meta.custom.control_id, "resource": e.id}
 }
