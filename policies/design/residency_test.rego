@@ -54,8 +54,18 @@ test_res_006_ok if lib.ok("RES-006", lib.base)
 
 test_res_006_ko if lib.ko("RES-006", lib.with_derived(lib.base, {"jurisdiction": {"wl:web": "non_eu"}}))
 
-test_res_006_ok_unregulated if {
-	inp := lib.set_node(lib.with_derived(lib.base, {"jurisdiction": {"wl:web": "non_eu"}}), "data:customers", {"regulation": [], "classification": "confidential"})
+# Review of M2-T03 (high): fr is inside eu (ADR 0011 D7), and regulated data is
+# tied to the EU whatever its residency (as RES-001).
+non_eu_web := lib.with_derived(lib.base, {"jurisdiction": {"wl:web": "non_eu"}})
+
+test_res_006_ko_fr_regulated if lib.ko("RES-006", lib.set_node(non_eu_web, "data:customers", {"residency": "fr"}))
+
+test_res_006_ko_fr_unregulated if lib.ko("RES-006", lib.set_node(non_eu_web, "data:customers", {"residency": "fr", "regulation": [], "classification": "confidential"}))
+
+test_res_006_ko_regulated_any_residency if lib.ko("RES-006", lib.set_node(non_eu_web, "data:customers", {"residency": "any"}))
+
+test_res_006_ok_no_eu_tie if {
+	inp := lib.set_node(non_eu_web, "data:customers", {"residency": "any", "regulation": [], "classification": "confidential"})
 	lib.ok("RES-006", inp)
 }
 

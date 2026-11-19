@@ -2,25 +2,20 @@ package rempart.design.residency
 
 import data.rempart.design.lib
 
-# eu_bound: data whose residency is the EU, or regulated data.
-eu_bound(d) if d.attrs.residency == "eu"
+# eu_bound: data whose residency is the EU or France (fr is inside eu, ADR
+# 0011 D7), or regulated data whatever its residency.
+eu_bound(d) if d.attrs.residency in {"eu", "fr"}
 
 eu_bound(d) if lib.regulated(d)
 
-# eu_regulated: regulated data whose residency is the EU.
-eu_regulated(d) if {
-	d.attrs.residency == "eu"
-	lib.regulated(d)
-}
+# eu_bound_target: such data, or its host.
+eu_bound_target(t) if eu_bound(lib.nodes[t])
 
-# eu_regulated_target: such data, or its host.
-eu_regulated_target(t) if eu_regulated(lib.nodes[t])
-
-eu_regulated_target(t) if {
+eu_bound_target(t) if {
 	some s in input.graph.edges
 	s.type == "STORES"
 	s.src == t
-	eu_regulated(lib.nodes[s.dst])
+	eu_bound(lib.nodes[s.dst])
 }
 
 # METADATA
@@ -103,7 +98,7 @@ deny contains f if {
 }
 
 # METADATA
-# title: Flux d'un workload localisé hors UE vers une donnée réglementée à résidence UE
+# title: Flux d'un workload localisé hors UE vers une donnée liée à l'UE (résidence UE ou France, ou réglementée)
 # custom:
 #   control_id: RES-006
 #   severity: high
@@ -113,7 +108,7 @@ deny contains f if {
 	some e in input.graph.edges
 	e.type == "CAN_REACH"
 	lib.zone(e.src) == "non_eu"
-	eu_regulated_target(e.dst)
+	eu_bound_target(e.dst)
 	meta := rego.metadata.rule()
 	f := {"control_id": meta.custom.control_id, "resource": e.id}
 }
