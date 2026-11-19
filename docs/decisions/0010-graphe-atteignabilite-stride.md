@@ -1,6 +1,6 @@
 # 0010. Graphe de conception étendu, atteignabilité et STRIDE versionné
 
-- Statut : proposé le 2026-11-19 par `architect`, à accepter par l'humain avant la phase tests de M2-T02 (remplacer cette ligne par « Statut : accepté le <date> (décision humaine) »).
+- Statut : accepté le 2026-11-19 (décision humaine)
 - Date : 2026-11-19
 - Jalon : M2 (étape humaine H0-M2.3). M2-T02 `graph-reach` met en oeuvre D1 à D8 ; M2-T04 `threat-stride` met en oeuvre D9 à D12 ; M2-T05 `l2-loop` consomme D3 (monotonie de `FromGraph`, `SubsetOf`) et D11 (delta dans la sortie de L2).
 - Base : branche `main-6cpq6q`, tête `c79d1f0`.

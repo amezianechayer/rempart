@@ -146,7 +146,7 @@ Les décisions 2 et 4 reposent sur un lexique fermé écrit en français. Une de
 
 ## Amendement A2 : restrictions de source d'une exposition (revue sécurité de clôture de M1)
 
-- Statut de A2 : proposé le 2026-11-18 par l'agent sur constat haut de `security-reviewer` (revue du jalon M1), à accepter par l'humain (remplacer cette ligne par « Statut de A2 : accepté le <date> (décision humaine) »).
+- Statut de A2 : accepté le 2026-11-19 (décision humaine)
 - Origine : constat haut de la revue de clôture de M1 (menace T102 de `docs/02-THREAT-MODEL.md`).
 
 ### Contexte
