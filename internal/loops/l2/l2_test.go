@@ -449,3 +449,65 @@ func TestL2SpecIsTheSheet(t *testing.T) {
 		t.Errorf("Register accepted the system tenant without a pack")
 	}
 }
+
+// TestL2ThirdIterationKeepsOtherEdges proves the high finding of the security
+// review of M2-T05 (T122 proposed), on its scenario: the SSH exposure, limited
+// to one source, sits just before an exposure open to the whole Internet
+// (NET-006, escalate); once the reviser removed the SSH exposure, the next
+// iterations must not lend its source to the open one: the run escalates on
+// NET-006, never converges.
+func TestL2ThirdIterationKeepsOtherEdges(t *testing.T) {
+	raw, err := os.ReadFile(sshGraph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g graphdomain.Graph
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	str := func(s string) *string { return &s }
+	yes, port := true, 8080
+	for i := range g.Edges {
+		if g.Edges[i].ID == "exposes|lb:legacy-vms-22|internet|tcp/22" {
+			g.Edges[i].Attrs.AllowedSources = []string{"203.0.113.0/24"}
+		}
+	}
+	g.Nodes = append(g.Nodes, graphdomain.Node{ID: "lb:raw-8080", Kind: graphdomain.KindLoadBalancer, Attrs: graphdomain.NodeAttrs{
+		Cloud: str("aws"), Region: str("eu-west-3"), Public: &yes, Listeners: &[]graphdomain.Listener{{Protocol: "tcp", Port: 8080}},
+	}})
+	g.Edges = append(g.Edges,
+		graphdomain.Edge{
+			ID: "exposes|lb:raw-8080|internet|tcp/8080", Type: graphdomain.EdgeExposes, Src: "lb:raw-8080", Dst: "internet",
+			Attrs: graphdomain.EdgeAttrs{Protocol: str("tcp"), PortFrom: &port, PortTo: &port},
+		},
+		graphdomain.Edge{ID: "member_of|lb:raw-8080|net:aws-eu-west-3-staging-public", Type: graphdomain.EdgeMemberOf, Src: "lb:raw-8080", Dst: "net:aws-eu-west-3-staging-public"},
+	)
+	slices.SortFunc(g.Nodes, func(a, b graphdomain.Node) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(g.Edges, func(a, b graphdomain.Edge) int {
+		return strings.Compare(string(a.Type)+"|"+a.Src+"|"+a.Dst, string(b.Type)+"|"+b.Src+"|"+b.Dst)
+	})
+	d, err := confirm.DigestOfGraph(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := mustRun(t, l2.Input{Graph: &g, Confirmation: confirm.Confirmation{Subject: d.Subject, SubjectSHA256: d.SubjectSHA256, Exposures: d.Exposures, ConfirmedBy: "tester"}})
+	if out.Status != l2.StatusEscalated || out.Graph != nil {
+		t.Fatalf("output %s %s, applied %+v: a source lent by another edge silenced NET-006", out.Status, out.Reason, out.Applied)
+	}
+	if out.Reason != "strategies_exhausted" {
+		t.Errorf("reason %q, want strategies_exhausted (a corrupted candidate fails the reviser: activity_failed)", out.Reason)
+	}
+	for _, it := range out.Loop.Trace {
+		if it.Failed {
+			t.Errorf("iteration %d: proposal failed", it.Iteration)
+		}
+	}
+	if !slices.ContainsFunc(out.Explanation, func(e l2.Explanation) bool {
+		return e.Code == "manual_fix_required" && e.ControlID == "NET-006" && e.Resource == "exposes|lb:raw-8080|internet|tcp/8080"
+	}) {
+		t.Errorf("explanation %+v, want NET-006 on the open exposure, manual_fix_required", out.Explanation)
+	}
+	if out.Loop.Iterations < 3 {
+		t.Errorf("%d iterations, want the third one that used to inherit the source", out.Loop.Iterations)
+	}
+}

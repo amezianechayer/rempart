@@ -380,7 +380,17 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
     3. D6 : le mode `-l2-once` garde les exigences du worker de développement (`-dev`, `-llm=fake`, `-fake-script`) ; le client du faux modèle n'est pas construit pour L2.
     4. Vérification 7 de l'ADR : `go run` rend `rc=1` pour tout code non nul ; le binaire rend bien `2` (`TestDesignDigestCommand`).
   - Obligation datée (question 5 de l'ADR, acceptée) : (fo) [moyen, avant le premier changement de séquence de L2, R9, T16] enregistrer un historique de référence de `rempart.l2.v1` sur la pile de dev et l'ajouter à `TestReplay`.
-  - Revue sécurité : en cours (une passe, mode allégé).
+  - **Revue sécurité de M2-T05 (une passe) : BLOCK**, un constat haut, corrigé :
+    - [haut, corrigé] `Propose` décodait le meilleur candidat dans `p.Initial` déjà rempli : `encoding/json` réutilise les éléments de tranche et garde les champs absents ; après un retrait d'arête, les arêtes suivantes héritaient des attributs de leurs voisines du graphe initial (sources, `via`, `path`, texte libre, `actions`). Scénario de la revue : une exposition ouverte à tout Internet héritait de la source de l'exposition SSH retirée, NET-006 (`escalate`) se taisait et la boucle convergeait ; sur l'IR de référence, graphe invalide et escalade `activity_failed`. Correctif : décodage dans une valeur nulle ; `TestProposeReturnsBestExactly` (un meilleur candidat sans finding revient à l'octet près) et `TestL2ThirdIterationKeepsOtherEdges` (scénario de la revue : escalade `strategies_exhausted`, NET-006 expliqué en `manual_fix_required`, aucune proposition en échec), tous deux rouges avant le correctif. Menace T122 insérée.
+    - Obligations datées issues de la revue :
+      - (fp) [moyen, avant M2-T07, T110, T122] le vérificateur ne contrôle pas que le candidat dérive du sujet (atteignabilité incluse dans l'initiale, aucun nœud ajouté, propriétés 2 à 5 de D1, sources des arêtes gardées) : `verify.Derives(initial, candidat)` dans `Verify` et `Finalize`, refus puis escalade.
+      - (fq) [moyen, avec (fp), T110] `TestRevisionNeverWidens` ne couvre ni `https_only` ni `move_to_data_tier` (aucune base avec flux `http`, sous-réseau `data` du VPC AWS ou `CAN_REACH` depuis Internet) et compare les sources des seules arêtes gardées sous le même identifiant : bases enrichies ou graphes tirés, appariement par (type, src, dst, ports), `Propose` en plusieurs itérations dans la propriété ; règle « les activités décodent dans une valeur nulle ».
+      - (fr) [bas, avant M3] `checkDeny` lit `h.Key.Value` avant de tester `h.Key == nil` : `deny if {...}`, `default deny := set()` et `deny := {...}` paniquent au lieu de rendre `ErrPackInvalid` (échec fermé, mauvais chemin) ; tester d'abord, trois cas dans `TestEngineFailsClosed`.
+      - (fs) [bas, avant M2-T07, T112] `initial_findings` et `advisories` non bornés dans la sortie (2 544 findings, 420 Ko mesurés pour un candidat de 60 Ko) : plafond des plus graves avec compteur de troncature, ou borne documentée.
+      - (ft) [bas, avant M2-T07, T24, T112] `Prepare` calcule `Build`, schéma, `reach` et récapitulatif avant la borne de 64 Kio ; un candidat grossi par une révision escalade en `invalid_response` expliqué `manual_fix_required` : borne du sujet d'abord, escalade de taille codée `payload_too_large`.
+      - (fu) [bas, M4, T107, T18] `Verify` et `Finalize` font confiance à `confirmed`, `overrides_cite_address` et `context` de la charge (intégrité par l'AEAD du codec, liée au tenant et non à l'exécution) ; l'empreinte porte sur la valeur décodée et non sur les octets : formulation de T107 corrigée, celle de l'ADR 0012 D3 (« un octet changé ») à amender par l'humain ; confirmation signée transportée et revérifiée en M4.
+      - (fv) [bas, avant L3 (M3), T116] `move_to_data_tier` laisse dans les `CAN_REACH` un `path` qui cite l'ancien sous-réseau : mettre à jour ou déclarer `path` non normatif.
+    - Points examinés sans constat par la revue : isolation par tenant, confirmation et couverture, `Escape`, sortie d'escalade, worker, dépendances (aucun `internal/llm` ni OPA sous L2). T121 garde son numéro.
 
 
 ## En cours
@@ -1309,3 +1319,9 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 15:18 [harnais] passage en impl avec tests verts (caractérisation) : M2-T05 step 7: test fixes done
 
 - 2026-11-19 15:18 [harnais] phase : tests -> impl
+
+- 2026-11-19 15:40 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 security review BLOCK (high): Propose decodes Best into a prefilled candidate; tests first
+
+- 2026-11-19 15:40 [harnais] phase : impl -> tests
+
+- 2026-11-19 15:41 [harnais] phase : tests -> impl

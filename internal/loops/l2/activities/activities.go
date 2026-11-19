@@ -278,6 +278,10 @@ func (a *Activities) Propose(_ context.Context, req loops.ProposeRequest) (loops
 	}
 	cand := p.Initial
 	if len(req.Best) > 0 {
+		// A zero value: decoding into the initial candidate would keep, in
+		// every reused slice element, the fields the best one omits (review
+		// of M2-T05, high: sources of another edge, T122).
+		cand = Candidate{}
 		if !decodeStrict(req.Best, &cand) {
 			return loops.ProposeResponse{}, refuse("invalid best candidate", loops.ErrTypeValidation)
 		}
