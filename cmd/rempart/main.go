@@ -21,7 +21,7 @@ const (
 	exitUsage   = 2
 )
 
-const usage = "usage: rempart design [--json | --cidr-only] [--superblock CIDR] [--reserve CIDR]... [--growth N] <ir.json>"
+const usage = "usage: rempart design [--json | --cidr-only] [--superblock CIDR] [--reserve CIDR]... [--growth N] <ir.json> | rempart design --digest <ir.json>"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))

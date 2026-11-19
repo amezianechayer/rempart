@@ -11,6 +11,7 @@ import (
 
 	"github.com/amezianechayer/rempart/internal/design"
 	"github.com/amezianechayer/rempart/internal/design/cidr"
+	"github.com/amezianechayer/rempart/internal/design/confirm"
 	"github.com/amezianechayer/rempart/internal/design/fsread"
 	graphdomain "github.com/amezianechayer/rempart/internal/graph/domain"
 	"github.com/amezianechayer/rempart/internal/intent"
@@ -56,10 +57,18 @@ func runDesign(args []string, stdout, stderr io.Writer) int {
 	cidrOnly := fs.Bool("cidr-only", false, "CIDR plan in the cidr_check.py format")
 	superblock := fs.String("superblock", "", "superblock (default 10.0.0.0/8)")
 	growth := fs.Int("growth", 0, "growth factor (default 4)")
+	digest := fs.Bool("digest", false, "confirmation digest of L2 (default options of the plan)")
 	var reserved prefixList
 	fs.Var(&reserved, "reserve", "reserved range, repeatable")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 || (*asJSON && *cidrOnly) {
 		return fail(stderr, exitUsage, usage)
+	}
+	if *digest { // ADR 0012 D3: L2 builds with the default options only
+		set := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+		if set["json"] || set["cidr-only"] || set["superblock"] || set["reserve"] || set["growth"] {
+			return fail(stderr, exitUsage, usage)
+		}
 	}
 	opts := design.Options{Reserved: reserved, Growth: *growth}
 	if *superblock != "" {
@@ -92,6 +101,12 @@ func runDesign(args []string, stdout, stderr io.Writer) int {
 
 	var out []byte
 	switch {
+	case *digest:
+		var d confirm.Digest
+		if d, err = confirm.DigestOfIR(ir); err == nil {
+			out, err = json.Marshal(d)
+			out = append(out, '\n')
+		}
 	case *cidrOnly:
 		out, err = cidr.ReferenceJSON(plan)
 	case *asJSON:

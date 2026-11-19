@@ -1238,3 +1238,23 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 14:51 [harnais] phase : impl -> tests
 
 - 2026-11-19 14:51 [harnais] phase : tests -> impl
+
+- 2026-11-19 14:53 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 step 3: tests of internal/design/confirm and design --digest
+
+- 2026-11-19 14:53 [harnais] phase : impl -> tests
+
+- 2026-11-19 14:54 [harnais] phase : tests -> impl
+
+- 2026-11-19 14:55 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 step 3: restore the \uXXXX escape sequences of confirm_test.go decoded by the editor into literal characters, assertions unchanged
+
+- 2026-11-19 14:55 [harnais] phase : impl -> tests
+
+- 2026-11-19 14:55 [harnais] phase : tests -> impl
+
+- 2026-11-19 14:56 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T05 step 3: lint-only fix of confirm_test.go (errchkjson), no assertion changed
+
+- 2026-11-19 14:56 [harnais] phase : impl -> tests
+
+- 2026-11-19 14:56 [harnais] passage en impl avec tests verts (caractérisation) : M2-T05 step 3: lint fix done
+
+- 2026-11-19 14:56 [harnais] phase : tests -> impl
