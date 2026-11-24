@@ -404,7 +404,14 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
   - (w) déjà tenue depuis D18 de M1 (`baselinefile.go` : liste d'admission, 160 runes, JSON strict, clés exactes) ; une baseline hors bornes reste lue puis signalée par `Compare` (régression `baseline`, code 1), décision figée par `TestRegressionDetected` ; `TestBaselineLoadedWithCaseRules` est un test de caractérisation.
   - Ajustements de tests consignés par le harnais : cas « fichier à la taille maximale » rempli de lignes de 100 octets au lieu d'une ligne de 64 Kio ; cas V11 sans double espace dans une aiguille ; fixtures d'autres règles de sources qui aliasaient un type du SDK hors `cmd/` (règle (bj) tolérée comme orthogonale dans `runSourceCases`, cas `positions` qui l'attend, alias retiré du cas `conforming`) ; lint seul.
   - Preuves : critère 1 `7` ; critère 2 `demo` et `intent` codes 0, `regressions_vs_baseline` vide ; critère 3 `make -f Makefile verify-quick` rc=0.
-  - Revue sécurité : en cours (fiche : oui, T32, T64, T65, T67, T73, T77).
+  - **Revue sécurité de M2-T06 (une passe) : PASS**, aucun constat critique ni haut ; (bj), (v), (by), (s), (w), (y) confirmées ; (t) et (bv) **incomplètes**. Obligations datées :
+    - (fw) [moyen, avant M2-T07, T64] l'exemption de `input` raisonne par ligne : un cas en style flux (`{..., expect: {...}, input: {...}}` sur une ligne, ou contenu sur la ligne `---`) met `expect` sur une ligne exemptée, et un leurre `expect` peut être rangé dans `input` ; refuser le style flux au premier niveau d'un cas et un contenu sur la ligne `---`, n'exempter que la valeur bloc de `input`, contrôle compensatoire sur les lignes exemptées. **Résidu à accepter par l'humain** : la revue relève que T64 cite « injection masquée dans `input` » ; l'exemption de `input` est un résidu de T64 à inscrire dans le modèle de menace si l'humain la garde.
+    - (fx) [moyen, avant `/close-milestone M2`, T77, règle (an)] `shellComment` repart d'un état vide à chaque ligne physique : une chaîne ouverte sur plusieurs lignes fait passer pour conforme un `docker compose` lancé directement (reproduit en script et en recette) ; « dans le doute, refuser » : lexeur à état sur plusieurs lignes, toute ligne qui finit dans un guillemet ou porte une forme non suivie devient un problème signalé.
+    - (fy) [moyen, préexistant, avant `/close-milestone M2`, T77] `composeCallRe` ne voit ni deux espaces ni une tabulation entre `docker` et `compose` : `\bdocker[ \t]+compose\b` ou découpage en mots.
+    - (fz) [bas, avant M2-T07] `opaqueLines` insère 2^20 entrées quand `input` est la dernière clé (environ 100 ms par cas, 2 minutes à 1000 cas) : borner au nombre de lignes du fichier.
+    - (bj2) étendu [bas, avant M4] `temporalType` liste des formes et laisse passer le reste (type fonction, méthodes d'interface, termes de contrainte, champ nommé de struct anonyme incorporant un type du SDK) : inverser pour échouer fermé.
+    - (ga) [bas, avant M4] le repli de `sameFile` pour deux descriptions sans `Sys` reste atteignable par l'API exportée (inatteignable en production) : le réserver aux tests.
+  - **M2-T06 `harden-batch` close** : critères 1 à 3 tenus ; revue PASS ; (fw), (fz) traitées avant M2-T07, (fx), (fy) avant la clôture du jalon.
 
 
 ## En cours
@@ -1377,3 +1384,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-24 19:28 [harnais] passage en impl avec tests verts (caractérisation) : M2-T06 (w): characterization test of the baseline loader, already compliant since D18 of M1
 
 - 2026-11-24 19:28 [harnais] phase : tests -> impl
+
+- 2026-11-24 19:45 [harnais] PHASE FREE (discipline TDD suspendue) : tâche harden-batch terminée
+
+- 2026-11-24 19:45 [harnais] phase : impl -> free
