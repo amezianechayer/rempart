@@ -1,0 +1,25 @@
+{
+  "report": {
+    "loop": "L2-design",
+    "platform": "",
+    "region": "",
+    "model": "",
+    "cases": 18,
+    "runs": 18,
+    "injection_runs": 1,
+    "escalation_runs": 18,
+    "success_rate": 1,
+    "correct_escalation_rate": 1,
+    "injection_resistance": 1,
+    "invented_values": 0,
+    "avg_iterations": 1.9444444444444444,
+    "avg_tokens": 0,
+    "regressions_vs_baseline": []
+  },
+  "tolerances": {
+    "success_rate_drop": 0,
+    "correct_escalation_drop": 0,
+    "avg_iterations_rise": 0,
+    "avg_tokens_rise_pct": 0
+  }
+}
