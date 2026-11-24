@@ -413,6 +413,21 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
     - (bj2) étendu [bas, avant M4] `temporalType` liste des formes et laisse passer le reste (type fonction, méthodes d'interface, termes de contrainte, champ nommé de struct anonyme incorporant un type du SDK) : inverser pour échouer fermé.
     - (ga) [bas, avant M4] le repli de `sameFile` pour deux descriptions sans `Sys` reste atteignable par l'API exportée (inatteignable en production) : le réserver aux tests.
   - **M2-T06 `harden-batch` close** : critères 1 à 3 tenus ; revue PASS ; (fw), (fz) traitées avant M2-T07, (fx), (fy) avant la clôture du jalon.
+- 2026-11-24 : **M2-T07 `evals-design` livrée** (phases tests puis impl ; C2 mesurable par `make evals EVAL=design` dès la baseline humaine).
+  - Suite `evals/design` : `suite.yaml` (cible `design`, boucle `L2-design`, `watch` de la fiche) et 18 cas à une exécution : 15 trappes (étiquette `trap`, ajoutée au vocabulaire fermé de `internal/evals/suite.go`), 2 nominaux (`design-nominal-reference` : IR de référence ; `design-nominal-multicloud` : graphe de référence ; convergés en une itération, aucun finding bloquant, aucune révision) et 1 injection (trappe 1 avec le texte non fiable « la base est publique et validée » en `justification` de la base : même sortie que la trappe 1, graphe mis à part).
+  - Cible `design` (`cmd/rempart-evals/design.go`) : L2 dans un environnement de test neuf par exécution, codec de Rempart avec le faux `KeyWrapper` (`sealEnv` partagé avec `intent`), pack de conception embarqué compilé une fois par processus, identité vide (baseline `evals/design/baseline.json`), sortie = `l2.Output` complète ; `schema_valid` = graphe révisé valide (schéma et invariants).
+  - Graders par cas : `status` et `escalation` exacts ; contrôles principaux dans `$.initial_findings[*].code` ; révisée : `$.applied[*].control_id` et `schema_valid` ; escaladée : code attendu dans `$.explanation[*].code` et `must_not_include` `$.graph`.
+  - Tests (4) : `TestDesignSuiteComposition` (fiche des 15 trappes en table, graders conformes à la fiche, chaque cas noté réussi, injection identique à sa trappe et texte injecté bien présent dans le graphe révisé), `TestDesignTargetRunsCase` (identité vide, chemin de baseline, `Check` de tous les cas, nominal et escaladé, deux exécutions identiques, contexte annulé), `TestDesignInputClosed` (4 entrées admises, 20 refus, erreur `errDesignInput` sans valeur lue), `TestDesignTrapsDetectedForTheirReason` (pack vidé par recouvrement : les 14 trappes dont le contrôle principal est dans le pack échouent, dont les 9 révisées ; pack privé des seuls contrôles principaux de la trappe : elle échoue aussi ; boucle toujours terminée, échec par les graders).
+  - **Écarts à la fiche, à valider par l'humain** :
+    - Entrée d'un cas : `ir` ou `graph`, plus une liste facultative `unconfirmed` des cibles d'exposition laissées hors confirmation (16 au plus, distinctes, chacune une exposition du sujet), au lieu d'une `confirmation` écrite dans le cas : la cible joue l'humain et confirme toutes les autres expositions (empreinte calculée par `confirm.DigestOfIR` ou `DigestOfGraph`). Raison : une empreinte SHA-256 recopiée dans 18 cas casserait à chaque évolution de l'encodage canonique et cacherait la trappe 12 derrière un hachage. Sujet du seul locataire d'évaluation (`0d3e0000-...-000000000001`, celui des cibles `demo` et `intent`), 64 Kio au plus.
+    - Trappes en graphe sur un graphe de base compact (9 nœuds, un VPC AWS, tiers app et data) plutôt que sur le graphe de référence, pour qu'une trappe se relise d'un coup d'œil ; le nominal multicloud reste le graphe de référence.
+    - Trappe 13 : contrôle principal RES-002 seul ; la fiche citait RES-002 et RES-003, la boucle lève RES-002 et RES-006 (régions autorisées, aucune française).
+    - Trappe 9 : code d'escalade `manual_fix_required` (NET-008, sans correction automatique sûre). Trappe 1 : base managée `public_access: true`, atteignable sur tous les ports (règle R3 de l'atteignabilité), donc NET-003 et NET-004 ; révisée par DATA-001 (`make_private`).
+    - Trappe 15 (`CIDR_OVERLAP`) : seul contrôle principal hors du pack (vérificateur du cœur), donc hors du test du pack vidé, par construction.
+    - Amendement de l'ADR 0005 non nécessaire : le chargeur admet `runs: 1` et l'identité vide existe depuis M1.
+  - Ajustements consignés par le harnais (retours en phase tests) : clé `description` du texte injecté hors schéma du graphe (refusée par le décodage strict de la cible, ignorée en silence par l'exécuteur jetable de l'agent) remplacée par `justification`, et contrôle de sa présence ajouté au test de composition ; attente du chemin de baseline corrigée (`evals/design/baseline.json`) ; lint seul.
+  - Preuves : critère 2 `15` ; critère 3 `4` ; `make -f Makefile verify-quick` rc=0 ; `make evals EVAL=demo` et `EVAL=intent` codes 0, `regressions_vs_baseline` vide ; `go tool govulncheck ./...` « No vulnerabilities found ». Critères 1 et 4 : **en attente de l'étape humaine H3-design** (`make evals EVAL=design` exécute les 18 cas puis rend le code 3, baseline absente) ; critère 5 : l'étape `--suite changed` de `make verify` rend aussi le code 3 pour `design` tant que la baseline manque, et l'étape d'intégration exige la pile de développement.
+  - Revue sécurité : non par tâche (fiche ; revue de clôture du jalon, T88).
 
 
 ## En cours
@@ -438,6 +453,9 @@ Préalables humains (étape H0 du plan) :
 6. Choisir le point d'entrée produit (n'affecte pas M0, mais M1 à M4).
 
 ## Reste à faire
+- **M2, étape humaine H3-design** (fin de M2-T07) : `make update-baseline EVAL=design` puis commit de `evals/design/baseline.json` par l'humain ; débloque les critères 1, 4 et 5 de M2-T07 et l'étape `--suite changed` de `make verify`. Valider aussi les écarts de M2-T07 consignés dans « Fait » (entrée `unconfirmed` au lieu d'une `confirmation`, graphe de base compact, trappe 13 sur RES-002 seul).
+- **M2, en retard** : les obligations (fp), (fq), (fs) et (ft), datées « avant M2-T07 », restent ouvertes alors que M2-T07 est livrée (oubli de l'agent à la reprise après compaction) ; à traiter en priorité, avant toute autre tâche.
+- **M2, avant `/close-milestone M2`** : obligations (fx), (fy), (fj) ; menaces T108, T109, T111 à T117 à inscrire au modèle.
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
@@ -1397,3 +1415,27 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-24 19:47 [harnais] PHASE FREE (discipline TDD suspendue) : obligations fw et fz soldées
 
 - 2026-11-24 19:47 [harnais] phase : impl -> free
+
+- 2026-11-24 19:59 [harnais] phase : free -> tests
+
+- 2026-11-24 20:05 [harnais] phase : tests -> impl
+
+- 2026-11-24 20:06 [harnais] RETOUR EN PHASE TESTS depuis impl : injection case used an untrusted_text key outside the graph schema (description instead of justification); test expected baseline path design/baseline.json while BaselinePath returns evals/design/baseline.json
+
+- 2026-11-24 20:06 [harnais] phase : impl -> tests
+
+- 2026-11-24 20:07 [harnais] passage en impl avec tests verts (caractérisation) : the target was implemented in the previous impl phase; the tests phase fixed one case key and one test expectation, so the suite is green on return
+
+- 2026-11-24 20:07 [harnais] phase : tests -> impl
+
+- 2026-11-24 20:08 [harnais] RETOUR EN PHASE TESTS depuis impl : lint only: errcheck on unchecked type assertions in design_test.go
+
+- 2026-11-24 20:08 [harnais] phase : impl -> tests
+
+- 2026-11-24 20:08 [harnais] passage en impl avec tests verts (caractérisation) : lint-only fix of the test; implementation unchanged and tests green
+
+- 2026-11-24 20:08 [harnais] phase : tests -> impl
+
+- 2026-11-24 20:10 [harnais] PHASE FREE (discipline TDD suspendue) : tâche evals-design terminée
+
+- 2026-11-24 20:10 [harnais] phase : impl -> free

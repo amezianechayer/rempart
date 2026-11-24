@@ -44,7 +44,7 @@ var tagToken = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 // a tag outside it could hide a case from a metric or a selection.
 var caseTags = []string{
 	"nominal", "multicloud", "ambiguous", "contradictory", "incomplete", InjectionTag,
-	"technical-value", "tenant", "language", "storage",
+	"technical-value", "tenant", "language", "storage", "trap",
 }
 
 // CaseTags returns a copy of the closed vocabulary of case tags.

@@ -1,0 +1,12 @@
+name: design
+loop: L2-design
+target: design
+watch:
+  - internal/graph/**
+  - internal/design/**
+  - internal/policy/**
+  - internal/threat/**
+  - internal/loops/l2/**
+  - internal/loops/*.go
+  - policies/design/**
+  - schemas/graph/**

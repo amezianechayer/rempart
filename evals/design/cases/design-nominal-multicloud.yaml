@@ -1,0 +1,57 @@
+id: design-nominal-multicloud
+loop: L2-design
+tags: [nominal, multicloud]
+input:
+  graph:
+    version: "1"
+    tenant_id: "0d3e0000-0000-4000-8000-000000000001"
+    source: "design"
+    nodes:
+      - {"id": "data:customer-db", "kind": "DataStore", "attrs": {"subtype": "dataset", "classification": "confidential", "regulation": ["gdpr"], "residency": "eu", "encrypted": true, "public_access": false}, "untrusted_text": {}}
+      - {"id": "id:app-cluster", "kind": "Identity", "attrs": {"cloud": "aws", "subtype": "role", "credential": "workload_identity"}, "untrusted_text": {}}
+      - {"id": "id:gitops", "kind": "Identity", "attrs": {"cloud": "aws", "subtype": "k8s_service_account", "credential": "workload_identity"}, "untrusted_text": {}}
+      - {"id": "id:legacy-vms", "kind": "Identity", "attrs": {"cloud": "azure", "subtype": "role", "credential": "workload_identity"}, "untrusted_text": {}}
+      - {"id": "id:obs", "kind": "Identity", "attrs": {"cloud": "aws", "subtype": "k8s_service_account", "credential": "workload_identity"}, "untrusted_text": {}}
+      - {"id": "internet", "kind": "Internet", "attrs": {}, "untrusted_text": {}}
+      - {"id": "lb:app-cluster-443", "kind": "LoadBalancer", "attrs": {"cloud": "aws", "region": "eu-west-3", "public": true, "listeners": [{"protocol": "https", "port": 443}], "behind": ["waf", "load_balancer"]}, "untrusted_text": {"justification": "application web publique"}}
+      - {"id": "net:aws-eu-west-3-staging", "kind": "Network", "attrs": {"cloud": "aws", "region": "eu-west-3", "env": "staging", "subtype": "vpc", "cidr": "10.0.0.0/20"}, "untrusted_text": {}}
+      - {"id": "net:aws-eu-west-3-staging-app", "kind": "Network", "attrs": {"cloud": "aws", "region": "eu-west-3", "env": "staging", "subtype": "subnet", "cidr": "10.0.0.0/23", "tier": "app"}, "untrusted_text": {}}
+      - {"id": "net:aws-eu-west-3-staging-public", "kind": "Network", "attrs": {"cloud": "aws", "region": "eu-west-3", "env": "staging", "subtype": "subnet", "cidr": "10.0.2.0/26", "tier": "public"}, "untrusted_text": {}}
+      - {"id": "net:azure-francecentral-staging", "kind": "Network", "attrs": {"cloud": "azure", "region": "francecentral", "env": "staging", "subtype": "vpc", "cidr": "10.0.16.0/25"}, "untrusted_text": {}}
+      - {"id": "net:azure-francecentral-staging-data", "kind": "Network", "attrs": {"cloud": "azure", "region": "francecentral", "env": "staging", "subtype": "subnet", "cidr": "10.0.16.0/27", "tier": "data"}, "untrusted_text": {}}
+      - {"id": "wl:app-cluster", "kind": "K8sCluster", "attrs": {"cloud": "aws", "region": "eu-west-3", "count": 3, "api_public": false, "audit_log": true, "secrets_encryption": true, "network_policy_default_deny": true, "admission_policy": true, "workload_identity": true}, "untrusted_text": {}}
+      - {"id": "wl:gitops", "kind": "K8sWorkload", "attrs": {"cloud": "aws", "region": "eu-west-3"}, "untrusted_text": {}}
+      - {"id": "wl:legacy-vms", "kind": "Compute", "attrs": {"cloud": "azure", "region": "francecentral", "subtype": "vm", "count": 3, "os": "linux", "public_ip": false}, "untrusted_text": {}}
+      - {"id": "wl:obs", "kind": "K8sWorkload", "attrs": {"cloud": "aws", "region": "eu-west-3"}, "untrusted_text": {}}
+    edges:
+      - {"id": "can_reach|lb:app-cluster-443|wl:app-cluster|https/443", "type": "CAN_REACH", "src": "lb:app-cluster-443", "dst": "wl:app-cluster", "attrs": {"protocol": "https", "port_from": 443, "port_to": 443, "via": "load_balancer", "path": ["net:aws-eu-west-3-staging-public", "net:aws-eu-west-3-staging-app"]}, "untrusted_text": {}}
+      - {"id": "can_reach|wl:app-cluster|wl:legacy-vms|tcp/5432", "type": "CAN_REACH", "src": "wl:app-cluster", "dst": "wl:legacy-vms", "attrs": {"protocol": "tcp", "port_from": 5432, "port_to": 5432, "via": "vpn_site_to_site", "path": ["net:aws-eu-west-3-staging-app", "net:aws-eu-west-3-staging", "net:azure-francecentral-staging", "net:azure-francecentral-staging-data"]}, "untrusted_text": {"purpose": "accès applicatif à la base legacy et collecte des métriques des VM"}}
+      - {"id": "can_reach|wl:app-cluster|wl:legacy-vms|tcp/9100", "type": "CAN_REACH", "src": "wl:app-cluster", "dst": "wl:legacy-vms", "attrs": {"protocol": "tcp", "port_from": 9100, "port_to": 9100, "via": "vpn_site_to_site", "path": ["net:aws-eu-west-3-staging-app", "net:aws-eu-west-3-staging", "net:azure-francecentral-staging", "net:azure-francecentral-staging-data"]}, "untrusted_text": {"purpose": "accès applicatif à la base legacy et collecte des métriques des VM"}}
+      - {"id": "exposes|lb:app-cluster-443|internet|https/443", "type": "EXPOSES", "src": "lb:app-cluster-443", "dst": "internet", "attrs": {"protocol": "https", "port_from": 443, "port_to": 443}, "untrusted_text": {"justification": "application web publique"}}
+      - {"id": "has_permission|id:legacy-vms|data:customer-db", "type": "HAS_PERMISSION", "src": "id:legacy-vms", "dst": "data:customer-db", "attrs": {"actions": ["read", "write"]}, "untrusted_text": {}}
+      - {"id": "member_of|lb:app-cluster-443|net:aws-eu-west-3-staging-public", "type": "MEMBER_OF", "src": "lb:app-cluster-443", "dst": "net:aws-eu-west-3-staging-public", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|net:aws-eu-west-3-staging-app|net:aws-eu-west-3-staging", "type": "MEMBER_OF", "src": "net:aws-eu-west-3-staging-app", "dst": "net:aws-eu-west-3-staging", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|net:aws-eu-west-3-staging-public|net:aws-eu-west-3-staging", "type": "MEMBER_OF", "src": "net:aws-eu-west-3-staging-public", "dst": "net:aws-eu-west-3-staging", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|net:azure-francecentral-staging-data|net:azure-francecentral-staging", "type": "MEMBER_OF", "src": "net:azure-francecentral-staging-data", "dst": "net:azure-francecentral-staging", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|wl:app-cluster|net:aws-eu-west-3-staging-app", "type": "MEMBER_OF", "src": "wl:app-cluster", "dst": "net:aws-eu-west-3-staging-app", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|wl:gitops|wl:app-cluster", "type": "MEMBER_OF", "src": "wl:gitops", "dst": "wl:app-cluster", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|wl:legacy-vms|net:azure-francecentral-staging-data", "type": "MEMBER_OF", "src": "wl:legacy-vms", "dst": "net:azure-francecentral-staging-data", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|wl:obs|wl:app-cluster", "type": "MEMBER_OF", "src": "wl:obs", "dst": "wl:app-cluster", "attrs": {}, "untrusted_text": {}}
+      - {"id": "runs_as|wl:app-cluster|id:app-cluster", "type": "RUNS_AS", "src": "wl:app-cluster", "dst": "id:app-cluster", "attrs": {}, "untrusted_text": {}}
+      - {"id": "runs_as|wl:gitops|id:gitops", "type": "RUNS_AS", "src": "wl:gitops", "dst": "id:gitops", "attrs": {}, "untrusted_text": {}}
+      - {"id": "runs_as|wl:legacy-vms|id:legacy-vms", "type": "RUNS_AS", "src": "wl:legacy-vms", "dst": "id:legacy-vms", "attrs": {}, "untrusted_text": {}}
+      - {"id": "runs_as|wl:obs|id:obs", "type": "RUNS_AS", "src": "wl:obs", "dst": "id:obs", "attrs": {}, "untrusted_text": {}}
+      - {"id": "stores|wl:legacy-vms|data:customer-db", "type": "STORES", "src": "wl:legacy-vms", "dst": "data:customer-db", "attrs": {}, "untrusted_text": {}}
+    untrusted_text: {"summary": "Cluster Kubernetes sur AWS, trois VM Linux sur Azure, VPN site à site entre les deux, observabilité Prometheus/Grafana/Loki, conforme NIS2."}
+expect:
+  status: converged
+  escalation: false
+  schema_valid: true
+  max_iterations: 1
+  must_not_include:
+    - path: "$.initial_findings[*].severity"
+      equals: "critical"
+    - path: "$.initial_findings[*].severity"
+      equals: "high"
+    - path: "$.applied[*]"
+runs: 1

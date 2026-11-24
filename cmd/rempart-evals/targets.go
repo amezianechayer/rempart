@@ -40,7 +40,9 @@ type Target interface {
 }
 
 func targets() map[string]Target {
-	return map[string]Target{"demo": demoTarget{log: os.Stderr}, "intent": intentTarget{log: os.Stderr}}
+	return map[string]Target{
+		"demo": demoTarget{log: os.Stderr}, "intent": intentTarget{log: os.Stderr}, "design": designTarget{log: os.Stderr},
+	}
 }
 
 // Wiring of the demo target (D5), the constants of make demo.

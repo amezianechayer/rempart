@@ -1,0 +1,42 @@
+id: design-trap-public-managed-db
+loop: L2-design
+tags: [trap]
+input:
+  graph:
+    version: "1"
+    tenant_id: "0d3e0000-0000-4000-8000-000000000001"
+    source: "design"
+    untrusted_text: {}
+    nodes:
+      - {"id": "data:customer-db", "kind": "DataStore", "attrs": {"subtype": "dataset", "classification": "confidential", "regulation": ["gdpr"], "residency": "eu", "encrypted": true, "public_access": false}, "untrusted_text": {}}
+      - {"id": "data:orders-db", "kind": "DataStore", "attrs": {"cloud": "aws", "region": "eu-west-3", "subtype": "managed_db", "classification": "confidential", "encrypted": true, "public_access": true}, "untrusted_text": {}}
+      - {"id": "id:api", "kind": "Identity", "attrs": {"cloud": "aws", "subtype": "role", "credential": "workload_identity"}, "untrusted_text": {}}
+      - {"id": "id:db-vms", "kind": "Identity", "attrs": {"cloud": "aws", "subtype": "role", "credential": "workload_identity"}, "untrusted_text": {}}
+      - {"id": "internet", "kind": "Internet", "attrs": {}, "untrusted_text": {}}
+      - {"id": "net:aws-eu-west-3-staging", "kind": "Network", "attrs": {"cloud": "aws", "region": "eu-west-3", "env": "staging", "subtype": "vpc", "cidr": "10.0.0.0/20"}, "untrusted_text": {}}
+      - {"id": "net:aws-eu-west-3-staging-app", "kind": "Network", "attrs": {"cloud": "aws", "region": "eu-west-3", "env": "staging", "subtype": "subnet", "cidr": "10.0.0.0/23", "tier": "app"}, "untrusted_text": {}}
+      - {"id": "net:aws-eu-west-3-staging-data", "kind": "Network", "attrs": {"cloud": "aws", "region": "eu-west-3", "env": "staging", "subtype": "subnet", "cidr": "10.0.4.0/24", "tier": "data"}, "untrusted_text": {}}
+      - {"id": "wl:api", "kind": "Compute", "attrs": {"cloud": "aws", "region": "eu-west-3", "subtype": "vm", "count": 2, "os": "linux", "public_ip": false}, "untrusted_text": {}}
+      - {"id": "wl:db-vms", "kind": "Compute", "attrs": {"cloud": "aws", "region": "eu-west-3", "subtype": "vm", "count": 2, "os": "linux", "public_ip": false}, "untrusted_text": {}}
+    edges:
+      - {"id": "can_reach|wl:api|wl:db-vms|tcp/5432", "type": "CAN_REACH", "src": "wl:api", "dst": "wl:db-vms", "attrs": {"protocol": "tcp", "port_from": 5432, "port_to": 5432, "path": ["net:aws-eu-west-3-staging-app", "net:aws-eu-west-3-staging-data"]}, "untrusted_text": {}}
+      - {"id": "has_permission|id:db-vms|data:customer-db", "type": "HAS_PERMISSION", "src": "id:db-vms", "dst": "data:customer-db", "attrs": {"actions": ["read", "write"]}, "untrusted_text": {}}
+      - {"id": "member_of|net:aws-eu-west-3-staging-app|net:aws-eu-west-3-staging", "type": "MEMBER_OF", "src": "net:aws-eu-west-3-staging-app", "dst": "net:aws-eu-west-3-staging", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|net:aws-eu-west-3-staging-data|net:aws-eu-west-3-staging", "type": "MEMBER_OF", "src": "net:aws-eu-west-3-staging-data", "dst": "net:aws-eu-west-3-staging", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|wl:api|net:aws-eu-west-3-staging-app", "type": "MEMBER_OF", "src": "wl:api", "dst": "net:aws-eu-west-3-staging-app", "attrs": {}, "untrusted_text": {}}
+      - {"id": "member_of|wl:db-vms|net:aws-eu-west-3-staging-data", "type": "MEMBER_OF", "src": "wl:db-vms", "dst": "net:aws-eu-west-3-staging-data", "attrs": {}, "untrusted_text": {}}
+      - {"id": "runs_as|wl:api|id:api", "type": "RUNS_AS", "src": "wl:api", "dst": "id:api", "attrs": {}, "untrusted_text": {}}
+      - {"id": "runs_as|wl:db-vms|id:db-vms", "type": "RUNS_AS", "src": "wl:db-vms", "dst": "id:db-vms", "attrs": {}, "untrusted_text": {}}
+      - {"id": "stores|wl:db-vms|data:customer-db", "type": "STORES", "src": "wl:db-vms", "dst": "data:customer-db", "attrs": {}, "untrusted_text": {}}
+expect:
+  status: converged
+  escalation: false
+  schema_valid: true
+  must_include:
+    - path: "$.initial_findings[*].code"
+      equals: "NET-004"
+    - path: "$.initial_findings[*].code"
+      equals: "DATA-001"
+    - path: "$.applied[*].control_id"
+      equals: "DATA-001"
+runs: 1
