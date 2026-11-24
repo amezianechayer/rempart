@@ -510,12 +510,21 @@ func joinShellLines(src string) []makeLine {
 			lines = append(lines, makeLine{Num: i + 1, Text: raw})
 		}
 		last := &lines[len(lines)-1]
-		pending = trailingBackslashes(last.Text)%2 == 1 && !shellComment(last.Text)
+		pending = trailingBackslashes(last.Text)%2 == 1 && !shellComment(last.Text) && !unsafeQuoting(last.Text)
 		if pending {
 			last.Text = strings.TrimRight(strings.TrimSuffix(last.Text, `\`), " ")
 		}
 	}
 	return lines
+}
+
+// unsafeQuoting reports a quoting that shellComment does not follow and that
+// could hide a "#" starting a comment (obligation (bv)): ANSI-C quotes $'...',
+// a backquote, or quotes in a line with a command substitution $(...). In
+// doubt, the line is not joined.
+func unsafeQuoting(text string) bool {
+	return strings.Contains(text, "$'") || strings.Contains(text, "`") ||
+		strings.Contains(text, "$(") && strings.ContainsAny(text, `'"`)
 }
 
 // shellComment reports whether the logical line text holds a bash comment: a
@@ -938,4 +947,32 @@ func TestPostgresInitValidatesPasswords(t *testing.T) {
 		}
 		reportProblems(t, checkPostgresInitValidates(t, writeNamedScript(t, "postgres-init.sh", src)))
 	})
+}
+
+// TestShellJoinUnsafeQuoting proves obligation (bv) (rule (an)): the quoting of
+// bash that shellComment does not follow ($'...', a backquote, quotes nested in
+// $(...)) can hide a "#" that starts a comment; in doubt, such a line is not
+// joined, so its next physical line is checked on its own.
+func TestShellJoinUnsafeQuoting(t *testing.T) {
+	type line = makeLine
+	for _, c := range []struct {
+		name, src string
+		want      []line
+	}{
+		{"ansi_c_quote_hides_comment", "echo $'\\'' # c \\\ndocker compose up", []line{{1, `echo $'\'' # c \`}, {2, "docker compose up"}}},
+		{"ansi_c_quote_alone", "echo $'a' \\\nb", []line{{1, `echo $'a' \`}, {2, "b"}}},
+		{"backquote", "echo `x` \\\nb", []line{{1, "echo `x` \\"}, {2, "b"}}},
+		{"backquote_hides_comment", "echo `echo '` # c \\\ndocker compose up", []line{{1, "echo `echo '` # c \\"}, {2, "docker compose up"}}},
+		{"substitution_with_double_quotes", "echo \"$(echo \")\" # c \\\ndocker compose up", []line{{1, `echo "$(echo ")" # c \`}, {2, "docker compose up"}}},
+		{"substitution_with_single_quotes", "x=$(printf '%s' a) \\\nb", []line{{1, `x=$(printf '%s' a) \`}, {2, "b"}}},
+		{"recipe_substitution_with_quotes", "\t@x=\"$$(echo \")\" # c \\\n\tdocker compose up", []line{{1, "\t@x=\"$$(echo \")\" # c \\"}, {2, "\tdocker compose up"}}},
+		{"substitution_without_quotes", "x=$(seq 1 3) \\\nb", []line{{1, "x=$(seq 1 3) b"}}},
+		{"plain_quotes_still_joined", "echo \"a\" 'b' \\\nc", []line{{1, `echo "a" 'b' c`}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := joinShellLines(c.src); !slices.Equal(got, c.want) {
+				t.Errorf("joinShellLines(%q) =\n%+v\nwant\n%+v", c.src, got, c.want)
+			}
+		})
+	}
 }

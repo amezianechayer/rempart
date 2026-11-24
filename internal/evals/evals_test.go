@@ -62,6 +62,22 @@ func laughs() string {
 
 func edit(from, to string) string { return strings.Replace(caseY, from, to, 1) }
 
+// commentPad returns n bytes of comment lines of at most 100 bytes, the last
+// one without line feed.
+func commentPad(n int) string {
+	var b strings.Builder
+	for n > 0 {
+		k := min(100, n)
+		if k == n {
+			b.WriteString("#" + strings.Repeat("x", k-1))
+			break
+		}
+		b.WriteString("#" + strings.Repeat("x", k-2) + "\n")
+		n -= k
+	}
+	return b.String()
+}
+
 func mk(e Expect) Case {
 	return Case{ID: "c-001", Loop: "L1", Input: json.RawMessage(`{}`), Expect: e, Runs: 1}
 }
@@ -96,7 +112,7 @@ func TestLoadSuiteCaseFormatExample(t *testing.T) {
 }
 
 func TestLoadSuiteRejectsUnknownFields(t *testing.T) {
-	full := caseY + "#" + strings.Repeat("x", MaxFileBytes-len(caseY)-1)
+	full := caseY + commentPad(MaxFileBytes-len(caseY)) // exactly MaxFileBytes, lines of 100 bytes at most (obligation (t))
 	for i, c := range [][2]string{
 		{caseF, caseY + "canary: 1\n"},
 		{"s/suite.yaml", suiteY + "cases: []\n"},
@@ -872,8 +888,8 @@ func TestLoadSuiteExactKeys(t *testing.T) {
 	}
 	// V11: one line in contains and equals, quotes doubled, comments and inner
 	// spaces kept; input may still fold.
-	if s, err := LoadSuite(suiteFS(caseF, edit(sc, "\n  must_not_include:\n    - path: $.a\n      contains: 'it''s public' # note\n    - path: $.b\n      equals: {k: a  b, l: [public _bucket, 'x''y', \"q\"]}\n  status: converged")), "s"); err != nil ||
-		string(s.Cases[0].Expect.MustNotInclude[0].Contains) != `"it's public"` || string(s.Cases[0].Expect.MustNotInclude[1].Equals) != `{"k":"a  b","l":["public _bucket","x'y","q"]}` {
+	if s, err := LoadSuite(suiteFS(caseF, edit(sc, "\n  must_not_include:\n    - path: $.a\n      contains: 'it''s public' # note\n    - path: $.b\n      equals: {k: a b, l: [public _bucket, 'x''y', \"q\"]}\n  status: converged")), "s"); err != nil ||
+		string(s.Cases[0].Expect.MustNotInclude[0].Contains) != `"it's public"` || string(s.Cases[0].Expect.MustNotInclude[1].Equals) != `{"k":"a b","l":["public _bucket","x'y","q"]}` {
 		t.Errorf("one line: %v", err)
 	}
 	if s, err := LoadSuite(suiteFS(caseF, edit("{a: 1}", "{t: a\n    b, u: 'c\n    d'}")), "s"); err != nil || string(s.Cases[0].Input) != `{"t":"a b","u":"c d"}` {

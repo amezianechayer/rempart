@@ -337,6 +337,10 @@ func (c *srcChecker) file(sf *SourceFile) {
 				c.kind[sf.Pkg+"."+n.Name] == "func" && !declNames(stack[1])[n.Name] && c.takesSpec(fn.file, fn.decl.Type) {
 				c.add(sf, n, "loops-no-spec-entrypoint", n.Name+" takes a LoopSpec or an ApprovalRequest and is used as a value")
 			}
+		case *ast.TypeSpec:
+			if ref, found := c.temporalType(sf, n.Type); found && !cmd { // (bj), T73
+				c.add(sf, n, "no-temporal-type-decl", "type "+n.Name.Name+" over "+ref)
+			}
 		case *ast.IndexExpr:
 			c.instance(sf, n.X, []ast.Expr{n.Index})
 		case *ast.IndexListExpr:
@@ -711,6 +715,67 @@ func (c *srcChecker) resolve(sf *SourceFile, locals map[string]bool, e ast.Expr)
 		}
 	}
 	return "", "", false
+}
+
+// temporalType reports a type of go.temporal.io/... that t is or wraps: through
+// a pointer, parentheses, a slice, an array, a map, a channel, a generic
+// instantiation, or an embedded field of a struct or an interface (obligation
+// (bj)): outside cmd/, such a declaration would carry an SDK type past the
+// source rules.
+func (c *srcChecker) temporalType(sf *SourceFile, t ast.Expr) (string, bool) {
+	switch t := t.(type) {
+	case *ast.SelectorExpr:
+		if pkg, name, ok := c.resolve(sf, nil, t); ok && under(pkg, "go.temporal.io") {
+			return pkg + "." + name, true
+		}
+	case *ast.StarExpr:
+		return c.temporalType(sf, t.X)
+	case *ast.ParenExpr:
+		return c.temporalType(sf, t.X)
+	case *ast.ArrayType:
+		return c.temporalType(sf, t.Elt)
+	case *ast.ChanType:
+		return c.temporalType(sf, t.Value)
+	case *ast.MapType:
+		if ref, ok := c.temporalType(sf, t.Key); ok {
+			return ref, true
+		}
+		return c.temporalType(sf, t.Value)
+	case *ast.IndexExpr:
+		return c.firstTemporal(sf, append([]ast.Expr{t.X}, t.Index))
+	case *ast.IndexListExpr:
+		return c.firstTemporal(sf, append([]ast.Expr{t.X}, t.Indices...))
+	case *ast.StructType:
+		return c.embedded(sf, t.Fields)
+	case *ast.InterfaceType:
+		return c.embedded(sf, t.Methods)
+	}
+	return "", false
+}
+
+func (c *srcChecker) firstTemporal(sf *SourceFile, ts []ast.Expr) (string, bool) {
+	for _, x := range ts {
+		if ref, ok := c.temporalType(sf, x); ok {
+			return ref, true
+		}
+	}
+	return "", false
+}
+
+// embedded: the embedded fields of a struct, the embedded interfaces of an
+// interface (no name).
+func (c *srcChecker) embedded(sf *SourceFile, fl *ast.FieldList) (string, bool) {
+	if fl == nil {
+		return "", false
+	}
+	for _, f := range fl.List {
+		if len(f.Names) == 0 {
+			if ref, ok := c.temporalType(sf, f.Type); ok {
+				return ref, true
+			}
+		}
+	}
+	return "", false
 }
 
 func (c *srcChecker) isLoops(sf *SourceFile, locals map[string]bool, e ast.Expr, typ string) bool {

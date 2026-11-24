@@ -40,8 +40,12 @@ func matchAny(patterns []string, c string) bool {
 	})
 }
 
+// patternSet is the closed set of a watch pattern (obligations (v) and (by),
+// T67): no blank, control character, upper case, ?, [ ] or backslash.
+const patternSet = "abcdefghijklmnopqrstuvwxyz0123456789._/*-"
+
 func validPattern(p string) bool {
 	prefix, _ := strings.CutSuffix(p, "/**")
 	_, err := path.Match(prefix, "")
-	return err == nil && len(p) <= 256 && fs.ValidPath(prefix) && !strings.Contains(prefix, "**")
+	return err == nil && len(p) <= 256 && strings.Trim(p, patternSet) == "" && fs.ValidPath(prefix) && !strings.Contains(prefix, "**")
 }

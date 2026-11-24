@@ -58,7 +58,10 @@ func TestSearchAttributesAllLoopsPackages(t *testing.T) {
 		got := checkSources(t, repoSources(t, sdkAliasFile(),
 			addFile("internal/loops/launch/launch.go", goFile("launch", []string{loopsOptsImp},
 				"var _ = opts.StartOptions{ID: \"x\", Memo: nil}\n"))))
-		want := []SourceViolation{{"loops-no-search-attributes", "internal/loops/launch/launch.go:7", "key Memo in a composite literal"}}
+		want := []SourceViolation{
+			{"loops-no-search-attributes", "internal/loops/launch/launch.go:7", "key Memo in a composite literal"},
+			{"no-temporal-type-decl", "internal/loops/opts/opts.go:7", "type StartOptions over go.temporal.io/sdk/client.StartWorkflowOptions"},
+		}
 		if !slices.Equal(got, want) {
 			t.Errorf("got %v, want %v", got, want)
 		}
@@ -70,9 +73,8 @@ func TestSearchAttributesAllLoopsPackages(t *testing.T) {
 				"var _ = workflowservice.StartWorkflowExecutionRequest{WorkflowId: \"x\", Namespace: \"rempart\"}\n\n"+
 					"var _ = map[string]string{\"Memo\": \"x\", \"UpsertedMemo\": \"y\"}\n\n"+
 					"var _ = []string{\"UpsertedMemo\"}\n")),
-			sdkAliasFile(),
-			addFile("internal/loops/launch/launch.go", goFile("launch", []string{loopsOptsImp},
-				"var _ = opts.StartOptions{ID: \"x\", TaskQueue: \"q\"}\n")),
+			// The alias of sdkAliasFile is itself refused since M2-T06 (bj,
+			// no-temporal-type-decl): it no longer appears here.
 			// Outside the scope: a note with an UpsertedMemo field, no SDK, not cmd, not loops.
 			addFile("internal/other/props.go", goFile("other", nil,
 				"type props struct{ UpsertedMemo string }\n\nvar _ = props{UpsertedMemo: \"x\"}\n\n"+

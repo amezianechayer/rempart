@@ -111,8 +111,10 @@ func runSourceCases(t *testing.T, rule, detail string, cases []srcCase) {
 			}
 			for _, v := range got {
 				// (er): a fixture that hides an import behind a build
-				// constraint raises no-build-constraint too, orthogonal to r.
-				if v.Rule != r && v.Rule != "no-build-constraint" {
+				// constraint raises no-build-constraint too, orthogonal to r;
+				// (bj): one that aliases an SDK type outside cmd/ raises
+				// no-temporal-type-decl too.
+				if v.Rule != r && v.Rule != "no-build-constraint" && v.Rule != "no-temporal-type-decl" {
 					t.Errorf("%s: %s (%s), want only %s", v.Pos, v.Rule, v.Detail, r)
 				}
 			}

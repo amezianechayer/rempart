@@ -8,12 +8,14 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"os"
 	"path"
 	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -156,6 +158,9 @@ func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
 	if dec.Decode(&doc) != nil || !errors.Is(dec.Decode(new(yaml.Node)), io.EOF) || !plain(&doc, 0, typed, runeLines(data)) {
 		return invalid(name, "not one plain YAML document")
 	}
+	if !boundedLines(data, opaqueLines(&doc)) {
+		return invalid(name, "line longer than 160 runes")
+	}
 	var v any
 	if doc.Decode(&v) != nil {
 		return invalid(name, "duplicate key")
@@ -182,6 +187,41 @@ func admitted(data []byte) bool {
 		case r >= ' ' && r <= '~', r == '\n', r == '\r' && bytes.HasPrefix(data[i+1:], []byte("\n")):
 		case r >= 0xC0 && r <= 0xFF && r != 0xD7 && r != 0xF7, r == 0x152, r == 0x153, r == 0x178:
 		default:
+			return false
+		}
+	}
+	return true
+}
+
+// opaqueLines returns the lines, from 1, of the value of the top-level key
+// input: the opaque input of a case, free of the line bound (obligation (t)).
+func opaqueLines(doc *yaml.Node) map[int]bool {
+	out := map[int]bool{}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return out
+	}
+	m := doc.Content[0].Content
+	for i := 0; i+1 < len(m); i += 2 {
+		if m[i].Value != "input" {
+			continue
+		}
+		end := 1 << 30 // to the end of the file
+		if i+2 < len(m) {
+			end = m[i+2].Line
+		}
+		for l := m[i].Line; l < end && l-m[i].Line < 1<<20; l++ {
+			out[l] = true
+		}
+	}
+	return out
+}
+
+// boundedLines reports whether every line of data, but the opaque ones, holds
+// at most maxLineRunes runes (obligation (t), T64: no needle hidden past the
+// edge of a review).
+func boundedLines(data []byte, opaque map[int]bool) bool {
+	for i, line := range strings.Split(string(data), "\n") {
+		if !opaque[i+1] && utf8.RuneCountInString(strings.TrimSuffix(line, "\r")) > maxLineRunes {
 			return false
 		}
 	}
@@ -262,7 +302,7 @@ func oneLine(n *yaml.Node, src [][]rune) bool {
 func plain(n *yaml.Node, depth int, z zone, src [][]rune) bool {
 	if depth > 32 || n.Kind == yaml.AliasNode || n.Anchor != "" || n.Style&yaml.TaggedStyle != 0 || n.Tag == "!!merge" ||
 		bang(n, src) || !escapes(n, src) ||
-		((z == inEquals || z == inContains) && (n.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || !oneLine(n, src))) ||
+		((z == inEquals || z == inContains) && (n.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 || !oneLine(n, src) || !needle(n))) ||
 		!jsonScalar(n, z == inInput || z == inEquals) {
 		return false
 	}
@@ -276,6 +316,16 @@ func plain(n *yaml.Node, depth int, z zone, src [][]rune) bool {
 		}
 	}
 	return true
+}
+
+// needle reports whether a scalar of contains or equals reads as written: no
+// backslash outside double quotes, where it would look like an escape it is
+// not (obligation (s), T65), and no two consecutive blanks (obligation (t)).
+func needle(n *yaml.Node) bool {
+	if n.Kind != yaml.ScalarNode {
+		return true
+	}
+	return !strings.Contains(n.Value, "  ") && (n.Style&yaml.DoubleQuotedStyle != 0 || !strings.ContainsRune(n.Value, '\\'))
 }
 
 // jsonScalar admits unambiguous strings, spelled nulls where allowed, exact booleans
@@ -324,8 +374,12 @@ func realDir(fsys fs.ReadLinkFS, dir string) bool {
 	return true
 }
 
+// readRegular reads name, a regular file checked by Lstat, then opened: the
+// opened file must be the very file checked (os.SameFile on the os.Root of
+// the command, obligation (y), TOCTOU), regular and of at most MaxFileBytes.
 func readRegular(fsys fs.ReadLinkFS, name string) ([]byte, bool) {
-	if info, err := fsys.Lstat(name); err != nil || !info.Mode().IsRegular() {
+	checked, err := fsys.Lstat(name)
+	if err != nil || !checked.Mode().IsRegular() {
 		return nil, false
 	}
 	f, err := fsys.Open(name)
@@ -334,7 +388,17 @@ func readRegular(fsys fs.ReadLinkFS, name string) ([]byte, bool) {
 	}
 	info, err := f.Stat()
 	data, rerr := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
-	return data, f.Close() == nil && err == nil && info.Mode().IsRegular() && rerr == nil && len(data) <= MaxFileBytes
+	return data, f.Close() == nil && err == nil && info.Mode().IsRegular() && sameFile(checked, info) && rerr == nil && len(data) <= MaxFileBytes
+}
+
+// sameFile: os.SameFile when either description comes from the operating
+// system (an OS description always carries Sys); two descriptions of an
+// in-memory file system (tests) only need the same type.
+func sameFile(checked, opened fs.FileInfo) bool {
+	if os.SameFile(checked, opened) {
+		return true
+	}
+	return checked.Sys() == nil && opened.Sys() == nil && checked.Mode().Type() == opened.Mode().Type()
 }
 
 func exactKeys(v any, t reflect.Type) bool {
