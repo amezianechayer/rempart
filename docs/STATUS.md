@@ -395,6 +395,16 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
   - **M2-T05 `l2-loop` close** : critères 1 à 4 tenus ; critère 5 (`make l2-demo`) et étape d'intégration du critère 6 à constater par l'humain ou en CI (pas de Docker ici), `TestL2DemoInputConverges` et `govulncheck` en substitut ; revue sécurité PASS en seconde passe.
 - 2026-11-19 : **Périmètre face à la concurrence (décision humaine en cours)**. Comparaison faite par l'agent (Wiz, Orca, Prisma, Spacelift, env0, HCP Terraform, Firefly, Pulumi Neo, StackGen, Brainboard, Vanta, Drata, Threagile) : la feuille de route M3 à M8 couvre déjà dérive, FinOps, import des ressources non gérées, GitHub et GitLab, SSO et RBAC, onboarding, rôle auditeur. **Ajouts retenus par l'humain** (réponse du 2026-11-19) : DSPM léger (découverte des données sensibles, avec M5), tickets Jira et ServiceNow (M8), Google Cloud (après M7). **En discussion** (question de l'humain « il faut cela aussi, non ? ») : éditeur visuel, agent d'exécution CWPP, AI-SPM, import multi-IaC. Catalogue libre-service non retenu. ADR de périmètre et amendement des prompts de jalon concernés à écrire une fois le périmètre arrêté ; aucun effet sur M2.
   - **Périmètre arrêté par l'humain** (2026-11-19, « Oui je valide », sur la proposition de l'agent) : éditeur visuel dont chaque modification repasse par le vérificateur L2 (graphe candidat confirmé, M8) ; import multi-IaC converti en OpenTofu, source de vérité inchangée (état Terraform, puis CloudFormation, puis Pulumi ; entrée par L2 comme graphe importé ; M6) ; AI-SPM (posture des services d'IA dans le graphe, après M7, avec GCP) ; CWPP par **intégration** de Falco ou Tetragon déjà déployés chez le client (signaux d'exécution vers le graphe et les chemins d'attaque, M5 et M6), **pas d'agent maison**. Nouveau jalon M9 (Google Cloud, AI-SPM). ADR 0013 de périmètre et amendement des prompts M5, M6, M8 et création de M9 confiés à `architect`.
+  - **ADR 0013 « Périmètre fonctionnel élargi face à la concurrence »** écrit par `architect` (accepté, citation de l'humain), prompts M5, M6, M8 amendés (ajouts seulement) et `prompts/M9.md` créé (Google Cloud et posture IA). Règles communes D0 : lecture seule, contenu client lu par le runner seul, quarantaine, monotonie des signaux externes (DSPM et CWPP relèvent, n'abaissent jamais), vérificateur de L2 pour l'éditeur et l'import, aucune décision par un LLM. Menaces T123 à T136 proposées, à valider par `security-reviewer` avec les tâches qui les portent. **Amendements à faire par l'humain** : `CLAUDE.md` ligne 3 (harnais) « `prompts/M0.md` à `prompts/M8.md` » vers `M9` ; `docs/00-VISION.md` section 4 (`inventory/` : `gcp`, `dspm`, `runtime` ; module `ticketing/`) et section 6 (retirer GCP des hors périmètre) ; `docs/04-INTERFACE.md` (CLI, E3, E4, E6, E11, section 8) ; `MASTER_PROMPT.md`. **Questions à l'humain** (recommandation de l'agent entre parenthèses) : (1) DSPM réservé au runner, indisponible en mode hébergé (oui) ; (2) éditeur : ADR de L3 avant M8, sujet `graph` admis seulement avec confirmation signée (M4), sinon l'éditeur conçoit sans déployer (oui) ; (3) tickets vers une instance Jira ou ServiceNow auto-hébergée par le runner seulement (oui) ; (4) M9 après M8 (oui).
+- 2026-11-24 : **M2-T06 `harden-batch` livrée** (`9796b8a`, phases tests puis impl) : obligations de M0 soldées.
+  - (bj) règle `no-temporal-type-decl` dans `internal/archtest/loopsrc.go` : hors `cmd/`, aucune déclaration de type (alias ou définition, de fichier ou locale) sur un type `go.temporal.io/...`, à travers pointeur, conteneur, instanciation générique ou champ incorporé ; aucune déclaration existante touchée. Le second volet de (bj) (contrôle `go/types` sur les champs des structures du SDK) reste ouvert : (bj2) [bas, avant M4].
+  - (bv) `unsafeQuoting` : une ligne avec `$'`, un accent grave, ou des guillemets à côté de `$(` n'est jamais jointe ; helper de test, donc rouge puis correctif en phase tests.
+  - (v), (by) motifs `watch` au jeu fermé `[a-z0-9._/*-]`. (s) aucune `\` hors guillemets doubles dans une aiguille de `contains` ou `equals`. (y) `readRegular` exige `os.SameFile` entre `Lstat` et le fichier ouvert sur le système de fichiers de l'OS ; deux descriptions en mémoire (tests) ne comparent que le type.
+  - (t) **portée à valider par l'humain** : 160 runes au plus pour toute ligne d'un fichier de suite ou de cas, **sauf la valeur opaque `input` d'un cas** (60 lignes de requêtes et de réponses du faux modèle des cas `intent` dépassent 160 runes, toutes dans `input`) ; deux espaces consécutives refusées dans une aiguille. Le risque visé par T64 (une fin d'aiguille cachée hors écran) porte sur `expect`, pas sur `input`.
+  - (w) déjà tenue depuis D18 de M1 (`baselinefile.go` : liste d'admission, 160 runes, JSON strict, clés exactes) ; une baseline hors bornes reste lue puis signalée par `Compare` (régression `baseline`, code 1), décision figée par `TestRegressionDetected` ; `TestBaselineLoadedWithCaseRules` est un test de caractérisation.
+  - Ajustements de tests consignés par le harnais : cas « fichier à la taille maximale » rempli de lignes de 100 octets au lieu d'une ligne de 64 Kio ; cas V11 sans double espace dans une aiguille ; fixtures d'autres règles de sources qui aliasaient un type du SDK hors `cmd/` (règle (bj) tolérée comme orthogonale dans `runSourceCases`, cas `positions` qui l'attend, alias retiré du cas `conforming`) ; lint seul.
+  - Preuves : critère 1 `7` ; critère 2 `demo` et `intent` codes 0, `regressions_vs_baseline` vide ; critère 3 `make -f Makefile verify-quick` rc=0.
+  - Revue sécurité : en cours (fiche : oui, T32, T64, T65, T67, T73, T77).
 
 
 ## En cours
@@ -1333,3 +1343,37 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-19 15:46 [harnais] PHASE FREE (discipline TDD suspendue) : tâche l2-loop terminée
 
 - 2026-11-19 15:46 [harnais] phase : impl -> free
+
+- 2026-11-24 19:11 [harnais] phase : free -> tests
+
+- 2026-11-24 19:22 [harnais] phase : tests -> impl
+
+- 2026-11-24 19:23 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T06: two existing tests contradict obligation (t): the full-size case is one 64 KiB comment line (refilled with 100-byte lines, same size), V11 kept a double blank in an equals needle (now refused by (t), single blanks kept)
+
+- 2026-11-24 19:23 [harnais] phase : impl -> tests
+
+- 2026-11-24 19:23 [harnais] phase : tests -> impl
+
+- 2026-11-24 19:24 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T06 (bj): fixtures of other source rules alias SDK types outside cmd/, now refused by no-temporal-type-decl: rule tolerated as orthogonal in runSourceCases, positions expects it, the alias leaves the conforming case
+
+- 2026-11-24 19:24 [harnais] phase : impl -> tests
+
+- 2026-11-24 19:25 [harnais] passage en impl avec tests verts (caractérisation) : M2-T06: fixtures adjusted, all seven obligations implemented
+
+- 2026-11-24 19:25 [harnais] phase : tests -> impl
+
+- 2026-11-24 19:25 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T06: lint-only fix of harden_test.go (errcheck on type assertions), assertions unchanged
+
+- 2026-11-24 19:25 [harnais] phase : impl -> tests
+
+- 2026-11-24 19:26 [harnais] passage en impl avec tests verts (caractérisation) : M2-T06: lint fix done
+
+- 2026-11-24 19:26 [harnais] phase : tests -> impl
+
+- 2026-11-24 19:28 [harnais] RETOUR EN PHASE TESTS depuis impl : M2-T06 (w): an out-of-range baseline stays read then reported by Compare (decision pinned by TestRegressionDetected); TestBaselineLoadedWithCaseRules pins the case rules of the loader and that report
+
+- 2026-11-24 19:28 [harnais] phase : impl -> tests
+
+- 2026-11-24 19:28 [harnais] passage en impl avec tests verts (caractérisation) : M2-T06 (w): characterization test of the baseline loader, already compliant since D18 of M1
+
+- 2026-11-24 19:28 [harnais] phase : tests -> impl
