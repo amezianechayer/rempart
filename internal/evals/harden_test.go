@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // Obligations of M0-T22 closed by M2-T06: (s), (t), (v) and (by), (w), (y).
@@ -203,5 +205,43 @@ func TestSuiteRootedSameFile(t *testing.T) {
 	}
 	if _, err := LoadBaseline(swapFS{rfs, "s/baseline.json", "s/decoy.json"}, "s/baseline.json"); !errors.Is(err, ErrInvalidBaseline) {
 		t.Errorf("swapped baseline: %v, want ErrInvalidBaseline", err)
+	}
+}
+
+// TestOpaqueInputIsBlockOnly proves obligations (fw) and (fz) (review of
+// M2-T06, T64): a case or suite whose top level is a flow mapping, or whose
+// content starts on the "---" line, is refused, so expect can never share a
+// line with input; the lines of the input value stay free of the 160-rune
+// bound but carry no run of blanks after their indentation and at most 4096
+// runes; the exemption never covers more lines than the file holds.
+func TestOpaqueInputIsBlockOnly(t *testing.T) {
+	pad := strings.Repeat(" ", 200)
+	for i, c := range [][2]string{
+		{caseF, "{id: c-001, loop: L1, expect: {status: converged," + pad + "must_not_include: [{path: $.a, contains: x}]}, input: {a: 1}}\n"},
+		{caseF, "{id: c-001, loop: L1, expect: {status: converged}, input: {a: 1}}\n"},
+		{caseF, "{id: c-001, loop: L1, expect: {status: converged}, input: {a: 1},\n loop2: x}\n"},
+		{caseF, "--- {id: c-001, loop: L1, input: {a: 1}, expect: {status: converged}}\n"},
+		{caseF, "--- id: c-001\nloop: L1\ninput: {a: 1}\nexpect: {status: converged}\n"},
+		{"s/suite.yaml", "{name: s, loop: L1, target: fake}\n"},
+		{caseF, strings.Replace(caseY, "input: {a: 1}\n", "input:\n  request: \"x"+pad+"y\"\n", 1)},
+		{caseF, strings.Replace(caseY, "input: {a: 1}\n", "input:\n  request: \""+strings.Repeat("é", 4097)+"\"\n", 1)},
+	} {
+		if _, err := LoadSuite(suiteFS(c[0], c[1]), "s"); !errors.Is(err, ErrInvalidSuite) {
+			t.Errorf("case %d: %v, want ErrInvalidSuite", i, err)
+		}
+	}
+	if _, err := LoadSuite(suiteFS(caseF, "---\n"+caseY), "s"); err != nil {
+		t.Errorf("a bare document marker: %v", err)
+	}
+	last := "id: c-001\nloop: L1\nexpect: {status: converged}\ninput:\n  request: \"" + strings.Repeat("é", 300) + "\"\n"
+	if _, err := LoadSuite(suiteFS(caseF, last), "s"); err != nil {
+		t.Fatalf("input as the last key: %v", err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(last), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if got := opaqueLines(&doc, strings.Count(last, "\n")+1); len(got) > strings.Count(last, "\n")+1 {
+		t.Errorf("opaqueLines covers %d lines of a %d-line file", len(got), strings.Count(last, "\n")+1)
 	}
 }

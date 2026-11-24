@@ -409,6 +409,7 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
     - (fx) [moyen, avant `/close-milestone M2`, T77, règle (an)] `shellComment` repart d'un état vide à chaque ligne physique : une chaîne ouverte sur plusieurs lignes fait passer pour conforme un `docker compose` lancé directement (reproduit en script et en recette) ; « dans le doute, refuser » : lexeur à état sur plusieurs lignes, toute ligne qui finit dans un guillemet ou porte une forme non suivie devient un problème signalé.
     - (fy) [moyen, préexistant, avant `/close-milestone M2`, T77] `composeCallRe` ne voit ni deux espaces ni une tabulation entre `docker` et `compose` : `\bdocker[ \t]+compose\b` ou découpage en mots.
     - (fz) [bas, avant M2-T07] `opaqueLines` insère 2^20 entrées quand `input` est la dernière clé (environ 100 ms par cas, 2 minutes à 1000 cas) : borner au nombre de lignes du fichier.
+    - **(fw) et (fz) soldées le 2026-11-24** : premier niveau d'un fichier de suite ou de cas en style bloc seulement, aucun contenu sur une ligne `---` ; seules les lignes de la valeur de `input` d'un mapping bloc sont exemptées de la borne de 160 runes, avec 4096 runes au plus et aucune suite de blancs après l'indentation ; exemption bornée au nombre de lignes du fichier. `TestOpaqueInputIsBlockOnly` (scénarios de la revue refusés), suites `demo` et `intent` sans régression, `verify-quick` rc=0. Le résidu de T64 (contenu long dans `input`) reste à accepter par l'humain.
     - (bj2) étendu [bas, avant M4] `temporalType` liste des formes et laisse passer le reste (type fonction, méthodes d'interface, termes de contrainte, champ nommé de struct anonyme incorporant un type du SDK) : inverser pour échouer fermé.
     - (ga) [bas, avant M4] le repli de `sameFile` pour deux descriptions sans `Sys` reste atteignable par l'API exportée (inatteignable en production) : le réserver aux tests.
   - **M2-T06 `harden-batch` close** : critères 1 à 3 tenus ; revue PASS ; (fw), (fz) traitées avant M2-T07, (fx), (fy) avant la clôture du jalon.
@@ -1388,3 +1389,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-24 19:45 [harnais] PHASE FREE (discipline TDD suspendue) : tâche harden-batch terminée
 
 - 2026-11-24 19:45 [harnais] phase : impl -> free
+
+- 2026-11-24 19:45 [harnais] phase : free -> tests
+
+- 2026-11-24 19:45 [harnais] phase : tests -> impl
+
+- 2026-11-24 19:47 [harnais] PHASE FREE (discipline TDD suspendue) : obligations fw et fz soldées
+
+- 2026-11-24 19:47 [harnais] phase : impl -> free

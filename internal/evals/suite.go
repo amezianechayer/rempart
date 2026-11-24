@@ -158,8 +158,11 @@ func decodeFile(fsys fs.ReadLinkFS, name string, out any) error {
 	if dec.Decode(&doc) != nil || !errors.Is(dec.Decode(new(yaml.Node)), io.EOF) || !plain(&doc, 0, typed, runeLines(data)) {
 		return invalid(name, "not one plain YAML document")
 	}
-	if !boundedLines(data, opaqueLines(&doc)) {
-		return invalid(name, "line longer than 160 runes")
+	if blockTop(&doc) != nil || contentOnMarker(data) {
+		return invalid(name, "top level not in block style")
+	}
+	if !boundedLines(data, opaqueLines(&doc, strings.Count(string(data), "\n")+1)) {
+		return invalid(name, "line too long or padded")
 	}
 	var v any
 	if doc.Decode(&v) != nil {
@@ -193,11 +196,36 @@ func admitted(data []byte) bool {
 	return true
 }
 
+// blockTop returns an error unless the top level of doc is a mapping in
+// block style (obligation (fw)): in flow style, expect could share the line
+// of input and escape the line bound.
+func blockTop(doc *yaml.Node) error {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode ||
+		doc.Content[0].Style&yaml.FlowStyle != 0 {
+		return errors.New("top level not a block mapping")
+	}
+	return nil
+}
+
+// contentOnMarker reports content written on a "---" document marker line
+// (obligation (fw)).
+func contentOnMarker(data []byte) bool {
+	for line := range strings.SplitSeq(string(data), "\n") {
+		rest, marker := strings.CutPrefix(strings.TrimSuffix(line, "\r"), "---")
+		if marker && strings.TrimSpace(rest) != "" && !strings.HasPrefix(strings.TrimSpace(rest), "#") {
+			return true
+		}
+	}
+	return false
+}
+
 // opaqueLines returns the lines, from 1, of the value of the top-level key
-// input: the opaque input of a case, free of the line bound (obligation (t)).
-func opaqueLines(doc *yaml.Node) map[int]bool {
+// input of a block mapping: the opaque input of a case, free of the 160-rune
+// bound (obligation (t)); never more than the lines of the file (lines), so
+// the cost stays linear (obligation (fz)).
+func opaqueLines(doc *yaml.Node, lines int) map[int]bool {
 	out := map[int]bool{}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+	if blockTop(doc) != nil {
 		return out
 	}
 	m := doc.Content[0].Content
@@ -205,23 +233,33 @@ func opaqueLines(doc *yaml.Node) map[int]bool {
 		if m[i].Value != "input" {
 			continue
 		}
-		end := 1 << 30 // to the end of the file
+		end := lines + 1
 		if i+2 < len(m) {
-			end = m[i+2].Line
+			end = min(end, m[i+2].Line)
 		}
-		for l := m[i].Line; l < end && l-m[i].Line < 1<<20; l++ {
+		for l := m[i].Line; l < end; l++ {
 			out[l] = true
 		}
 	}
 	return out
 }
 
-// boundedLines reports whether every line of data, but the opaque ones, holds
-// at most maxLineRunes runes (obligation (t), T64: no needle hidden past the
-// edge of a review).
+// maxOpaqueRunes bounds a line of the opaque input (obligation (fw)).
+const maxOpaqueRunes = 4096
+
+// boundedLines reports whether every line of data holds at most maxLineRunes
+// runes (obligation (t), T64: no needle hidden past the edge of a review); a
+// line of the opaque input holds at most maxOpaqueRunes runes and no run of
+// blanks after its indentation, which would push content out of sight
+// (obligation (fw)).
 func boundedLines(data []byte, opaque map[int]bool) bool {
 	for i, line := range strings.Split(string(data), "\n") {
-		if !opaque[i+1] && utf8.RuneCountInString(strings.TrimSuffix(line, "\r")) > maxLineRunes {
+		line = strings.TrimSuffix(line, "\r")
+		n := utf8.RuneCountInString(line)
+		switch {
+		case !opaque[i+1] && n > maxLineRunes:
+			return false
+		case opaque[i+1] && (n > maxOpaqueRunes || strings.Contains(strings.TrimLeft(line, " "), "  ")):
 			return false
 		}
 	}
