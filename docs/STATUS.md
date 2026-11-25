@@ -428,6 +428,15 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
   - Ajustements consignés par le harnais (retours en phase tests) : clé `description` du texte injecté hors schéma du graphe (refusée par le décodage strict de la cible, ignorée en silence par l'exécuteur jetable de l'agent) remplacée par `justification`, et contrôle de sa présence ajouté au test de composition ; attente du chemin de baseline corrigée (`evals/design/baseline.json`) ; lint seul.
   - Preuves : critère 2 `15` ; critère 3 `4` ; `make -f Makefile verify-quick` rc=0 ; `make evals EVAL=demo` et `EVAL=intent` codes 0, `regressions_vs_baseline` vide ; `go tool govulncheck ./...` « No vulnerabilities found ». Critères 1 et 4 : **en attente de l'étape humaine H3-design** (`make evals EVAL=design` exécute les 18 cas puis rend le code 3, baseline absente) ; critère 5 : l'étape `--suite changed` de `make verify` rend aussi le code 3 pour `design` tant que la baseline manque, et l'étape d'intégration exige la pile de développement.
   - Revue sécurité : non par tâche (fiche ; revue de clôture du jalon, T88).
+  - **Étapes humaines faites** (2026-11-24, sur le poste de l'humain, WSL2) : H3-design (`f646b13`, baseline `evals/design/baseline.json` commitée par l'humain : 18 cas, succès 1, résistance 1) ; tags `m1-done` sur `810c15e` et `m2-start` sur `845b449` poussés ; `make l2-demo` et `make verify` lancés par l'humain (« J'ai fait cela »). Vérifié par l'agent : critère 1 de M2-T07 `make evals EVAL=design` code 0, 18 cas, succès 1, résistance 1, `regressions_vs_baseline` vide ; critère 4 : seule l'adresse de l'humain sur la baseline. **M2-T07 close.**
+- 2026-11-25 : **M2-T08 `l2-harden`** (obligations (fp), (fq), (fs), (ft) de la revue de M2-T05, en retard sur leur date « avant M2-T07 » ; phases tests puis impl ; mode allégé, plan court ci-dessous).
+  - (fp) `verify.Derives(initial, candidat)` (`internal/design/verify/derives.go`) : le candidat dérive du sujet par la table fermée de l'ADR 0012 D1, sinon `ErrNotDerived`. En-tête et texte libre inchangés ; mêmes nœuds, même nature, attributs changés seulement vers la restriction (drapeaux publics à faux, protections à vrai, identité de workload, sources d'API publique retirées avec elle, écouteurs réduits ou passés en https) ; arêtes gardées avec mêmes extrémités, texte et attributs, sauf `via` vers `vpn_site_to_site` et actions dont la fermeture diminue ; renommage seulement `http` vers `https` sur les mêmes ports (exposition ou flux depuis Internet) ; adhésion déplacée seulement vers le sous-réseau `data` du même VPC ; retraits seulement parmi expositions, flux depuis Internet, permissions et adhésions déplacées ; atteignabilité incluse dans l'initiale. Appelée dans `Verify` (refus non rejouable, jamais un finding à réviser : la boucle escalade) et dans `Finalize` (refus, jamais de graphe livré).
+  - (fq) `TestRevisionNeverWidens` : base enrichie `internal/design/revise/testdata/enriched.graph.json` (exposition `http`, flux `http` depuis Internet, sous-réseau `data` du VPC AWS, hôte de donnée réglementée dans le tier app), constats ciblés, couverture de `https_only` et `move_to_data_tier` exigée, arêtes appariées par (type, extrémités, ports, protocole lu `http` pour `https`), `Derives` exigé sur chaque révision. Nouvelle propriété `TestProposeIterationsMatchRevise` : `Propose` sur 2 à 5 itérations (findings du vérificateur ou tirés) égale le réviseur composé en mémoire, chaque candidat dérivé. Règle « décoder dans une valeur nulle » et anti-motif « vérificateur sans contrôle de dérivation » ajoutés au skill `loop-engineering` (**skill modifié, à relire par l'humain**).
+  - (fs) `initial_findings` et `advisories` bornés aux 100 plus graves (`MaxReportedFindings`), compteurs `initial_findings_omitted` et `advisories_omitted` dans la sortie de L2 (`TestFinalizeBoundsFindings`).
+  - (ft) `Prepare` : tenant puis borne du sujet (64 Kio encodés) avant tout schéma, Build, atteignabilité ou confirmation, escalade `payload_too_large` (`TestPrepareBoundsSubjectFirst`) ; la raison de la boucle passe à `Finalize`, et `invalid_response` (seule cause en L2 : candidat révisé au-delà de sa borne) s'explique `payload_too_large` (`TestFinalizeExplainsOversizeRevision`, `TestL2OversizeCandidateEscalatesPayloadTooLarge`).
+  - Fiche `docs/loops/L2.md` mise à jour (étapes prepare, verify, finalize, sorties). Aucun changement de séquence de commandes du workflow (champ ajouté à la requête de `Finalize`), donc (fo) sans objet ici.
+  - Ajustements consignés par le harnais : lint seul sur les nouveaux tests (gofumpt, G304 sur un chemin de fixture, identifiant `max`).
+  - Preuves : `make -f Makefile verify-quick` rc=0 ; `make evals EVAL=design`, `demo`, `intent` codes 0, aucune régression.
 
 
 ## En cours
@@ -453,8 +462,8 @@ Préalables humains (étape H0 du plan) :
 6. Choisir le point d'entrée produit (n'affecte pas M0, mais M1 à M4).
 
 ## Reste à faire
-- **M2, étape humaine H3-design** (fin de M2-T07) : `make update-baseline EVAL=design` puis commit de `evals/design/baseline.json` par l'humain ; débloque les critères 1, 4 et 5 de M2-T07 et l'étape `--suite changed` de `make verify`. Valider aussi les écarts de M2-T07 consignés dans « Fait » (entrée `unconfirmed` au lieu d'une `confirmation`, graphe de base compact, trappe 13 sur RES-002 seul).
-- **M2, en retard** : les obligations (fp), (fq), (fs) et (ft), datées « avant M2-T07 », restent ouvertes alors que M2-T07 est livrée (oubli de l'agent à la reprise après compaction) ; à traiter en priorité, avant toute autre tâche.
+- ~~M2, étape humaine H3-design~~ : faite (`f646b13`). Reste à l'humain : valider les écarts de M2-T07 consignés dans « Fait » (entrée `unconfirmed` au lieu d'une `confirmation`, graphe de base compact, trappe 13 sur RES-002 seul).
+- ~~M2, en retard : (fp), (fq), (fs), (ft)~~ : soldées par M2-T08 `l2-harden` (revue sécurité en cours).
 - **M2, avant `/close-milestone M2`** : obligations (fx), (fy), (fj) ; menaces T108, T109, T111 à T117 à inscrire au modèle.
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
@@ -1439,3 +1448,19 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-24 20:10 [harnais] PHASE FREE (discipline TDD suspendue) : tâche evals-design terminée
 
 - 2026-11-24 20:10 [harnais] phase : impl -> free
+
+- 2026-11-25 01:06 [harnais] phase : free -> tests
+
+- 2026-11-25 01:10 [harnais] phase : tests -> impl
+
+- 2026-11-25 01:13 [harnais] RETOUR EN PHASE TESTS depuis impl : lint only on the new tests: gofumpt, gosec G304 on a fixture path, predeclared max
+
+- 2026-11-25 01:13 [harnais] phase : impl -> tests
+
+- 2026-11-25 01:13 [harnais] passage en impl avec tests verts (caractérisation) : lint-only fix of the new tests; implementation already in place and tests green
+
+- 2026-11-25 01:13 [harnais] phase : tests -> impl
+
+- 2026-11-25 01:15 [harnais] PHASE FREE (discipline TDD suspendue) : tâche l2-harden terminée, revue sécurité à suivre
+
+- 2026-11-25 01:15 [harnais] phase : impl -> free

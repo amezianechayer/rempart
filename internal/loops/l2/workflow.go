@@ -58,11 +58,15 @@ type Output struct {
 	Graph           *graphdomain.Graph    `json:"graph,omitempty"`
 	Applied         []Applied             `json:"applied"`
 	InitialFindings []loopsdomain.Finding `json:"initial_findings"`
-	Advisories      []loopsdomain.Finding `json:"advisories"`
-	Threats         *threat.Model         `json:"threats,omitempty"`
-	ThreatDelta     *threat.Delta         `json:"threat_delta,omitempty"`
-	Explanation     []Explanation         `json:"explanation,omitempty"`
-	Loop            loops.LoopResult      `json:"loop"`
+	// InitialFindingsOmitted and AdvisoriesOmitted count the findings beyond
+	// the bound of the output, the gravest kept (obligation (fs)).
+	InitialFindingsOmitted int                   `json:"initial_findings_omitted"`
+	Advisories             []loopsdomain.Finding `json:"advisories"`
+	AdvisoriesOmitted      int                   `json:"advisories_omitted"`
+	Threats                *threat.Model         `json:"threats,omitempty"`
+	ThreatDelta            *threat.Delta         `json:"threat_delta,omitempty"`
+	Explanation            []Explanation         `json:"explanation,omitempty"`
+	Loop                   loops.LoopResult      `json:"loop"`
 }
 
 // Spec is the loop of docs/loops/L2.md: one deterministic strategy, no model.
@@ -107,12 +111,15 @@ func Workflow(ctx workflow.Context, in Input) (Output, error) {
 	best := loop.Best
 	loop.Best = nil // the best candidate never leaves L2; the verified graph is the only deliverable
 	out.Loop = loop
-	req := activities.FinalizeRequest{Payload: prep.Payload, Best: best, Converged: loop.Status == loops.StatusConverged, Remaining: loop.Remaining}
+	req := activities.FinalizeRequest{
+		Payload: prep.Payload, Best: best, Converged: loop.Status == loops.StatusConverged, Reason: string(loop.Reason), Remaining: loop.Remaining,
+	}
 	var fin activities.Finalized
 	if err := workflow.ExecuteActivity(sctx, FinalizeActivity, req).Get(ctx, &fin); err != nil {
 		return Output{}, err
 	}
 	out.Applied, out.InitialFindings, out.Advisories = fin.Applied, fin.InitialFindings, fin.Advisories
+	out.InitialFindingsOmitted, out.AdvisoriesOmitted = fin.InitialFindingsOmitted, fin.AdvisoriesOmitted
 	if !req.Converged {
 		out.Status, out.Reason, out.Explanation = StatusEscalated, string(loop.Reason), fin.Explanation
 		return out, nil

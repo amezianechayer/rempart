@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/mock"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
@@ -20,6 +21,7 @@ import (
 	graphdomain "github.com/amezianechayer/rempart/internal/graph/domain"
 	"github.com/amezianechayer/rempart/internal/intent"
 	intentdomain "github.com/amezianechayer/rempart/internal/intent/domain"
+	"github.com/amezianechayer/rempart/internal/loops"
 	"github.com/amezianechayer/rempart/internal/loops/l2"
 	"github.com/amezianechayer/rempart/internal/loops/l2/activities"
 	"github.com/amezianechayer/rempart/internal/policy/adapters/opa"
@@ -456,6 +458,26 @@ func TestL2SpecIsTheSheet(t *testing.T) {
 // (NET-006, escalate); once the reviser removed the SSH exposure, the next
 // iterations must not lend its source to the open one: the run escalates on
 // NET-006, never converges.
+// TestL2OversizeCandidateEscalatesPayloadTooLarge (obligation (ft), T24,
+// T112): a proposal larger than the bound of a candidate makes the loop
+// escalate (invalid_response); the workflow hands the reason to Finalize,
+// which explains payload_too_large, without graph.
+func TestL2OversizeCandidateEscalatesPayloadTooLarge(t *testing.T) {
+	h := newHarness(t, tenant)
+	big := json.RawMessage(`{"pad":"` + strings.Repeat("a", loops.MaxCandidateBytes) + `"}`)
+	h.env.OnActivity(l2.ProposeActivity, mock.Anything, mock.Anything).Return(loops.ProposeResponse{Candidate: big}, nil)
+	out, err := h.run(t, confirmed(t, irOf(t, referenceIR, nil)))
+	if err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+	if out.Status != l2.StatusEscalated || out.Reason != string(loops.ReasonInvalidResponse) || out.Graph != nil {
+		t.Fatalf("output %s %s, graph %v; want escalated invalid_response without graph", out.Status, out.Reason, out.Graph != nil)
+	}
+	if len(out.Explanation) != 1 || out.Explanation[0].Code != activities.CodePayloadTooLarge {
+		t.Errorf("explanation %+v; want only payload_too_large", out.Explanation)
+	}
+}
+
 func TestL2ThirdIterationKeepsOtherEdges(t *testing.T) {
 	raw, err := os.ReadFile(sshGraph)
 	if err != nil {

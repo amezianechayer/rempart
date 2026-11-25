@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"testing"
 
 	"pgregory.net/rapid"
@@ -56,6 +57,35 @@ func sshTrap(t testing.TB) graphdomain.Graph {
 		t.Fatal(err)
 	}
 	return g
+}
+
+// enriched is the reference graph with what it lacks for the table of ADR
+// 0012 D1 (obligation (fq)): an http exposure and an http flow from the
+// Internet (https_only), a data subnet in the AWS VPC and a host of
+// regulated data in the app tier (move_to_data_tier).
+func enriched(t testing.TB) graphdomain.Graph {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/enriched.graph.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g graphdomain.Graph
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	if !valid(g) {
+		t.Fatal("enriched graph invalid")
+	}
+	return g
+}
+
+// targets of the enriched graph for the remediations the reference graph
+// cannot exercise.
+var targets = map[policydomain.Remediation][]string{
+	policydomain.RemediationHTTPSOnly: {
+		"lb:web-80", "exposes|lb:web-80|internet|http/80", "can_reach|internet|wl:billing|http/8080",
+	},
+	policydomain.RemediationMoveToDataTier: {"wl:billing"},
 }
 
 func clone(t testing.TB, g graphdomain.Graph) graphdomain.Graph {
@@ -184,11 +214,22 @@ func isTrue(p *bool) bool { return p != nil && *p }
 // turns off, no credential becomes static, no placement, prefix,
 // classification, residency or regulation changes, no node is added or
 // removed, and a revision is reported only for a change of the graph.
+//
+// Obligation (fq): the enriched base exercises https_only and
+// move_to_data_tier, whose coverage is required; edges are paired across the
+// renaming of https_only; every revision derives from its input for the
+// verifier (verify.Derives, obligation (fp)).
 func TestRevisionNeverWidens(t *testing.T) {
-	bases := []graphdomain.Graph{reference(t), sshTrap(t)}
+	bases := []graphdomain.Graph{reference(t), sshTrap(t), enriched(t)}
 	controls := allControls(t)
+	byRemediation := map[policydomain.Remediation][]policydomain.Control{}
+	for _, c := range controls {
+		byRemediation[c.Remediation] = append(byRemediation[c.Remediation], c)
+	}
+	covered := map[policydomain.Remediation]int{}
 	rapid.Check(t, func(rt *rapid.T) {
-		g := clone(t, bases[rapid.IntRange(0, len(bases)-1).Draw(rt, "base")])
+		b := rapid.IntRange(0, len(bases)-1).Draw(rt, "base")
+		g := clone(t, bases[b])
 		weak := clone(t, g)
 		mutate(rt, &weak)
 		if valid(weak) {
@@ -206,6 +247,14 @@ func TestRevisionNeverWidens(t *testing.T) {
 			c := rapid.SampledFrom(controls).Draw(rt, "control")
 			fs = append(fs, loopsdomain.Finding{Code: c.ID, Severity: c.Severity, Resource: rapid.SampledFrom(ids).Draw(rt, "resource")})
 		}
+		if b == 2 {
+			for _, r := range []policydomain.Remediation{policydomain.RemediationHTTPSOnly, policydomain.RemediationMoveToDataTier} {
+				if rapid.Bool().Draw(rt, "target "+string(r)) {
+					c := rapid.SampledFrom(byRemediation[r]).Draw(rt, "targeted control")
+					fs = append(fs, loopsdomain.Finding{Code: c.ID, Severity: c.Severity, Resource: rapid.SampledFrom(targets[r]).Draw(rt, "targeted resource")})
+				}
+			}
+		}
 		before := clone(t, g)
 		got, applied, err := revise.Revise(g, fs, controls)
 		if err != nil {
@@ -215,7 +264,37 @@ func TestRevisionNeverWidens(t *testing.T) {
 			rt.Fatalf("Revise modified its input")
 		}
 		checkNeverWidens(rt, before, got, applied, fs)
+		if err := verify.Derives(before, got); err != nil {
+			rt.Fatalf("(fp) the verifier refuses a revision of the table: %v (applied %+v)", err, applied)
+		}
+		for _, a := range applied {
+			covered[a.Remediation]++
+		}
 	})
+	for _, r := range []policydomain.Remediation{policydomain.RemediationHTTPSOnly, policydomain.RemediationMoveToDataTier} {
+		if covered[r] == 0 {
+			t.Errorf("(fq) %s never applied by the property", r)
+		}
+	}
+}
+
+// edgeKey pairs an edge with its revision: https_only renames it, so the key
+// is its type, ends, ports and protocol with https read as http.
+func edgeKey(e graphdomain.Edge) string {
+	k := string(e.Type) + "|" + e.Src + "|" + e.Dst
+	for _, p := range []*int{e.Attrs.PortFrom, e.Attrs.PortTo} {
+		if p == nil {
+			k += "|-"
+		} else {
+			k += "|" + strconv.Itoa(*p)
+		}
+	}
+	if p := e.Attrs.Protocol; p != nil && *p != "https" {
+		k += "|" + *p
+	} else if p != nil {
+		k += "|http"
+	}
+	return k
 }
 
 func checkNeverWidens(t *rapid.T, g, h graphdomain.Graph, applied []revise.Applied, fs []loopsdomain.Finding) {
@@ -259,10 +338,15 @@ func checkNeverWidens(t *rapid.T, g, h graphdomain.Graph, applied []revise.Appli
 		}
 	}
 	edges := map[string]graphdomain.Edge{}
+	paired := map[string]graphdomain.Edge{}
 	for _, e := range g.Edges {
 		edges[e.ID] = e
+		paired[edgeKey(e)] = e
 	}
 	for _, e := range h.Edges {
+		if o, kept := paired[edgeKey(e)]; kept && !slices.Equal(o.Attrs.AllowedSources, e.Attrs.AllowedSources) {
+			t.Fatalf("(3) %s: sources changed (paired with %s)", e.ID, o.ID)
+		}
 		o, kept := edges[e.ID]
 		switch e.Type {
 		case graphdomain.EdgeHasPermission, graphdomain.EdgeRunsAs:

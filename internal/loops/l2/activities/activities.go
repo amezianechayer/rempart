@@ -39,6 +39,9 @@ const (
 	StrategyCatalog       = "catalog"
 	ErrTypeInvalidL2Input = "InvalidL2Input"
 	MaxExplanations       = 20
+	// MaxReportedFindings bounds the initial findings and the advisories of
+	// the output, the gravest kept (obligation (fs), T112).
+	MaxReportedFindings = 100
 )
 
 // Activities: Tenant comes from the worker configuration, never from an
@@ -89,24 +92,29 @@ type Prepared struct {
 }
 
 // FinalizeRequest: the payload, the best candidate of the loop (never
-// returned when escalated) and its remaining findings.
+// returned when escalated), the reason of an escalation and the remaining
+// findings.
 type FinalizeRequest struct {
 	Payload   json.RawMessage       `json:"payload"`
 	Best      json.RawMessage       `json:"best,omitempty"`
 	Converged bool                  `json:"converged"`
+	Reason    string                `json:"reason,omitempty"`
 	Remaining []loopsdomain.Finding `json:"remaining"`
 }
 
 // Finalized is the result of Finalize: graph and threat models only when
-// converged, explanation only when escalated.
+// converged, explanation only when escalated; initial findings and
+// advisories bounded, with the count of the omitted ones.
 type Finalized struct {
-	Graph           *graphdomain.Graph    `json:"graph,omitempty"`
-	Applied         []revise.Applied      `json:"applied"`
-	InitialFindings []loopsdomain.Finding `json:"initial_findings"`
-	Advisories      []loopsdomain.Finding `json:"advisories"`
-	Threats         *threat.Model         `json:"threats,omitempty"`
-	ThreatDelta     *threat.Delta         `json:"threat_delta,omitempty"`
-	Explanation     []Explanation         `json:"explanation,omitempty"`
+	Graph                  *graphdomain.Graph    `json:"graph,omitempty"`
+	Applied                []revise.Applied      `json:"applied"`
+	InitialFindings        []loopsdomain.Finding `json:"initial_findings"`
+	InitialFindingsOmitted int                   `json:"initial_findings_omitted"`
+	Advisories             []loopsdomain.Finding `json:"advisories"`
+	AdvisoriesOmitted      int                   `json:"advisories_omitted"`
+	Threats                *threat.Model         `json:"threats,omitempty"`
+	ThreatDelta            *threat.Delta         `json:"threat_delta,omitempty"`
+	Explanation            []Explanation         `json:"explanation,omitempty"`
 }
 
 func refuse(msg, errType string) error {
@@ -128,13 +136,38 @@ func (a *Activities) ready() error {
 // Prepare refuses (InvalidL2Input, no activity of the loop) zero or two
 // subjects, a subject of another tenant or outside its schema, a confirmation
 // of another subject or document, a forged key; it escalates before the loop
-// when Build refuses the IR or the subject exceeds the bounds of the loop.
+// when the subject exceeds the bound of a candidate (checked first, before
+// any schema, Build, reachability or confirmation work: obligation (ft)),
+// when Build refuses the IR or when the payload exceeds the bounds of the
+// loop.
 func (a *Activities) Prepare(_ context.Context, in Input) (Prepared, error) {
 	if err := a.ready(); err != nil {
 		return Prepared{}, err
 	}
 	if (in.IR == nil) == (in.Graph == nil) {
 		return Prepared{}, invalidInput()
+	}
+	var subject string
+	var raw []byte
+	var err error
+	if in.IR != nil {
+		if in.IR.TenantID != string(a.Tenant) {
+			return Prepared{}, invalidInput()
+		}
+		subject = confirm.SubjectIR
+		raw, err = json.Marshal(*in.IR)
+	} else {
+		if in.Graph.TenantID != string(a.Tenant) {
+			return Prepared{}, invalidInput()
+		}
+		subject = confirm.SubjectGraph
+		raw, err = json.Marshal(*in.Graph)
+	}
+	if err != nil {
+		return Prepared{}, refuse("L2 subject not encodable", loops.ErrTypeValidation)
+	}
+	if encodedLen(raw) > loops.MaxCandidateBytes {
+		return escalated(subject, reach.ErrGraphTooLarge), nil
 	}
 	p := payload{Context: designContext{AllowedRegions: []string{}, ForbiddenClouds: []string{}, WorkloadRoles: map[string]string{}}}
 	var doc any
@@ -180,7 +213,7 @@ func (a *Activities) Prepare(_ context.Context, in Input) (Prepared, error) {
 	if err != nil {
 		return Prepared{}, refuse("L2 candidate not encodable", loops.ErrTypeValidation)
 	}
-	raw, err := json.Marshal(p)
+	raw, err = json.Marshal(p)
 	if err != nil {
 		return Prepared{}, refuse("L2 payload not encodable", loops.ErrTypeValidation)
 	}
@@ -316,6 +349,11 @@ func (a *Activities) Verify(ctx context.Context, req loops.VerifyRequest) (loops
 	if !ok || !decodeStrict(req.Candidate, &cand) {
 		return loops.VerifyResult{}, refuse("invalid verify request", loops.ErrTypeValidation)
 	}
+	// A candidate never derived from the subject by the table of revisions is
+	// refused, never revised (obligation (fp), T110, T122).
+	if verify.Derives(p.Initial.Graph, cand.Graph) != nil {
+		return loops.VerifyResult{}, refuse("L2 candidate not derived from the subject", loops.ErrTypePolicyViolation)
+	}
 	fs, err := verify.Candidate(ctx, a.Policy, cand.Graph, string(a.Tenant), p.verifyContext())
 	if err != nil {
 		return loops.VerifyResult{}, refuse("L2 verification failed", loops.ErrTypePolicyViolation)
@@ -364,17 +402,25 @@ func (a *Activities) Finalize(ctx context.Context, req FinalizeRequest) (Finaliz
 	if err != nil {
 		return Finalized{}, refuse("L2 verification failed", loops.ErrTypePolicyViolation)
 	}
-	out := Finalized{Applied: []revise.Applied{}, InitialFindings: initial, Advisories: []loopsdomain.Finding{}}
+	out := Finalized{Applied: []revise.Applied{}, Advisories: []loopsdomain.Finding{}}
+	out.InitialFindings, out.InitialFindingsOmitted = bounded(initial)
 	var best Candidate
 	haveBest := len(req.Best) > 0 && decodeStrict(req.Best, &best)
 	if haveBest && best.Applied != nil {
 		out.Applied = best.Applied
 	}
 	if !req.Converged {
+		// In L2 the activities are deterministic and Verify bounds its
+		// findings: invalid_response only comes from a candidate beyond its
+		// bound (obligation (ft)).
+		if req.Reason == string(loops.ReasonInvalidResponse) {
+			out.Explanation = []Explanation{explain(CodePayloadTooLarge, "", p.Subject)}
+			return out, nil
+		}
 		out.Explanation = explainAll(req.Remaining, p)
 		return out, nil
 	}
-	if !haveBest {
+	if !haveBest || verify.Derives(p.Initial.Graph, best.Graph) != nil {
 		return Finalized{}, refuse("invalid final candidate", loops.ErrTypeValidation)
 	}
 	final, err := verify.Candidate(ctx, a.Policy, best.Graph, string(a.Tenant), vc)
@@ -395,8 +441,19 @@ func (a *Activities) Finalize(ctx context.Context, req FinalizeRequest) (Finaliz
 		return Finalized{}, refuse("L2 threat delta failed", loops.ErrTypeValidation)
 	}
 	g := best.Graph
-	out.Graph, out.Threats, out.ThreatDelta, out.Advisories = &g, &after, &delta, minor(final)
+	out.Graph, out.Threats, out.ThreatDelta = &g, &after, &delta
+	out.Advisories, out.AdvisoriesOmitted = bounded(minor(final))
 	return out, nil
+}
+
+// bounded keeps the MaxReportedFindings gravest findings and counts the
+// others (obligation (fs), T112).
+func bounded(fs []loopsdomain.Finding) ([]loopsdomain.Finding, int) {
+	kept := loopsdomain.Top(fs, MaxReportedFindings)
+	if kept == nil {
+		kept = []loopsdomain.Finding{}
+	}
+	return kept, len(fs) - len(kept)
 }
 
 // pack: the controls evaluated for a candidate (ADR 0010 D12): the design

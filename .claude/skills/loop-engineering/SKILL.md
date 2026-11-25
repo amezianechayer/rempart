@@ -29,6 +29,8 @@ Une boucle agentique fiable est un système de contrôle, pas « le LLM réessai
 - Boucle sans budget ou sans escalade.
 - Retour au LLM de 2 000 lignes de sortie d'outil.
 - Régénération complète à chaque itération (perte des parties déjà correctes).
+- Activité qui décode un candidat, un meilleur candidat ou une charge dans une valeur préremplie (par exemple le candidat initial) : les champs absents du JSON héritent de l'ancienne valeur, élément par élément de tranche réutilisé. Une activité décode toujours dans une valeur nulle, en mode strict (revue de M2-T05, T122 ; propriété « `Propose` sur plusieurs itérations égale le réviseur composé en mémoire »).
+- Vérificateur qui juge un candidat sans contrôler qu'il dérive du sujet : un candidat qui ajoute un nœud, rouvre un drapeau ou retire une arête de stockage peut passer les politiques. Le vérificateur d'une boucle qui restreint contrôle d'abord la dérivation (`verify.Derives` en L2, obligation (fp)).
 
 ## Tests obligatoires par boucle (testsuite Temporal)
 Convergence ; stagnation puis changement de stratégie ; stagnation puis escalade ; dépassement de budget (itérations, tokens, temps) ; timeout d'approbation ; approbation sur un mauvais hash (ignorée, l'attente continue) ; signature invalide ignorée ; auto-approbation par l'auteur ignorée ; quorum de deux approbateurs dont un rôle sécurité pour un risque critique ; refus authentifié ; rejeu idempotent.
