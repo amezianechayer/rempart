@@ -19,3 +19,12 @@
 # M0-T23 (T83) : un grader, une cible ou une sélection affaiblis masquent une régression sans toucher evals/.
 /cmd/rempart-evals/ @amezianechayer
 /internal/evals/ @amezianechayer
+# Clôture de M2 (revue sécurité, T108) : schémas, invariants du cœur de L2, confinement d'OPA,
+# table de juridiction, critères des jalons et modèle de menace.
+/schemas/ @amezianechayer
+/internal/design/verify/ @amezianechayer
+/internal/policy/adapters/opa/capabilities.json @amezianechayer
+/internal/policy/adapters/opa/engine.go @amezianechayer
+/internal/policy/domain/jurisdiction.go @amezianechayer
+/prompts/ @amezianechayer
+/docs/02-THREAT-MODEL.md @amezianechayer
