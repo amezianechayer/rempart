@@ -1,0 +1,17 @@
+# 2026/11/25 01:32:12.706370 [TestProposeIterationsMatchRevise] [rapid] draw base: 2
+# 2026/11/25 01:32:12.706628 [TestProposeIterationsMatchRevise] [rapid] draw iterations: 2
+# 2026/11/25 01:32:12.706632 [TestProposeIterationsMatchRevise] [rapid] draw verifier findings: true
+# 2026/11/25 01:32:12.711880 [TestProposeIterationsMatchRevise] [rapid] draw random findings: 0
+# 2026/11/25 01:32:12.720534 [TestProposeIterationsMatchRevise] iteration 2: candidate refused by Derives: verify: candidate not derived from the subject
+# 
+v0.4.8#12819375360153124430
+0x0
+0x38e38e38e38e4
+0x2
+0x0
+0x0
+0x0
+0x1
+0x0
+0x0
+0x0

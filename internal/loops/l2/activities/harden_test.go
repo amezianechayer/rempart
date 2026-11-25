@@ -88,8 +88,18 @@ func TestProposeIterationsMatchRevise(t *testing.T) {
 	e := design(t)
 	a := &activities.Activities{Tenant: tenant, Policy: e}
 	controls := append(e.Controls(), verify.CoreControls()...)
-	bases := []graphdomain.Graph{graphAt(t, enrichedPath), graphAt(t, sshPath)}
-	payloads := []json.RawMessage{prepared(t, a, bases[0]), prepared(t, a, bases[1])}
+	odd := graphAt(t, enrichedPath) // identifiers the schema admits, the builder never writes
+	for i := range odd.Edges {
+		switch odd.Edges[i].ID {
+		case "exposes|lb:web-80|internet|http/80":
+			odd.Edges[i].ID = "exposes|lb:web-80|internet"
+		case "can_reach|internet|wl:billing|http/8080":
+			odd.Edges[i].ID = "can_reach|internet|wl:billing|tcp/8080"
+		}
+	}
+	slices.SortFunc(odd.Edges, func(p, q graphdomain.Edge) int { return strings.Compare(p.ID, q.ID) })
+	bases := []graphdomain.Graph{graphAt(t, enrichedPath), graphAt(t, sshPath), odd}
+	payloads := []json.RawMessage{prepared(t, a, bases[0]), prepared(t, a, bases[1]), prepared(t, a, bases[2])}
 	rapid.Check(t, func(rt *rapid.T) {
 		b := rapid.IntRange(0, len(bases)-1).Draw(rt, "base")
 		g, payload := bases[b], payloads[b]
@@ -347,5 +357,25 @@ func TestFinalizeExplainsOversizeRevision(t *testing.T) {
 	fin, err = a.Finalize(ctx, activities.FinalizeRequest{Payload: payload, Converged: false, Reason: string(loops.ReasonStrategiesExhausted), Remaining: left})
 	if err != nil || len(fin.Explanation) != 1 || fin.Explanation[0].Code != activities.CodeManualFixRequired {
 		t.Errorf("strategies exhausted: %+v, %v; want manual_fix_required", fin.Explanation, err)
+	}
+}
+
+// TestFinalizeExplainsActivityFailure (review of M2-T08, low, ADR 0012 D4):
+// when the loop escalates on a failed activity (a candidate refused by
+// Derives among others), the explanation starts with evaluation_failed,
+// then the findings left.
+func TestFinalizeExplainsActivityFailure(t *testing.T) {
+	ctx := context.Background()
+	a := &activities.Activities{Tenant: tenant, Policy: design(t)}
+	payload := prepared(t, a, graphAt(t, sshPath))
+	left := []loopsdomain.Finding{{Code: "NET-003", Source: "policy:design", Severity: loopsdomain.SeverityCritical, Resource: "lb:legacy-vms-22"}}
+	for _, remaining := range [][]loopsdomain.Finding{left, {}} {
+		fin, err := a.Finalize(ctx, activities.FinalizeRequest{Payload: payload, Converged: false, Reason: string(loops.ReasonActivityFailed), Remaining: remaining})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(fin.Explanation) != 1+len(remaining) || fin.Explanation[0].Code != activities.CodeEvaluationFailed || fin.Graph != nil {
+			t.Errorf("remaining %d: explanation %+v; want evaluation_failed first, then one per finding", len(remaining), fin.Explanation)
+		}
 	}
 }

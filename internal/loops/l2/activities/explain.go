@@ -48,7 +48,7 @@ var templates = map[string]string{
 	CodeRelocationRequired:      "Relocalisation requise : le contrôle %s porte sur %s. Une région autorisée satisfait la localisation exigée ; le réviseur ne déplace jamais une ressource.",
 	CodeIncompatibleConstraints: "Contraintes incompatibles : le contrôle %s porte sur %s. Aucune région autorisée ne satisfait la localisation exigée par les données.",
 	CodeManualFixRequired:       "Correction manuelle requise : le contrôle %s porte sur %s, sans correction automatique sûre.",
-	CodePayloadTooLarge:         "Sujet trop volumineux pour la boucle L2 (contrôle %s, ressource %s).",
+	CodePayloadTooLarge:         "Sujet ou candidat révisé trop volumineux pour la boucle L2 (contrôle %s, ressource %s).",
 	CodeEvaluationFailed:        "Évaluation impossible : la vérification a échoué sans finding exploitable (contrôle %s, ressource %s).",
 }
 

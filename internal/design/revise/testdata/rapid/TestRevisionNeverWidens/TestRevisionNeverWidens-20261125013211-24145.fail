@@ -1,0 +1,68 @@
+# 2026/11/25 01:32:11.090221 [TestRevisionNeverWidens] [rapid] draw base: 3
+# 2026/11/25 01:32:11.090481 [TestRevisionNeverWidens] [rapid] draw data:billing/public_access: false
+# 2026/11/25 01:32:11.090487 [TestRevisionNeverWidens] [rapid] draw data:billing/unencrypted: false
+# 2026/11/25 01:32:11.090488 [TestRevisionNeverWidens] [rapid] draw data:customer-db/public_access: false
+# 2026/11/25 01:32:11.090489 [TestRevisionNeverWidens] [rapid] draw data:customer-db/unencrypted: false
+# 2026/11/25 01:32:11.090489 [TestRevisionNeverWidens] [rapid] draw id:app-cluster/static_key: false
+# 2026/11/25 01:32:11.090490 [TestRevisionNeverWidens] [rapid] draw id:billing/static_key: false
+# 2026/11/25 01:32:11.090490 [TestRevisionNeverWidens] [rapid] draw id:gitops/static_key: false
+# 2026/11/25 01:32:11.090491 [TestRevisionNeverWidens] [rapid] draw id:legacy-vms/static_key: false
+# 2026/11/25 01:32:11.090492 [TestRevisionNeverWidens] [rapid] draw id:obs/static_key: false
+# 2026/11/25 01:32:11.090492 [TestRevisionNeverWidens] [rapid] draw wl:app-cluster/api_public: false
+# 2026/11/25 01:32:11.090493 [TestRevisionNeverWidens] [rapid] draw wl:app-cluster/audit: false
+# 2026/11/25 01:32:11.090493 [TestRevisionNeverWidens] [rapid] draw wl:app-cluster/secrets: false
+# 2026/11/25 01:32:11.090493 [TestRevisionNeverWidens] [rapid] draw wl:app-cluster/netpol: false
+# 2026/11/25 01:32:11.090493 [TestRevisionNeverWidens] [rapid] draw wl:app-cluster/admission: false
+# 2026/11/25 01:32:11.090494 [TestRevisionNeverWidens] [rapid] draw wl:app-cluster/wi: false
+# 2026/11/25 01:32:11.090495 [TestRevisionNeverWidens] [rapid] draw wl:billing/public_ip: false
+# 2026/11/25 01:32:11.090495 [TestRevisionNeverWidens] [rapid] draw wl:legacy-vms/public_ip: false
+# 2026/11/25 01:32:11.090496 [TestRevisionNeverWidens] [rapid] draw can_reach|internet|wl:billing|tcp/8080/peering: false
+# 2026/11/25 01:32:11.090496 [TestRevisionNeverWidens] [rapid] draw can_reach|lb:app-cluster-443|wl:app-cluster|https/443/peering: false
+# 2026/11/25 01:32:11.090496 [TestRevisionNeverWidens] [rapid] draw can_reach|lb:web-80|wl:app-cluster|http/80/peering: false
+# 2026/11/25 01:32:11.090497 [TestRevisionNeverWidens] [rapid] draw can_reach|wl:app-cluster|wl:legacy-vms|tcp/5432/peering: false
+# 2026/11/25 01:32:11.090497 [TestRevisionNeverWidens] [rapid] draw can_reach|wl:app-cluster|wl:legacy-vms|tcp/9100/peering: false
+# 2026/11/25 01:32:11.090498 [TestRevisionNeverWidens] [rapid] draw has_permission|id:legacy-vms|data:customer-db/actions: "read"
+# 2026/11/25 01:32:11.091227 [TestRevisionNeverWidens] [rapid] draw findings: 0
+# 2026/11/25 01:32:11.091230 [TestRevisionNeverWidens] [rapid] draw target https_only: true
+# 2026/11/25 01:32:11.091234 [TestRevisionNeverWidens] [rapid] draw targeted control: domain.Control{ID:"NET-007", Title:"Exposition en http clair", Severity:"high", Remediation:"https_only"}
+# 2026/11/25 01:32:11.091248 [TestRevisionNeverWidens] [rapid] draw targeted resource: "lb:web-80"
+# 2026/11/25 01:32:11.091249 [TestRevisionNeverWidens] [rapid] draw target move_to_data_tier: false
+# 2026/11/25 01:32:11.098913 [TestRevisionNeverWidens] (fp) the verifier refuses a revision of the table: verify: candidate not derived from the subject (applied [{ControlID:NET-007 Resource:lb:web-80 Remediation:https_only}])
+# 
+v0.4.8#2526371985455229202
+0x0
+0x38e38e38e38e4
+0x3
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1
+0x0
+0x0
+0x0
+0x0
+0x0

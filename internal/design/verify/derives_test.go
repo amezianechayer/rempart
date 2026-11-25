@@ -137,6 +137,14 @@ func TestDerivesAcceptsRestrictions(t *testing.T) {
 			}
 			nodeOf(t, g, "lb:web-80").Attrs.Listeners = &[]graphdomain.Listener{{Protocol: "https", Port: 80}}
 		},
+		"https_only, identifiers not canonical": func(g *graphdomain.Graph) {
+			// Review of M2-T08 (medium): the schema admits an identifier
+			// without suffix or with another one; the reviser keeps it.
+			for _, id := range []string{exposes80, reachNet80} {
+				edgeOf(t, g, id).Attrs.Protocol = sptr("https")
+			}
+			nodeOf(t, g, "lb:web-80").Attrs.Listeners = &[]graphdomain.Listener{{Protocol: "https", Port: 80}}
+		},
 		"encrypt_transit": func(g *graphdomain.Graph) {
 			edgeOf(t, g, vpn5432).Attrs.Via = sptr("vpn_site_to_site")
 		},
@@ -208,8 +216,12 @@ func TestDerivesRefusesWidening(t *testing.T) {
 		"permission added": {base, func(g *graphdomain.Graph) {
 			g.Edges = append(g.Edges, graphdomain.Edge{ID: "has_permission|id:obs|data:customer-db", Type: graphdomain.EdgeHasPermission, Src: "id:obs", Dst: "data:customer-db", Attrs: graphdomain.EdgeAttrs{Actions: []string{"read"}}})
 		}},
-		"actions widened":       {base, func(g *graphdomain.Graph) { edgeOf(t, g, permLegacy).Attrs.Actions = []string{"admin"} }},
-		"actions unbounded":     {base, func(g *graphdomain.Graph) { edgeOf(t, g, permLegacy).Attrs.Actions = nil }},
+		"actions widened":   {base, func(g *graphdomain.Graph) { edgeOf(t, g, permLegacy).Attrs.Actions = []string{"admin"} }},
+		"actions unbounded": {base, func(g *graphdomain.Graph) { edgeOf(t, g, permLegacy).Attrs.Actions = nil }},
+		// Review of M2-T08 (low): an empty list is omitted from the JSON and
+		// reads as every action.
+		"actions emptied":       {base, func(g *graphdomain.Graph) { edgeOf(t, g, permLegacy).Attrs.Actions = []string{} }},
+		"https to tcp in place": {base, func(g *graphdomain.Graph) { edgeOf(t, g, exposes443).Attrs.Protocol = sptr("tcp") }},
 		"stores removed":        {base, func(g *graphdomain.Graph) { without(g, "stores|wl:billing|data:billing") }},
 		"runs_as removed":       {base, func(g *graphdomain.Graph) { without(g, "runs_as|wl:billing|id:billing") }},
 		"internal flow removed": {base, func(g *graphdomain.Graph) { without(g, vpn5432) }},

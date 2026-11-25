@@ -89,7 +89,7 @@ func edgesDerive(initial, cand []graphdomain.Edge, kinds map[string]graphdomain.
 		}
 		o, ok := old[id]
 		if !ok || used[id] || o.Type != e.Type || o.Src != e.Src || o.Dst != e.Dst || !sameJSON(o.Text, e.Text) ||
-			!edgeAttrsDerive(o.Attrs, e.Attrs, renamed) {
+			!edgeAttrsDerive(o.Attrs, e.Attrs, e.Type, renamed) {
 			return false
 		}
 		used[id] = true
@@ -191,11 +191,16 @@ func listenersNarrow(o, n *[]graphdomain.Listener) bool {
 }
 
 // edgeAttrsDerive: every attribute equal, but a via moved to
-// vpn_site_to_site, actions whose closure shrinks, and the protocol of a
-// renamed edge moved from http to https.
-func edgeAttrsDerive(o, n graphdomain.EdgeAttrs, renamed bool) bool {
+// vpn_site_to_site, actions whose closure shrinks, and the protocol of an
+// exposure or a flow moved from http to https, required when the identifier
+// was renamed with it. The identifier of an edge is not tied to its protocol
+// by the schema: https_only keeps an identifier without "|http/" (review of
+// M2-T08, medium).
+func edgeAttrsDerive(o, n graphdomain.EdgeAttrs, typ graphdomain.EdgeType, renamed bool) bool {
 	a, b, ok := fieldsOf(o, n)
-	if !ok || (renamed && (a["protocol"] != "http" || b["protocol"] != "https")) {
+	https := a["protocol"] == "http" && b["protocol"] == "https" &&
+		(typ == graphdomain.EdgeExposes || typ == graphdomain.EdgeCanReach)
+	if !ok || (renamed && !https) {
 		return false
 	}
 	for k := range union(a, b) {
@@ -205,7 +210,7 @@ func edgeAttrsDerive(o, n graphdomain.EdgeAttrs, renamed bool) bool {
 		}
 		switch k {
 		case "protocol":
-			if !renamed {
+			if !https {
 				return false
 			}
 		case "via":
@@ -226,9 +231,10 @@ func edgeAttrsDerive(o, n graphdomain.EdgeAttrs, renamed bool) bool {
 	return true
 }
 
-// closure of abstract actions (ADR 0010 D8); absent: every action.
+// closure of abstract actions (ADR 0010 D8); absent or empty, which the
+// JSON encoding omits: every action (review of M2-T08, low).
 func closure(actions []string) map[string]bool {
-	if actions == nil {
+	if len(actions) == 0 {
 		actions = []string{"*"}
 	}
 	out := map[string]bool{}

@@ -437,6 +437,17 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
   - Fiche `docs/loops/L2.md` mise à jour (étapes prepare, verify, finalize, sorties). Aucun changement de séquence de commandes du workflow (champ ajouté à la requête de `Finalize`), donc (fo) sans objet ici.
   - Ajustements consignés par le harnais : lint seul sur les nouveaux tests (gofumpt, G304 sur un chemin de fixture, identifiant `max`).
   - Preuves : `make -f Makefile verify-quick` rc=0 ; `make evals EVAL=design`, `demo`, `intent` codes 0, aucune régression.
+  - **Revue sécurité de M2-T08 (une passe) : PASS**, aucun constat critique ni haut ; aucun candidat qui élargit ne passe `Derives`, schéma, `Validate`, atteignabilité et pack ; ordre de `Prepare` acceptable ; hypothèse « `invalid_response` vient seulement d'un candidat trop grand » vraie dans le code actuel ; refus de `Verify` : une tentative, escalade sans graphe. Constats et suites (le 2026-11-25, phases tests puis impl) :
+    - (gb) [moyen, corrigé] faux refus de `https_only` quand l'identifiant d'arête n'a pas de suffixe `|http/` (le schéma l'admet) : `Derives` admet `http` vers `https` sur toute exposition ou tout flux, exigé seulement avec le renommage ; bases à identifiants non canoniques ajoutées aux deux propriétés (1 000 tirages verts).
+    - (gc) [bas, corrigé] `actions: []` (omis à l'encodage, donc toute action) lu comme fermeture vide : fermeture vide lue comme toute action ; cas `actions emptied`.
+    - (gd) [bas, corrigé] escalade sur activité en échec (refus de `Derives` compris) expliquée `evaluation_failed` en tête (ADR 0012 D4) ; `TestFinalizeExplainsActivityFailure`.
+    - (ge) [bas, avant M3] l'équivalence `invalid_response` égale candidat trop grand n'est figée par aucun test (titres du pack et identifiants sous `MaxFindingBytes`, `Propose` sans `details`) : test à écrire, sinon `evaluation_failed`. Gabarit corrigé dès maintenant : « Sujet ou candidat révisé trop volumineux ».
+    - (gf) [bas, documenté] `threats` et `threat_delta` non bornés en nombre (179 Ko pour un candidat de 54 Ko) : documenté dans T112, borne avec le dossier de preuves (M4).
+    - (gg) [bas, corrigé] lignes T110 et T122 du modèle de menace mises à jour (dérivation contrôlée, tests).
+    - (gh) [bas, corrigé] commentaire du test de T122 replacé au-dessus de sa fonction.
+    - (gi) [bas, préexistant, corrigé] `moveToDataTier` parcourait une map : sous-réseaux `data` triés, le premier du VPC gagne ; `TestMoveToDataTierDeterministic`.
+    - Menaces nouvelles T137 (identifiant d'arête non lié à son contenu) et T138 (contrôle sur la valeur Go, livrable en JSON) insérées. **Décision à l'humain** : exiger des identifiants canoniques dans `domain.Validate` avant l'import (M6) et l'éditeur (M8) (recommandation de l'agent : oui, par ADR au début de M6).
+    - **Amendement de l'ADR 0012 D2 à faire par l'humain** : une IR de plus de 64 Kio encodés est escaladée `payload_too_large` même si son graphe tiendrait dans la borne ; un sujet hors schéma mais surdimensionné est escaladé au lieu d'être refusé.
 - 2026-11-25 : **obligations (fx) et (fy) soldées** (règle (an), T77 ; helpers de test d'`internal/archtest`, donc cas rouges puis correctif en phase tests).
   - (fy) `composeCallRe` voit tout blanc entre `docker` et `compose` (`[ \t]+`) ; seule l'espace unique est admise : `checkComposeInvocations` et `findComposeCalls` signalent toute autre forme.
   - (fx) `shellState` rend l'état de guillemet en fin de ligne logique ; une ligne qui finit dans une chaîne ouverte est un problème signalé (bash lirait les lignes suivantes dans la chaîne : une ligne vue comme commentaire pourrait lancer `docker compose`). **Écart à la demande de la revue** : « toute forme non suivie devient un problème » n'est appliqué qu'aux guillemets ANSI-C `$'` et aux accents graves suivis d'une continuation ; les guillemets à l'intérieur de `$(...)` restent suivis par le lexeur (ils se referment par paire) et le Makefile en continue deux lignes conformes ; ne pas joindre une ligne reste le sens sûr (chaque ligne physique est alors vérifiée seule).
@@ -467,7 +478,7 @@ Préalables humains (étape H0 du plan) :
 
 ## Reste à faire
 - ~~M2, étape humaine H3-design~~ : faite (`f646b13`). Reste à l'humain : valider les écarts de M2-T07 consignés dans « Fait » (entrée `unconfirmed` au lieu d'une `confirmation`, graphe de base compact, trappe 13 sur RES-002 seul).
-- ~~M2, en retard : (fp), (fq), (fs), (ft)~~ : soldées par M2-T08 `l2-harden` (revue sécurité en cours).
+- ~~M2, en retard : (fp), (fq), (fs), (ft)~~ : soldées par M2-T08 `l2-harden`, revue sécurité PASS ; suites (gb) à (gi) traitées sauf (ge) [bas, avant M3].
 - **M2, avant `/close-milestone M2`** : obligation (fj) (étape H-jurisdiction). (fx) et (fy) soldées le 2026-11-25 ; menaces T108, T109, T111 à T117 insérées dans `docs/02-THREAT-MODEL.md` le 2026-11-25 (à confirmer par la revue de clôture).
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
@@ -1474,3 +1485,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-25 01:23 [harnais] PHASE FREE (discipline TDD suspendue) : obligations fx et fy soldées : helpers de test, rouge puis correctif en phase tests
 
 - 2026-11-25 01:23 [harnais] phase : tests -> free
+
+- 2026-11-25 01:31 [harnais] phase : free -> tests
+
+- 2026-11-25 01:32 [harnais] phase : tests -> impl
+
+- 2026-11-25 01:34 [harnais] PHASE FREE (discipline TDD suspendue) : suites de la revue de M2-T08 traitées (gb à gi sauf ge)
+
+- 2026-11-25 01:34 [harnais] phase : impl -> free

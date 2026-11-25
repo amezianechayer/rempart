@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"pgregory.net/rapid"
@@ -79,11 +80,33 @@ func enriched(t testing.TB) graphdomain.Graph {
 	return g
 }
 
-// targets of the enriched graph for the remediations the reference graph
+// noncanonical is the enriched graph whose http edges carry identifiers the
+// schema admits but the builder never writes: no suffix, or another protocol
+// (review of M2-T08, medium: https_only refused by the verifier on them).
+func noncanonical(t testing.TB) graphdomain.Graph {
+	t.Helper()
+	g := enriched(t)
+	for i := range g.Edges {
+		switch g.Edges[i].ID {
+		case "exposes|lb:web-80|internet|http/80":
+			g.Edges[i].ID = "exposes|lb:web-80|internet"
+		case "can_reach|internet|wl:billing|http/8080":
+			g.Edges[i].ID = "can_reach|internet|wl:billing|tcp/8080"
+		}
+	}
+	slices.SortFunc(g.Edges, func(a, b graphdomain.Edge) int { return strings.Compare(a.ID, b.ID) })
+	if !valid(g) {
+		t.Fatal("noncanonical graph invalid")
+	}
+	return g
+}
+
+// targets of the enriched graphs for the remediations the reference graph
 // cannot exercise.
 var targets = map[policydomain.Remediation][]string{
 	policydomain.RemediationHTTPSOnly: {
 		"lb:web-80", "exposes|lb:web-80|internet|http/80", "can_reach|internet|wl:billing|http/8080",
+		"exposes|lb:web-80|internet", "can_reach|internet|wl:billing|tcp/8080",
 	},
 	policydomain.RemediationMoveToDataTier: {"wl:billing"},
 }
@@ -220,7 +243,7 @@ func isTrue(p *bool) bool { return p != nil && *p }
 // renaming of https_only; every revision derives from its input for the
 // verifier (verify.Derives, obligation (fp)).
 func TestRevisionNeverWidens(t *testing.T) {
-	bases := []graphdomain.Graph{reference(t), sshTrap(t), enriched(t)}
+	bases := []graphdomain.Graph{reference(t), sshTrap(t), enriched(t), noncanonical(t)}
 	controls := allControls(t)
 	byRemediation := map[policydomain.Remediation][]policydomain.Control{}
 	for _, c := range controls {
@@ -247,7 +270,7 @@ func TestRevisionNeverWidens(t *testing.T) {
 			c := rapid.SampledFrom(controls).Draw(rt, "control")
 			fs = append(fs, loopsdomain.Finding{Code: c.ID, Severity: c.Severity, Resource: rapid.SampledFrom(ids).Draw(rt, "resource")})
 		}
-		if b == 2 {
+		if b >= 2 {
 			for _, r := range []policydomain.Remediation{policydomain.RemediationHTTPSOnly, policydomain.RemediationMoveToDataTier} {
 				if rapid.Bool().Draw(rt, "target "+string(r)) {
 					c := rapid.SampledFrom(byRemediation[r]).Draw(rt, "targeted control")
@@ -430,6 +453,40 @@ func TestL2RevisesTrap(t *testing.T) {
 	for _, f := range after {
 		if f.Severity == loopsdomain.SeverityCritical || f.Severity == loopsdomain.SeverityHigh {
 			t.Errorf("finding left after the revision: %+v", f)
+		}
+	}
+}
+
+// TestMoveToDataTierDeterministic (review of M2-T08, low, pre-existing): with
+// two data subnets in the VPC, the host always moves to the first by
+// identifier, whatever the order of a map.
+func TestMoveToDataTierDeterministic(t *testing.T) {
+	g := enriched(t)
+	second := "net:aws-eu-west-3-staging-data2"
+	g.Nodes = append(g.Nodes, graphdomain.Node{ID: second, Kind: graphdomain.KindNetwork, Attrs: graphdomain.NodeAttrs{
+		Cloud: ptr("aws"), Region: ptr("eu-west-3"), Env: ptr("staging"), Subtype: ptr("subnet"), CIDR: ptr("10.0.5.0/24"), Tier: ptr("data"),
+	}})
+	g.Edges = append(g.Edges, graphdomain.Edge{ID: "member_of|" + second + "|net:aws-eu-west-3-staging", Type: graphdomain.EdgeMemberOf, Src: second, Dst: "net:aws-eu-west-3-staging"})
+	if !valid(g) {
+		t.Fatal("graph with two data subnets invalid")
+	}
+	controls := allControls(t)
+	var code string
+	for _, c := range controls {
+		if c.Remediation == policydomain.RemediationMoveToDataTier {
+			code = c.ID
+		}
+	}
+	fs := []loopsdomain.Finding{{Code: code, Severity: loopsdomain.SeverityHigh, Resource: "wl:billing"}}
+	for i := range 40 {
+		got, applied, err := revise.Revise(g, fs, controls)
+		if err != nil || len(applied) != 1 {
+			t.Fatalf("run %d: %v, %v", i, applied, err)
+		}
+		if !slices.ContainsFunc(got.Edges, func(e graphdomain.Edge) bool {
+			return e.ID == "member_of|wl:billing|net:aws-eu-west-3-staging-data"
+		}) {
+			t.Fatalf("run %d: host moved elsewhere than the first data subnet", i)
 		}
 	}
 }

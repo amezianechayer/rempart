@@ -418,6 +418,12 @@ func (a *Activities) Finalize(ctx context.Context, req FinalizeRequest) (Finaliz
 			return out, nil
 		}
 		out.Explanation = explainAll(req.Remaining, p)
+		// A failed activity (a candidate refused by Derives among others)
+		// leads with evaluation_failed (ADR 0012 D4, review of M2-T08).
+		if req.Reason == string(loops.ReasonActivityFailed) && out.Explanation[0].Code != CodeEvaluationFailed {
+			out.Explanation = append([]Explanation{explain(CodeEvaluationFailed, "", p.Subject)}, out.Explanation...)
+			out.Explanation = out.Explanation[:min(len(out.Explanation), MaxExplanations)]
+		}
 		return out, nil
 	}
 	if !haveBest || verify.Derives(p.Initial.Graph, best.Graph) != nil {

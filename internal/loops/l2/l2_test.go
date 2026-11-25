@@ -452,12 +452,6 @@ func TestL2SpecIsTheSheet(t *testing.T) {
 	}
 }
 
-// TestL2ThirdIterationKeepsOtherEdges proves the high finding of the security
-// review of M2-T05 (T122 proposed), on its scenario: the SSH exposure, limited
-// to one source, sits just before an exposure open to the whole Internet
-// (NET-006, escalate); once the reviser removed the SSH exposure, the next
-// iterations must not lend its source to the open one: the run escalates on
-// NET-006, never converges.
 // TestL2OversizeCandidateEscalatesPayloadTooLarge (obligation (ft), T24,
 // T112): a proposal larger than the bound of a candidate makes the loop
 // escalate (invalid_response); the workflow hands the reason to Finalize,
@@ -478,6 +472,12 @@ func TestL2OversizeCandidateEscalatesPayloadTooLarge(t *testing.T) {
 	}
 }
 
+// TestL2ThirdIterationKeepsOtherEdges proves the high finding of the security
+// review of M2-T05 (T122 proposed), on its scenario: the SSH exposure, limited
+// to one source, sits just before an exposure open to the whole Internet
+// (NET-006, escalate); once the reviser removed the SSH exposure, the next
+// iterations must not lend its source to the open one: the run escalates on
+// NET-006, never converges.
 func TestL2ThirdIterationKeepsOtherEdges(t *testing.T) {
 	raw, err := os.ReadFile(sshGraph)
 	if err != nil {

@@ -275,13 +275,22 @@ func moveToDataTier(g *graphdomain.Graph, res string) {
 			vpcOf[e.Src] = e.Dst
 		}
 	}
+	// The data subnets in the order of their identifiers: the first of the
+	// VPC wins, whatever the order of a map (review of M2-T08, low).
+	var data []string
+	for subnet, t := range tier {
+		if t == "data" {
+			data = append(data, subnet)
+		}
+	}
+	slices.Sort(data)
 	for i := range g.Edges {
 		e := &g.Edges[i]
 		if e.Type != graphdomain.EdgeMemberOf || e.Src != res || tier[e.Dst] == "" || tier[e.Dst] == "data" {
 			continue
 		}
-		for subnet, t := range tier {
-			if t == "data" && vpcOf[subnet] == vpcOf[e.Dst] && vpcOf[subnet] != "" {
+		for _, subnet := range data {
+			if vpcOf[subnet] == vpcOf[e.Dst] && vpcOf[subnet] != "" {
 				e.Dst = subnet
 				e.ID = "member_of|" + res + "|" + subnet
 				break
