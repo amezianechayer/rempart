@@ -25,8 +25,8 @@ const ZoneMeaning = "Zone = localisation physique, déclarée par le fournisseur
 	"(qualification SecNumCloud par exemple) : ces critères relèvent d'un fait et d'un contrôle distincts."
 
 // Region is one line of the table: Verified is the date the line was read on
-// the Source page, empty while the line awaits verification at the source
-// (the provider page was out of reach; human step H-jurisdiction).
+// the Source page (by the agent, or by the human when the page was out of
+// reach of the session: step H-jurisdiction).
 type Region struct {
 	Cloud, Region string
 	Zone          Zone
@@ -38,6 +38,10 @@ const (
 	srcAWS      = "https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions.html"
 	srcAzure    = "https://learn.microsoft.com/en-us/azure/reliability/regions-list"
 	awsVerified = "2026-11-19"
+	// azureVerified: the 13 Azure lines read by the human on the provider
+	// page (step H-jurisdiction): learn.microsoft.com is out of reach of the
+	// session.
+	azureVerified = "2026-11-25"
 	// srcScaleway: the source of the Scaleway documentation, at the commit
 	// read on 2026-11-25 (www.scaleway.com out of reach from the session; the
 	// page published from it names each region and its city and country).
@@ -53,11 +57,8 @@ func scaleway(region string, z Zone) Region {
 	return Region{Cloud: "scaleway", Region: region, Zone: z, Source: srcScaleway, Verified: scalewayVerified}
 }
 
-// pending lines keep the zone of the L1 table of M1 (plan M1 section 6.3) or,
-// for non-EU lines, the location of the region; their provider pages were not
-// reachable from the session (2026-11-19): verification by the human.
-func pending(cloud, src, region string, z Zone) Region {
-	return Region{Cloud: cloud, Region: region, Zone: z, Source: src}
+func azure(region string, z Zone) Region {
+	return Region{Cloud: "azure", Region: region, Zone: z, Source: srcAzure, Verified: azureVerified}
 }
 
 // table is the closed table of ADR 0011 D7. AWS: every region of the AWS page
@@ -83,19 +84,19 @@ var table = func() []Region {
 		aws("mx-central-1", ZoneNonEU), aws("sa-east-1", ZoneNonEU),
 		aws("us-east-1", ZoneNonEU), aws("us-east-2", ZoneNonEU), aws("us-west-1", ZoneNonEU), aws("us-west-2", ZoneNonEU),
 
-		pending("azure", srcAzure, "eastus", ZoneNonEU),
-		pending("azure", srcAzure, "francecentral", ZoneFR),
-		pending("azure", srcAzure, "francesouth", ZoneFR),
-		pending("azure", srcAzure, "germanynorth", ZoneEU),
-		pending("azure", srcAzure, "germanywestcentral", ZoneEU),
-		pending("azure", srcAzure, "italynorth", ZoneEU),
-		pending("azure", srcAzure, "northeurope", ZoneEU), // Ireland
-		pending("azure", srcAzure, "polandcentral", ZoneEU),
-		pending("azure", srcAzure, "spaincentral", ZoneEU),
-		pending("azure", srcAzure, "swedencentral", ZoneEU),
-		pending("azure", srcAzure, "switzerlandnorth", ZoneNonEU),
-		pending("azure", srcAzure, "uksouth", ZoneNonEU),
-		pending("azure", srcAzure, "westeurope", ZoneEU), // Netherlands
+		azure("eastus", ZoneNonEU),
+		azure("francecentral", ZoneFR),
+		azure("francesouth", ZoneFR),
+		azure("germanynorth", ZoneEU),
+		azure("germanywestcentral", ZoneEU),
+		azure("italynorth", ZoneEU),
+		azure("northeurope", ZoneEU), // Ireland
+		azure("polandcentral", ZoneEU),
+		azure("spaincentral", ZoneEU),
+		azure("swedencentral", ZoneEU),
+		azure("switzerlandnorth", ZoneNonEU),
+		azure("uksouth", ZoneNonEU),
+		azure("westeurope", ZoneEU), // Netherlands
 
 		scaleway("fr-par", ZoneFR), // France (Paris)
 		scaleway("nl-ams", ZoneEU), // Netherlands (Amsterdam)

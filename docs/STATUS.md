@@ -7,6 +7,16 @@ M2 (démarré le 2026-11-18 ; découpage `docs/plans/M2-overview.md` **validé**
 
 ## Jalons acceptés
 
+### M2 ACCEPTÉ (2026-11-25)
+
+Tête vérifiée : celle du commit qui ajoute cette section (branche `main-6cpq6q`) ; acceptation sur `e799778`, revue de clôture sur `bd6dac6`, depuis : documentation, CODEOWNERS (humain, `4a0c890`) et dates de la table de juridiction, sous `verify-quick` vert. Tag proposé : `m2-done`, posé par l'humain.
+
+- **`acceptance-verifier` (jalon)** : **PASS** sur les 4 critères de `prompts/M2.md` : (1) `opa test` vert, 45 contrôles (46 depuis DATA-005) avec chacun un cas conforme et un non conforme ; (2) 15 architectures piégées, 9 corrigées et 6 escaladées avec explication codée, suite `design` code 0, succès 1, résistance 1, aucune régression ; (3) propriété « un deny n'ajoute jamais de chemin » verte à 10 000 tirages, oracle indépendant, mutation détectée ; (4) delta de menace calculé, valide contre `schemas/threat/v1.json`, décodage strict. Aucune triche détectée.
+- **`security-reviewer` (jalon, `m1-done..HEAD`)** : BLOCK sur T139 (donnée réglementée classée `internal` non sensible : exposition convergée), corrigé (`bd6dac6` : définition unique `FactNode.SensitiveData`, contrôle DATA-005) : **PASS** à la seconde passe ciblée. Menaces T139 à T141 ajoutées, T102, T104, T108, T109 complétées.
+- Étapes humaines de M2 faites : H3-design (`f646b13`), tags `m1-done` et `m2-start`, `make l2-demo` et `make verify` (sur le poste de l'humain, WSL2), H-CODEOWNERS (`4a0c890`), H-jurisdiction (13 lignes Azure vérifiées sur la page du fournisseur, réponse « OK » le 2026-11-25).
+- Obligations datées reportées, non bloquantes : avant M3 (gl) trappe T139 et nouvelle baseline `design`, (fb), (gn), (ge), (gr), (gt), (gv), (fr), (fv) ; M4 (gs), (gu), (go), (gp), (fu), (gw) ; avant M4 (bj2), (ga) ; avant M6 (gq) ; (fo) avant le premier changement de séquence de L2.
+- Hors critères, en attente de l'humain : écarts de M2-T07 (entrée `unconfirmed`, graphe de base compact, trappe 13 sur RES-002) ; amendement de l'ADR 0012 D2 (sujet surdimensionné escaladé) et D3 (formulation, (fu)) ; décision sur les identifiants d'arête canoniques (T137, ADR au début de M6) ; questions 1 à 4 de l'ADR 0013 ; fichier d'instructions du dépôt à faire pointer vers `prompts/M9.md` ; relecture des skills modifiés (`loop-engineering`, `policy-as-code`, `graph-schema.md`).
+
 ### M1 ACCEPTÉ (2026-11-18)
 
 Tête vérifiée : `810c15e` (branche `main-6cpq6q`). Tag proposé : `m1-done`, posé par l'humain.
@@ -503,7 +513,7 @@ Préalables humains (étape H0 du plan) :
 ## Reste à faire
 - ~~M2, étape humaine H3-design~~ : faite (`f646b13`). Reste à l'humain : valider les écarts de M2-T07 consignés dans « Fait » (entrée `unconfirmed` au lieu d'une `confirmation`, graphe de base compact, trappe 13 sur RES-002 seul).
 - ~~M2, en retard : (fp), (fq), (fs), (ft)~~ : soldées par M2-T08 `l2-harden`, revue sécurité PASS ; suites (gb) à (gi) traitées sauf (ge) [bas, avant M3].
-- **M2, avant la clôture** : (fj) seulement : vérification des 13 lignes Azure par l'humain, ou acceptation du risque consignée jusqu'au premier passage de L3 sur une région Azure (M3). Revue sécurité de clôture : PASS (seconde passe sur `bd6dac6`) ; acceptation : PASS (`e799778`). ~~Avant M3-T01 : (gm) CODEOWNERS~~ : fait par l'humain le 2026-11-25 (`4a0c890`, 7 chemins ajoutés) ; « Require review from Code Owners » sur `main` à garder coché. **Avant M3** : (gl) trappe T139 et nouvelle baseline `design` (humain), (fb), (gn), (ge), (gr), (gt), (gv). Environnement cloud personnel `rempart` créé le 2026-11-25 avec l'accord de l'humain (hôtes `learn.microsoft.com` et `www.scaleway.com` ajoutés à ceux de l'environnement par défaut) ; la session en cours ne peut pas y basculer : vérification des 16 lignes (13 Azure, 3 Scaleway) à faire dans une session lancée sur `rempart`, ou par l'humain. (fx) et (fy) soldées le 2026-11-25 ; menaces T108, T109, T111 à T117 insérées dans `docs/02-THREAT-MODEL.md` le 2026-11-25 (à confirmer par la revue de clôture).
+- ~~M2, avant la clôture : (fj)~~ : 13 lignes Azure vérifiées par l'humain le 2026-11-25 (« OK »), datées dans `jurisdiction.go` ; `TestJurisdictionPendingFrozen` exige désormais qu'aucune ligne n'attende de vérification. **M2 accepté.** ~~Avant M3-T01 : (gm) CODEOWNERS~~ : fait par l'humain le 2026-11-25 (`4a0c890`, 7 chemins ajoutés) ; « Require review from Code Owners » sur `main` à garder coché. **Avant M3** : (gl) trappe T139 et nouvelle baseline `design` (humain), (fb), (gn), (ge), (gr), (gt), (gv). Environnement cloud personnel `rempart` créé le 2026-11-25 avec l'accord de l'humain (hôtes `learn.microsoft.com` et `www.scaleway.com` ajoutés à ceux de l'environnement par défaut) ; la session en cours ne peut pas y basculer : vérification des 16 lignes (13 Azure, 3 Scaleway) à faire dans une session lancée sur `rempart`, ou par l'humain. (fx) et (fy) soldées le 2026-11-25 ; menaces T108, T109, T111 à T117 insérées dans `docs/02-THREAT-MODEL.md` le 2026-11-25 (à confirmer par la revue de clôture).
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
@@ -1541,3 +1551,11 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-25 13:46 [harnais] PHASE FREE (discipline TDD suspendue) : closing review of M2: high T139 fixed (single sensitivity definition, DATA-005), conditions of (fj) met, lows on tests handled, flaky coverage check made deterministic
 
 - 2026-11-25 13:46 [harnais] phase : tests -> free
+
+- 2026-11-25 15:53 [harnais] phase : free -> tests
+
+- 2026-11-25 15:53 [harnais] phase : tests -> impl
+
+- 2026-11-25 15:54 [harnais] PHASE FREE (discipline TDD suspendue) : obligation fj soldée : 13 lignes Azure vérifiées par l'humain (H-jurisdiction) ; clôture de M2
+
+- 2026-11-25 15:54 [harnais] phase : impl -> free

@@ -122,18 +122,13 @@ func TestJurisdictionTableClosed(t *testing.T) {
 	})
 }
 
-// TestJurisdictionPendingFrozen (closing review of M2, conditions of (fj),
-// T114): the lines awaiting verification at the source are exactly these 13
-// Azure lines, whose risk the human accepts until the first run of L3 on an
-// Azure region (M3); no new unverified line, in fr or eu above all, enters
-// without changing this test. The Scaleway lines are dated, on the source
-// repository of the provider documentation.
+// TestJurisdictionPendingFrozen (closing review of M2, (fj), T114): no line
+// awaits verification. The 13 Azure lines were verified by the human on the
+// provider page (step H-jurisdiction, 2026-11-25), the Scaleway lines on the
+// source of the provider documentation; a new unverified line, in fr or eu
+// above all, cannot enter without changing this test.
 func TestJurisdictionPendingFrozen(t *testing.T) {
-	want := []string{
-		"azure/eastus", "azure/francecentral", "azure/francesouth", "azure/germanynorth", "azure/germanywestcentral",
-		"azure/italynorth", "azure/northeurope", "azure/polandcentral", "azure/spaincentral", "azure/swedencentral",
-		"azure/switzerlandnorth", "azure/uksouth", "azure/westeurope",
-	}
+	want := []string(nil)
 	var got []string
 	for _, r := range domain.Regions() {
 		if r.Verified == "" {
@@ -143,10 +138,10 @@ func TestJurisdictionPendingFrozen(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("lines awaiting verification %q, want %q", got, want)
 	}
-	for _, id := range []string{"fr-par", "nl-ams", "pl-waw"} {
-		i := slices.IndexFunc(domain.Regions(), func(r domain.Region) bool { return r.Cloud == "scaleway" && r.Region == id })
+	for _, id := range []string{"scaleway/fr-par", "scaleway/nl-ams", "scaleway/pl-waw", "azure/francecentral", "azure/westeurope", "azure/eastus"} {
+		i := slices.IndexFunc(domain.Regions(), func(r domain.Region) bool { return r.Cloud+"/"+r.Region == id })
 		if i < 0 || domain.Regions()[i].Verified == "" {
-			t.Errorf("scaleway/%s: not dated", id)
+			t.Errorf("%s: absent or not dated", id)
 		}
 	}
 }
