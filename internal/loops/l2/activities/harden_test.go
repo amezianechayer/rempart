@@ -379,3 +379,59 @@ func TestFinalizeExplainsActivityFailure(t *testing.T) {
 		}
 	}
 }
+
+// wireBytes bounds the encoding/json length of s as loops counts it: 6 for a
+// control byte, <, > and &; 2 for ", \ and each byte of a multi-byte rune.
+func wireBytes(s string) int {
+	n := 0
+	for i := range len(s) {
+		switch b := s[i]; {
+		case b < 0x20 || b == '<' || b == '>' || b == '&':
+			n += 6
+		case b == '"' || b == '\\' || b >= 0x80:
+			n += 2
+		default:
+			n++
+		}
+	}
+	return n
+}
+
+// TestInvalidResponseOnlyFromSize (obligation (ge)): in L2, the loop reason
+// invalid_response comes only from a candidate beyond its bound, so Finalize
+// may explain it payload_too_large. Every finding Verify can return fits
+// MaxFindingBytes (each title of the pack and of the core with the longest
+// resource the graph schema admits, each CIDR code with the longest pair of
+// networks), Propose declares no token and its refusals carry no details.
+func TestInvalidResponseOnlyFromSize(t *testing.T) {
+	e := design(t)
+	node := "data:" + strings.Repeat("a", 81) // node_id: prefix and at most 81 characters
+	edge := "can_reach|" + node + "|" + node + "|https/65535-65535"
+	pair := strings.Repeat("a", 81) + "|" + strings.Repeat("b", 81)
+	for _, c := range append(e.Controls(), verify.CoreControls()...) {
+		n := wireBytes(c.ID) + wireBytes("policy:design") + wireBytes(string(c.Severity)) + wireBytes(edge) + wireBytes(c.Title)
+		if n > loops.MaxFindingBytes {
+			t.Errorf("%s: a finding of %d bytes, over MaxFindingBytes", c.ID, n)
+		}
+	}
+	cidrMessages := []string{
+		"invalid superblock", "invalid CIDR", "invalid external CIDR", "range is not RFC 1918 private",
+		"range outside the superblock", "unknown parent", "range outside its parent", "sibling ranges overlap", "range overlaps an external range",
+	}
+	for _, m := range cidrMessages {
+		if n := wireBytes("CIDR_OVERLAP_EXTERNAL") + wireBytes("cidr_check") + wireBytes("critical") + wireBytes(pair) + wireBytes(m); n > loops.MaxFindingBytes {
+			t.Errorf("CIDR finding %q: %d bytes, over MaxFindingBytes", m, n)
+		}
+	}
+	a := &activities.Activities{Tenant: tenant, Policy: e}
+	payload := prepared(t, a, graphAt(t, sshPath))
+	resp, err := a.Propose(context.Background(), loops.ProposeRequest{Payload: payload, Strategy: activities.StrategyCatalog, Iteration: 1})
+	if err != nil || resp.Tokens != 0 {
+		t.Errorf("Propose = %d tokens, %v; want 0, no error", resp.Tokens, err)
+	}
+	_, err = a.Propose(context.Background(), loops.ProposeRequest{Payload: payload, Strategy: "other", Iteration: 1})
+	var ae *temporal.ApplicationError
+	if !errors.As(err, &ae) || ae.HasDetails() {
+		t.Errorf("Propose refusal %v: want an application error without details", err)
+	}
+}

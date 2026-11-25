@@ -227,7 +227,11 @@ func TestCitesAddress(t *testing.T) {
 			t.Errorf("CitesAddress(%q) = false, want true", s)
 		}
 	}
-	for _, s := range []string{"", "exposer en https sur le port 443", "version 1.2 du schéma", "à 10:30 le matin", "ouvert à tous"} {
+	for _, s := range []string{
+		"", "exposer en https sur le port 443", "version 1.2 du schéma", "à 10:30 le matin", "ouvert à tous",
+		// Obligation (fb): a list of ports is never read as an address.
+		"ouvrir les ports 22,80,110,143", "ports 22,80,443,8080", "port 22,80,110,143", "Ports : 22,80,443,8080", "open ports: 22,80,443,8080",
+	} {
 		if CitesAddress(s) {
 			t.Errorf("CitesAddress(%q) = true, want false", s)
 		}

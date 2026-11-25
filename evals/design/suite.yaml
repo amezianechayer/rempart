@@ -8,5 +8,12 @@ watch:
   - internal/threat/**
   - internal/loops/l2/**
   - internal/loops/*.go
-  - policies/design/**
-  - schemas/graph/**
+  - internal/loops/domain/**
+  - internal/loops/codec/**
+  - internal/intent/domain/**
+  - internal/intent/irvalid/**
+  - internal/secrets/**
+  - internal/tenancy/**
+  - policies/**
+  - schemas/**
+  - cmd/rempart-evals/**

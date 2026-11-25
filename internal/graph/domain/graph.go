@@ -118,10 +118,15 @@ type NodeAttrs struct {
 
 // EdgeAttrs are the closed attributes of an edge ($defs/edge_attrs).
 type EdgeAttrs struct {
-	Protocol       *string  `json:"protocol,omitempty"`
-	PortFrom       *int     `json:"port_from,omitempty"`
-	PortTo         *int     `json:"port_to,omitempty"`
-	Via            *string  `json:"via,omitempty"`
+	Protocol *string `json:"protocol,omitempty"`
+	PortFrom *int    `json:"port_from,omitempty"`
+	PortTo   *int    `json:"port_to,omitempty"`
+	Via      *string `json:"via,omitempty"`
+	// Path of a CAN_REACH is descriptive, never normative (obligation (fv),
+	// T116): besides the structural check of Validate (Network nodes), no
+	// finding and no reach reads it, Derives refuses a rewritten path, a
+	// revision may leave it citing a former subnet, and L3 recomputes paths
+	// from the memberships.
 	Path           []string `json:"path,omitempty"`
 	AllowedSources []string `json:"allowed_sources,omitempty"`
 	Actions        []string `json:"actions,omitempty"`

@@ -1,15 +1,22 @@
 package verify_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/amezianechayer/rempart/internal/design/confirm"
 	"github.com/amezianechayer/rempart/internal/design/verify"
 	graphdomain "github.com/amezianechayer/rempart/internal/graph/domain"
+	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
+	"github.com/amezianechayer/rempart/internal/policy"
+	"github.com/amezianechayer/rempart/internal/policy/adapters/opa"
+	policydomain "github.com/amezianechayer/rempart/internal/policy/domain"
 )
 
 // Obligation (fp) (T110, T122): the verifier checks that a candidate derives
@@ -266,5 +273,40 @@ func TestDerivesRefusesWidening(t *testing.T) {
 		if err := verify.Derives(c.subject, cand); !errors.Is(err, verify.ErrNotDerived) {
 			t.Errorf("%s: %v, want ErrNotDerived", name, err)
 		}
+	}
+}
+
+// TestEdgePathNotNormative (obligation (fv), T116): the path of a CAN_REACH
+// edge is informative: neither the reachability nor the verifier with the
+// design pack read it, so a stale path (move_to_data_tier keeps it) changes
+// no decision. L3 recomputes paths from the memberships. A revision still
+// never rewrites it (Derives refuses).
+func TestEdgePathNotNormative(t *testing.T) {
+	base := enriched(t)
+	moved := copyOf(t, base)
+	edgeOf(t, &moved, vpn5432).Attrs.Path = []string{"net:aws-eu-west-3-staging-public"}
+	edgeOf(t, &moved, reachNet80).Attrs.Path = []string{"net:azure-francecentral-staging-data", "net:aws-eu-west-3-staging"}
+	e, err := opa.NewDesign()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(g graphdomain.Graph) []loopsdomain.Finding {
+		d, err := confirm.DigestOfGraph(g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fs, err := verify.Candidate(context.Background(), e, g, g.TenantID, verify.Context{Confirmed: d.Exposures, Base: policy.DesignContext{
+			Constraints: policydomain.Constraints{AllowedRegions: []string{}, ForbiddenClouds: []string{}}, WorkloadRoles: map[string]string{},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fs
+	}
+	if a, b := run(base), run(moved); !reflect.DeepEqual(a, b) {
+		t.Errorf("findings depend on the path of CAN_REACH edges:\n%v\n%v", a, b)
+	}
+	if err := verify.Derives(base, moved); !errors.Is(err, verify.ErrNotDerived) {
+		t.Errorf("Derives accepted a rewritten path: %v", err)
 	}
 }

@@ -41,6 +41,9 @@ var (
 	// end), four groups outside any number (never the tail of an address).
 	spacedDot  = regexp.MustCompile(`([0-9])[ \t]+\.[ \t]+([0-9])`)
 	commaQuads = regexp.MustCompile(`(^|[^0-9.,])([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3})([^0-9.,]|$)`)
+	// Obligation (fb): four groups right after the word port or ports are a
+	// port list ("ports 22,80,110,143"), never an address.
+	portWord = regexp.MustCompile(`(?i)\bports?[ \t]*:?[ \t]*$`)
 )
 
 func rearm(s string) string {
@@ -49,7 +52,21 @@ func rearm(s string) string {
 		prev = s
 		s = spacedDot.ReplaceAllString(s, "$1.$2")
 	}
-	return commaQuads.ReplaceAllString(s, "$1$2.$3.$4.$5$6")
+	var b strings.Builder
+	last := 0
+	for _, m := range commaQuads.FindAllStringSubmatchIndex(s, -1) {
+		b.WriteString(s[last:m[0]])
+		last = m[1]
+		if portWord.MatchString(s[:m[3]]) {
+			b.WriteString(s[m[0]:m[1]])
+			continue
+		}
+		b.WriteString(s[m[2]:m[3]])
+		b.WriteString(strings.Join([]string{s[m[4]:m[5]], s[m[6]:m[7]], s[m[8]:m[9]], s[m[10]:m[11]]}, "."))
+		b.WriteString(s[m[12]:m[13]])
+	}
+	b.WriteString(s[last:])
+	return b.String()
 }
 
 // readAddresses reads the addresses and prefixes of s, and returns apart the

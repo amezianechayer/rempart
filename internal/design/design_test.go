@@ -468,3 +468,27 @@ func TestBuildIdentitiesLeastPrivilege(t *testing.T) {
 }
 
 func ptrString(s string) *string { return &s }
+
+// TestRegulatedDataHostInDataTier (obligation (gt), T139): Build places the
+// host of data under a regulation in the data tier, whatever its
+// classification (FactNode.SensitiveData), so that L2 never has to escalate a
+// placement it could have made safe.
+func TestRegulatedDataHostInDataTier(t *testing.T) {
+	ir := parseIRFile(t, "intent/testdata/reference-ir.json")
+	ir.Data[0].Classification, ir.Data[0].Regulation = "public", []string{"gdpr"}
+	g, _, err := design.Build(ir, design.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tiers := map[string]string{}
+	for _, n := range g.Nodes {
+		if n.Attrs.Tier != nil {
+			tiers[n.ID] = *n.Attrs.Tier
+		}
+	}
+	if !slices.ContainsFunc(g.Edges, func(e graphdomain.Edge) bool {
+		return e.Type == graphdomain.EdgeMemberOf && e.Src == "wl:legacy-vms" && tiers[e.Dst] == "data"
+	}) {
+		t.Errorf("host of public data under gdpr outside the data tier")
+	}
+}

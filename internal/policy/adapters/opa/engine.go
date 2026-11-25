@@ -242,8 +242,11 @@ func checkModule(m *ast.Module) error {
 // <m>.custom.control_id. A rule can then emit only its own control.
 func checkDeny(r *ast.Rule) error {
 	h := r.Head
+	if h.Key == nil { // deny := ..., default deny := ...: no key (obligation (fr))
+		return invalid("deny rule outside the form deny contains <var>")
+	}
 	f, isVar := h.Key.Value.(ast.Var)
-	if h.Key == nil || !isVar || h.Value != nil || len(h.Args) > 0 || r.Else != nil || r.Default ||
+	if !isVar || h.Value != nil || len(h.Args) > 0 || r.Else != nil || r.Default ||
 		!h.Ref().Equal(ast.Ref{ast.VarTerm("deny")}) || !callsMetadata(r) {
 		return invalid("deny rule outside the form deny contains <var>")
 	}

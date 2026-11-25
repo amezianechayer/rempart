@@ -11,7 +11,9 @@ test_data_001_ko if lib.ko("DATA-001", lib.set_node(lib.base, "data:customers", 
 
 test_data_001_ko_absent if lib.ko("DATA-001", lib.with_nodes(lib.base, [lib.node("data:hr", "DataStore", {"subtype": "dataset", "classification": "internal", "encrypted": true})]))
 
-test_data_001_ok_public if lib.ok("DATA-001", lib.set_node(lib.base, "data:customers", {"classification": "public", "public_access": true}))
+# The base store is gdpr-regulated: public access stays a finding (T139),
+# see test_data_001_ko_public_regulated and test_data_001_ok_public_unregulated.
+test_data_001_ko_public_base_regulated if lib.ko("DATA-001", lib.set_node(lib.base, "data:customers", {"classification": "public", "public_access": true}))
 
 # DATA-002: confidential or regulated data not encrypted.
 test_data_002_ok if lib.ok("DATA-002", lib.base)
@@ -58,3 +60,8 @@ test_data_005_ko_internal if lib.ko("DATA-005", lib.set_node(lib.base, "data:cus
 test_data_005_ko_public if lib.ko("DATA-005", lib.set_node(lib.base, "data:customers", {"classification": "public", "regulation": ["gdpr"]}))
 
 test_data_005_ok_internal_unregulated if lib.ok("DATA-005", lib.set_node(lib.base, "data:customers", {"classification": "internal", "regulation": []}))
+
+# Obligation (gr): public access on data classified public but regulated.
+test_data_001_ko_public_regulated if lib.ko("DATA-001", lib.set_node(lib.base, "data:customers", {"classification": "public", "regulation": ["gdpr"], "public_access": true}))
+
+test_data_001_ok_public_unregulated if lib.ok("DATA-001", lib.set_node(lib.base, "data:customers", {"classification": "public", "regulation": [], "public_access": true}))

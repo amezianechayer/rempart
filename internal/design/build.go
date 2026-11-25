@@ -60,10 +60,11 @@ func Build(ir intentdomain.IR, o Options) (graphdomain.Graph, cidr.Plan, error) 
 		sb = netip.PrefixFrom(netip.AddrFrom4([4]byte{10}), 8)
 	}
 
-	// Hosts of sensitive data (plan P8).
+	// Hosts of sensitive data (plan P8). Regulated data is sensitive whatever
+	// its classification (T139, obligation (gt)).
 	sensitive := map[string]bool{}
 	for _, d := range ir.Data {
-		if d.Classification != "public" {
+		if d.Classification != "public" || len(d.Regulation) > 0 {
 			for _, h := range d.StoredIn {
 				sensitive[h] = true
 			}

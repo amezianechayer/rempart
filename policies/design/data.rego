@@ -4,6 +4,12 @@ import data.rempart.design.lib
 
 rank := {"public": 1, "internal": 2, "confidential": 3, "regulated": 4}
 
+# A data store is non public unless it is classified public and carries no
+# regulation (T139, obligation (gr)).
+non_public(n) if not n.attrs.classification == "public"
+
+non_public(n) if lib.sensitive_data(n)
+
 # METADATA
 # title: Accès public sur une donnée non publique
 # custom:
@@ -15,7 +21,7 @@ deny contains f if {
 	some n in input.graph.nodes
 	n.kind == "DataStore"
 	not n.attrs.public_access == false
-	not n.attrs.classification == "public"
+	non_public(n)
 	meta := rego.metadata.rule()
 	f := {"control_id": meta.custom.control_id, "resource": n.id}
 }

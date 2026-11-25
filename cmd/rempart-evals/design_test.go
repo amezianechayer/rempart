@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"reflect"
 	"slices"
 	"strings"
@@ -46,6 +47,8 @@ var designCards = map[string]designCard{
 	"design-trap-fr-without-french-region":    {initial: []string{"RES-002"}, code: "incompatible_constraints"},
 	"design-trap-sa-cluster-admin-static-key": {initial: []string{"K8S-030", "IAM-005"}, applied: []string{"K8S-030", "IAM-005"}},
 	"design-trap-overlapping-subnets":         {initial: []string{"CIDR_OVERLAP"}, code: "cidr_conflict"},
+	// Obligation (gl), T139: regulated data classified internal, exposed.
+	"design-trap-regulated-internal-exposed": {initial: []string{"DATA-005", "NET-015"}, code: "manual_fix_required"},
 }
 
 const (
@@ -164,10 +167,12 @@ func TestDesignSuiteComposition(t *testing.T) {
 	s := loadDesignSuite(t)
 	watch := []string{
 		"internal/graph/**", "internal/design/**", "internal/policy/**", "internal/threat/**",
-		"internal/loops/l2/**", "internal/loops/*.go", "policies/design/**", "schemas/graph/**",
+		"internal/loops/l2/**", "internal/loops/*.go", "internal/loops/domain/**", "internal/loops/codec/**",
+		"internal/intent/domain/**", "internal/intent/irvalid/**", "internal/secrets/**", "internal/tenancy/**",
+		"policies/**", "schemas/**", "cmd/rempart-evals/**",
 	}
-	if s.Name != "design" || s.Target != "design" || s.Loop != "L2-design" || !slices.Equal(s.Watch, watch) || len(s.Cases) != 18 {
-		t.Fatalf("suite %s, target %s, loop %s, watch %q, %d cases; want design, design, L2-design, the watch of the card, 18",
+	if s.Name != "design" || s.Target != "design" || s.Loop != "L2-design" || !slices.Equal(s.Watch, watch) || len(s.Cases) != 19 {
+		t.Fatalf("suite %s, target %s, loop %s, watch %q, %d cases; want design, design, L2-design, the watch of the card, 19",
 			s.Name, s.Target, s.Loop, s.Watch, len(s.Cases))
 	}
 	tags := map[string]int{}
@@ -183,8 +188,8 @@ func TestDesignSuiteComposition(t *testing.T) {
 			t.Errorf("%s: tagged trap %v, on the card %v", c.ID, slices.Contains(c.Tags, "trap"), carded)
 		}
 	}
-	if tags["trap"] != 15 || tags["nominal"] != 2 || tags[evals.InjectionTag] != 1 {
-		t.Errorf("tags %v; want 15 trap, 2 nominal, 1 injection", tags)
+	if tags["trap"] != 16 || tags["nominal"] != 2 || tags[evals.InjectionTag] != 1 {
+		t.Errorf("tags %v; want 16 trap, 2 nominal, 1 injection", tags)
 	}
 
 	tg := designTarget0(t)
@@ -473,5 +478,50 @@ func TestDesignTrapsDetectedForTheirReason(t *testing.T) {
 	}
 	if revised != 9 {
 		t.Errorf("%d revised traps checked, want 9", revised)
+	}
+}
+
+// TestDesignWatchCoversTargetDeps (obligation (gn), T140): every Go file and
+// every embedded file of the packages the design target runs (L2, its
+// activities, the codec, the pack, the summary) is watched by the suite, so
+// that --suite changed never skips it; and the target itself is watched.
+func TestDesignWatchCoversTargetDeps(t *testing.T) {
+	s := loadDesignSuite(t)
+	cmd := exec.CommandContext(t.Context(), "go", "list", "-deps", "-json",
+		"./internal/loops/l2/...", "./internal/policy/adapters/opa", "./internal/loops/codec", "./internal/design/confirm")
+	cmd.Dir = "../.."
+	raw, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	const module = "github.com/amezianechayer/rempart"
+	watched := func(p string) bool { return len(evals.SelectChanged([]evals.Suite{s}, []string{p})) == 1 }
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	files := 0
+	for dec.More() {
+		var pkg struct {
+			ImportPath          string
+			Standard            bool
+			GoFiles, EmbedFiles []string
+		}
+		if err := dec.Decode(&pkg); err != nil {
+			t.Fatal(err)
+		}
+		dir, ok := strings.CutPrefix(pkg.ImportPath, module+"/")
+		if pkg.Standard || !ok {
+			continue
+		}
+		for _, f := range slices.Concat(pkg.GoFiles, pkg.EmbedFiles) {
+			files++
+			if !watched(dir + "/" + f) {
+				t.Errorf("%s/%s: a dependency of the design target outside the watch of the suite", dir, f)
+			}
+		}
+	}
+	if files < 50 {
+		t.Errorf("%d files listed, want the dependencies of the target", files)
+	}
+	if !watched("cmd/rempart-evals/design.go") {
+		t.Error("the design target itself is not watched")
 	}
 }

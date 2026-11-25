@@ -299,7 +299,8 @@ func TestRevisionNeverWidens(t *testing.T) {
 // TestRevisionNeverWidens.
 func TestRevisionCoversHTTPSAndDataTier(t *testing.T) {
 	controls := allControls(t)
-	for _, base := range []graphdomain.Graph{enriched(t), noncanonical(t)} {
+	for b, base := range []graphdomain.Graph{enriched(t), noncanonical(t)} {
+		applications := map[policydomain.Remediation]int{}
 		ids := map[string]bool{}
 		for _, n := range base.Nodes {
 			ids[n.ID] = true
@@ -328,6 +329,13 @@ func TestRevisionCoversHTTPSAndDataTier(t *testing.T) {
 				if err := verify.Derives(base, got); err != nil {
 					t.Errorf("%s on %s: Derives refused: %v", r, res, err)
 				}
+				applications[r]++
+			}
+		}
+		// Obligation (gv): never green on empty targets.
+		for _, r := range []policydomain.Remediation{policydomain.RemediationHTTPSOnly, policydomain.RemediationMoveToDataTier} {
+			if applications[r] == 0 {
+				t.Errorf("base %d: %s never applied", b, r)
 			}
 		}
 	}

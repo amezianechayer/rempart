@@ -228,6 +228,11 @@ func TestEngineFailsClosed(t *testing.T) {
 			"v := {\"control_id\": \"TST-001\", \"resource\": n.id}\n}\n" + meta("TST-002", "high", "escalate") + "deny contains f if {\n" + computeBody + "\n}\n"},
 		"deny_ref_head_meta": {"t.rego": "package rempart.design.t\n\n" + meta("TST-001", "high", "escalate") + "deny[k] := v if {\n\tsome n in input.graph.nodes\n\tk := n.id\n\t" +
 			"meta := rego.metadata.rule()\n\tv := {\"control_id\": meta.custom.control_id, \"resource\": n.id}\n}\n"},
+		// Obligation (fr): a deny rule without key (complete rule, default,
+		// whole set) is refused, never a panic.
+		"deny_complete":  {"t.rego": "package rempart.design.t\n\n" + meta("TST-001", "high", "escalate") + "deny if {\n\tsome n in input.graph.nodes\n\tn.kind == \"Compute\"\n\tmeta := rego.metadata.rule()\n}\n"},
+		"deny_default":   {"t.rego": "package rempart.design.t\n\ndefault deny := set()\n"},
+		"deny_whole_set": {"t.rego": "package rempart.design.t\n\n" + meta("TST-001", "high", "escalate") + "deny := {\"x\"} if {\n\tmeta := rego.metadata.rule()\n\tmeta.custom.control_id\n}\n"},
 		"deny_contains_term": {"t.rego": "package rempart.design.t\n\n" + meta("TST-001", "high", "escalate") + "deny contains {\"control_id\": meta.custom.control_id, \"resource\": n.id} if {\n" +
 			"\tsome n in input.graph.nodes\n\tmeta := rego.metadata.rule()\n}\n"},
 	}
