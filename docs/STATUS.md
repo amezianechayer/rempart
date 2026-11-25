@@ -468,7 +468,7 @@ Préalables humains (étape H0 du plan) :
 ## Reste à faire
 - ~~M2, étape humaine H3-design~~ : faite (`f646b13`). Reste à l'humain : valider les écarts de M2-T07 consignés dans « Fait » (entrée `unconfirmed` au lieu d'une `confirmation`, graphe de base compact, trappe 13 sur RES-002 seul).
 - ~~M2, en retard : (fp), (fq), (fs), (ft)~~ : soldées par M2-T08 `l2-harden` (revue sécurité en cours).
-- **M2, avant `/close-milestone M2`** : obligation (fj) (étape H-jurisdiction) ; menaces T108, T109, T111 à T117 à inscrire au modèle ; (fx) et (fy) soldées le 2026-11-25 (voir « Fait »).
+- **M2, avant `/close-milestone M2`** : obligation (fj) (étape H-jurisdiction). (fx) et (fy) soldées le 2026-11-25 ; menaces T108, T109, T111 à T117 insérées dans `docs/02-THREAT-MODEL.md` le 2026-11-25 (à confirmer par la revue de clôture).
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
