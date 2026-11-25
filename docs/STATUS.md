@@ -455,6 +455,16 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
   - Critère 4 : `internal/threat` 8/8 ; `rempart threat diff` sur deux graphes : delta valide contre `schemas/threat/v1.json`, décodage strict, réversible.
   - `verify-quick` rc=0, `govulncheck` sans vulnérabilité ; `make verify` complet non exécutable ici (pas de démon Docker), déclaré lancé par l'humain. Aucune triche détectée ; à relire par l'humain : `avg_tokens` de la baseline `intent` régénérée (200 à 1 041,5), exemples supprimés du skill `policy-as-code` (H-skills).
   - Reste avant la clôture : (fj) (étape humaine H-jurisdiction, 13 lignes Azure ; les 3 lignes Scaleway sont confirmées par la documentation officielle de Scaleway, dépôt `scaleway/docs-content` au commit `9cc4361`, `macros/concepts/region.mdx`) et la revue sécurité du diff complet du jalon (étape 3).
+- 2026-11-25 : **`/close-milestone M2`, étape 3 : revue sécurité du diff complet du jalon (`m1-done..e799778`) : BLOCK**, un constat haut, corrigé le jour même (phases tests puis impl) ; seconde passe ciblée demandée.
+  - (gk) [haut, corrigé, T139] une donnée n'était sensible que par sa classification : `internal` avec `regulation: [health]` échappait à `L2-INTERNET-TO-SENSITIVE`, NET-001, NET-012, NET-013, NET-015, DATA-002, au récapitulatif et à STRIDE (exposition convergée reproduite sur les sujets `ir` et `graph`). Correctif : définition unique `FactNode.SensitiveData` (classification absente ou autre que `public` et `internal`, ou toute réglementation) dans `internal/graph/domain/sensitive.go`, reprise par `verify.internetToSensitive`, `confirm.sensitive`, `threat.sensitiveData` ; `lib.sensitive_data` en Rego ; règle d'exposition de L1 ; DATA-003 ne double plus DATA-002 ; nouveau contrôle **DATA-005** (haute, `escalate`) : réglementation avec classification `public` ou `internal` (catalogue du pack à 46 contrôles). Tests : `TestSensitiveData`, `TestL2RegulationMakesDataSensitive` (deux chemins), `TestSummaryListsRegulatedInternalData`, `TestRegulationMakesDataSensitive` (STRIDE), `TestRegulatedInternalExposureRejected` (L1), 9 tests Rego ; trois tests Rego existants de « donnée publique » précisés sans réglementation (la base porte `gdpr`). OPA 167/167.
+    - **Écarts au correctif proposé** : pas de règle de contradiction dans L1 (la règle d'exposition de L1 traite la réglementation et DATA-005 escalade en L2 avant tout déploiement) ; la trappe de `evals/design` est reportée en (gl) [avant M3] car elle exige une nouvelle baseline humaine (H3-design bis).
+  - (gm) [moyen, avant M3-T01, humain] CODEOWNERS : ajouter `/schemas/`, `/internal/design/verify/`, `/internal/policy/adapters/opa/capabilities.json`, `/internal/policy/adapters/opa/engine.go`, `/internal/policy/domain/jurisdiction.go`, `/prompts/`, `/docs/02-THREAT-MODEL.md`, et exiger la revue des propriétaires.
+  - (fj) [traitée selon les conditions de la revue] lignes Scaleway datées sur la source de leur documentation (`scaleway/docs-content@9cc4361`, `macros/concepts/region.mdx`, hôte admis dans `sourceHosts` pour ce seul dépôt) ; `TestJurisdictionPendingFrozen` fige les 13 lignes Azure non vérifiées. **Reste à l'humain** : vérifier ces 13 lignes ou consigner l'acceptation du risque jusqu'au premier passage de L3 sur une région Azure (M3).
+  - Constats bas traités : T104 et T109 du modèle de menace à jour ; comparaison du cas d'injection étendue à `threats` et `threat_delta` (T111) ; fichiers d'échec `rapid` retirés (non rejoués).
+  - Constats bas en obligations : (fb) [avant M3] liste de ports lue comme adresse dans `commaQuads` ; (gn) [avant M3] `watch` de `evals/design` incomplète (T140), test contre `go list -deps` ; (go) [M4] 14 contrôles sans effet sur STRIDE (T141) ; (gp) [M4] `confirm.Escape` par liste d'admission ; (gq) [avant M6] seuil de largeur des sources (résidu de T102).
+  - Menaces T139 à T141 insérées, T102 et T108 complétées.
+  - **Instabilité corrigée** : l'exigence de couverture de `https_only` et `move_to_data_tier` posée dans `TestRevisionNeverWidens` (M2-T08) dépendait du tirage, rapid ne faisant que 20 tirages sous `-short` ; elle passe dans un test déterministe, `TestRevisionCoversHTTPSAndDataTier`.
+  - Preuves : `make -f Makefile verify-quick` rc=0 ; `make evals` `design`, `demo`, `intent` codes 0, aucune régression.
 - 2026-11-25 : **obligations (fx) et (fy) soldées** (règle (an), T77 ; helpers de test d'`internal/archtest`, donc cas rouges puis correctif en phase tests).
   - (fy) `composeCallRe` voit tout blanc entre `docker` et `compose` (`[ \t]+`) ; seule l'espace unique est admise : `checkComposeInvocations` et `findComposeCalls` signalent toute autre forme.
   - (fx) `shellState` rend l'état de guillemet en fin de ligne logique ; une ligne qui finit dans une chaîne ouverte est un problème signalé (bash lirait les lignes suivantes dans la chaîne : une ligne vue comme commentaire pourrait lancer `docker compose`). **Écart à la demande de la revue** : « toute forme non suivie devient un problème » n'est appliqué qu'aux guillemets ANSI-C `$'` et aux accents graves suivis d'une continuation ; les guillemets à l'intérieur de `$(...)` restent suivis par le lexeur (ils se referment par paire) et le Makefile en continue deux lignes conformes ; ne pas joindre une ligne reste le sens sûr (chaque ligne physique est alors vérifiée seule).
@@ -486,7 +496,7 @@ Préalables humains (étape H0 du plan) :
 ## Reste à faire
 - ~~M2, étape humaine H3-design~~ : faite (`f646b13`). Reste à l'humain : valider les écarts de M2-T07 consignés dans « Fait » (entrée `unconfirmed` au lieu d'une `confirmation`, graphe de base compact, trappe 13 sur RES-002 seul).
 - ~~M2, en retard : (fp), (fq), (fs), (ft)~~ : soldées par M2-T08 `l2-harden`, revue sécurité PASS ; suites (gb) à (gi) traitées sauf (ge) [bas, avant M3].
-- **M2, avant `/close-milestone M2`** : obligation (fj) (étape H-jurisdiction). Environnement cloud personnel `rempart` créé le 2026-11-25 avec l'accord de l'humain (hôtes `learn.microsoft.com` et `www.scaleway.com` ajoutés à ceux de l'environnement par défaut) ; la session en cours ne peut pas y basculer : vérification des 16 lignes (13 Azure, 3 Scaleway) à faire dans une session lancée sur `rempart`, ou par l'humain. (fx) et (fy) soldées le 2026-11-25 ; menaces T108, T109, T111 à T117 insérées dans `docs/02-THREAT-MODEL.md` le 2026-11-25 (à confirmer par la revue de clôture).
+- **M2, avant la clôture** : seconde passe ciblée de la revue sécurité sur le correctif de T139 ; (fj) : vérification des 13 lignes Azure par l'humain, ou acceptation du risque consignée jusqu'à M3. **Avant M3-T01** : (gm) CODEOWNERS (humain). **Avant M3** : (gl) trappe T139 et nouvelle baseline `design` (humain), (fb), (gn), (ge). Environnement cloud personnel `rempart` créé le 2026-11-25 avec l'accord de l'humain (hôtes `learn.microsoft.com` et `www.scaleway.com` ajoutés à ceux de l'environnement par défaut) ; la session en cours ne peut pas y basculer : vérification des 16 lignes (13 Azure, 3 Scaleway) à faire dans une session lancée sur `rempart`, ou par l'humain. (fx) et (fy) soldées le 2026-11-25 ; menaces T108, T109, T111 à T117 insérées dans `docs/02-THREAT-MODEL.md` le 2026-11-25 (à confirmer par la revue de clôture).
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
@@ -1500,3 +1510,27 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-25 01:34 [harnais] PHASE FREE (discipline TDD suspendue) : suites de la revue de M2-T08 traitées (gb à gi sauf ge)
 
 - 2026-11-25 01:34 [harnais] phase : impl -> free
+
+- 2026-11-25 02:09 [harnais] phase : free -> tests
+
+- 2026-11-25 02:10 [harnais] phase : tests -> impl
+
+- 2026-11-25 02:12 [harnais] RETOUR EN PHASE TESTS depuis impl : lint (unconvert) in the STRIDE test; closing review lows on tests: injection comparison keeps threats, rapid failure files removed
+
+- 2026-11-25 02:12 [harnais] phase : impl -> tests
+
+- 2026-11-25 13:43 [harnais] phase : tests -> impl
+
+- 2026-11-25 13:43 [harnais] RETOUR EN PHASE TESTS depuis impl : closing review of M2, conditions of (fj): Scaleway lines dated on the source repository of their documentation, set of unverified lines frozen
+
+- 2026-11-25 13:43 [harnais] phase : impl -> tests
+
+- 2026-11-25 13:43 [harnais] phase : tests -> impl
+
+- 2026-11-25 13:45 [harnais] RETOUR EN PHASE TESTS depuis impl : flaky coverage check in TestRevisionNeverWidens: rapid runs 20 checks under -short, so https_only coverage was random; moved to a deterministic test
+
+- 2026-11-25 13:45 [harnais] phase : impl -> tests
+
+- 2026-11-25 13:46 [harnais] PHASE FREE (discipline TDD suspendue) : closing review of M2: high T139 fixed (single sensitivity definition, DATA-005), conditions of (fj) met, lows on tests handled, flaky coverage check made deterministic
+
+- 2026-11-25 13:46 [harnais] phase : tests -> free

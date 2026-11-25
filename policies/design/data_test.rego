@@ -41,3 +41,20 @@ test_data_004_ok_same_class if {
 	bucket := store("wl:bucket", {"subtype": "object_storage", "classification": "confidential", "cloud": "aws", "region": "eu-west-3"})
 	lib.ok("DATA-004", lib.with_edges(lib.with_nodes(lib.base, [bucket]), [lib.edge("STORES", "wl:bucket", "data:customers", {})]))
 }
+
+# Closing review of M2 (high, T139): regulated data classified internal is
+# sensitive: DATA-002 (high) applies, DATA-003 (advisory) does not repeat it.
+test_data_002_ko_regulated_internal if lib.ko("DATA-002", lib.with_nodes(lib.base, [store("data:health", {"classification": "internal", "regulation": ["health"], "encrypted": false})]))
+
+test_data_003_ok_regulated_internal if lib.ok("DATA-003", lib.with_nodes(lib.base, [store("data:health", {"classification": "internal", "regulation": ["health"], "encrypted": false})]))
+
+# DATA-005 (closing review of M2, T139): a regulation contradicts a public or
+# internal classification; the human decides, never the classification chosen
+# by the model.
+test_data_005_ok if lib.ok("DATA-005", lib.base)
+
+test_data_005_ko_internal if lib.ko("DATA-005", lib.set_node(lib.base, "data:customers", {"classification": "internal", "regulation": ["health"]}))
+
+test_data_005_ko_public if lib.ko("DATA-005", lib.set_node(lib.base, "data:customers", {"classification": "public", "regulation": ["gdpr"]}))
+
+test_data_005_ok_internal_unregulated if lib.ok("DATA-005", lib.set_node(lib.base, "data:customers", {"classification": "internal", "regulation": []}))

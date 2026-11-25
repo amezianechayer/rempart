@@ -231,3 +231,24 @@ func TestDigestEscapesUntrusted(t *testing.T) {
 		t.Errorf("overrides of the digest = %q", d.Overrides)
 	}
 }
+
+// TestSummaryListsRegulatedInternalData (closing review of M2, high, T139):
+// the summary a human confirms lists regulated data among the sensitive data,
+// whatever its classification.
+func TestSummaryListsRegulatedInternalData(t *testing.T) {
+	g := loadGraph(t)
+	setNode(&g, "data:customer-db", func(a *graphdomain.NodeAttrs) {
+		a.Classification, a.Regulation = ptr("internal"), []string{"health"}
+	})
+	d, err := confirm.DigestOfGraph(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Sensitive) != 1 || d.Sensitive[0].Data != "data:customer-db" {
+		t.Errorf("sensitive %+v; want data:customer-db, internal but regulated", d.Sensitive)
+	}
+	setNode(&g, "data:customer-db", func(a *graphdomain.NodeAttrs) { a.Regulation = nil })
+	if d, err = confirm.DigestOfGraph(g); err != nil || len(d.Sensitive) != 0 {
+		t.Errorf("internal without regulation: sensitive %+v, %v; want none", d.Sensitive, err)
+	}
+}

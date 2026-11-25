@@ -20,10 +20,17 @@ hop_port(h, p) if {
 	p <= r.to
 }
 
-# sensitive_data: a confidential or regulated data store (absent: sensitive).
+# sensitive_data: a confidential or regulated data store (absent: sensitive),
+# or a data store under any regulation, whatever its classification (closing
+# review of M2, T139; FactNode.SensitiveData in Go).
 sensitive_data(n) if {
 	n.kind == "DataStore"
 	not n.attrs.classification in {"public", "internal"}
+}
+
+sensitive_data(n) if {
+	n.kind == "DataStore"
+	count(object.get(n.attrs, "regulation", [])) > 0
 }
 
 # sensitive_hosts host sensitive data (source of a STORES edge).

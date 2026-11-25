@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"reflect"
 	"regexp"
@@ -625,5 +626,33 @@ func TestThreatModelHasNoFreeText(t *testing.T) {
 		if bytes.Contains(out, []byte(c)) {
 			t.Errorf("threat model contains %q", c)
 		}
+	}
+}
+
+// TestRegulationMakesDataSensitive (closing review of M2, high, T139): STRIDE
+// reads regulated data as sensitive whatever its classification: the model of
+// the reference graph is the same with its data confidential or internal
+// when it stays regulated, and differs once the regulation is gone.
+func TestRegulationMakesDataSensitive(t *testing.T) {
+	p := allControls()
+	model := func(classification string, regulation []string) map[string]string {
+		g := loadGraph(t, "reference.graph.json")
+		for i := range g.Nodes {
+			if g.Nodes[i].ID == "data:customer-db" {
+				g.Nodes[i].Attrs.Classification, g.Nodes[i].Attrs.Regulation = &classification, regulation
+			}
+		}
+		out := map[string]string{}
+		for _, th := range analyze(t, g, nil, p).Threats {
+			out[th.ID] = th.Status
+		}
+		return out
+	}
+	confidential := model("confidential", []string{"gdpr"})
+	if got := model("internal", []string{"gdpr"}); !maps.Equal(got, confidential) {
+		t.Errorf("internal but regulated: STRIDE differs from confidential data")
+	}
+	if got := model("internal", nil); maps.Equal(got, confidential) {
+		t.Errorf("control: internal unregulated data gives the same model as confidential data")
 	}
 }

@@ -46,6 +46,7 @@ deny contains f if {
 	some n in input.graph.nodes
 	n.kind == "DataStore"
 	n.attrs.classification == "internal"
+	not lib.sensitive_data(n) # regulated: DATA-002 (high) applies
 	not n.attrs.encrypted == true
 	meta := rego.metadata.rule()
 	f := {"control_id": meta.custom.control_id, "resource": n.id}
@@ -66,4 +67,20 @@ deny contains f if {
 	object.get(rank, object.get(h.attrs, "classification", ""), 0) < object.get(rank, object.get(lib.nodes[e.dst].attrs, "classification", ""), 4)
 	meta := rego.metadata.rule()
 	f := {"control_id": meta.custom.control_id, "resource": h.id}
+}
+
+# METADATA
+# title: Donnée réglementée classée publique ou interne
+# custom:
+#   control_id: DATA-005
+#   severity: high
+#   remediation: escalate
+#   frameworks: {}
+deny contains f if {
+	some n in input.graph.nodes
+	n.kind == "DataStore"
+	count(object.get(n.attrs, "regulation", [])) > 0
+	object.get(n.attrs, "classification", "") in {"public", "internal"}
+	meta := rego.metadata.rule()
+	f := {"control_id": meta.custom.control_id, "resource": n.id}
 }

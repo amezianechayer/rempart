@@ -249,7 +249,6 @@ func TestRevisionNeverWidens(t *testing.T) {
 	for _, c := range controls {
 		byRemediation[c.Remediation] = append(byRemediation[c.Remediation], c)
 	}
-	covered := map[policydomain.Remediation]int{}
 	rapid.Check(t, func(rt *rapid.T) {
 		b := rapid.IntRange(0, len(bases)-1).Draw(rt, "base")
 		g := clone(t, bases[b])
@@ -290,13 +289,46 @@ func TestRevisionNeverWidens(t *testing.T) {
 		if err := verify.Derives(before, got); err != nil {
 			rt.Fatalf("(fp) the verifier refuses a revision of the table: %v (applied %+v)", err, applied)
 		}
-		for _, a := range applied {
-			covered[a.Remediation]++
-		}
 	})
-	for _, r := range []policydomain.Remediation{policydomain.RemediationHTTPSOnly, policydomain.RemediationMoveToDataTier} {
-		if covered[r] == 0 {
-			t.Errorf("(fq) %s never applied by the property", r)
+}
+
+// TestRevisionCoversHTTPSAndDataTier (obligation (fq)): on the enriched bases,
+// canonical or not, https_only and move_to_data_tier each apply on every
+// target, never widen and derive from their input. Deterministic: under
+// -short rapid draws only 20 graphs, too few to require their coverage in
+// TestRevisionNeverWidens.
+func TestRevisionCoversHTTPSAndDataTier(t *testing.T) {
+	controls := allControls(t)
+	for _, base := range []graphdomain.Graph{enriched(t), noncanonical(t)} {
+		ids := map[string]bool{}
+		for _, n := range base.Nodes {
+			ids[n.ID] = true
+		}
+		for _, e := range base.Edges {
+			ids[e.ID] = true
+		}
+		for _, r := range []policydomain.Remediation{policydomain.RemediationHTTPSOnly, policydomain.RemediationMoveToDataTier} {
+			var code string
+			for _, c := range controls {
+				if c.Remediation == r {
+					code = c.ID
+				}
+			}
+			for _, res := range targets[r] {
+				if !ids[res] {
+					continue
+				}
+				fs := []loopsdomain.Finding{{Code: code, Severity: loopsdomain.SeverityHigh, Resource: res}}
+				got, applied, err := revise.Revise(base, fs, controls)
+				if err != nil || len(applied) != 1 || applied[0].Remediation != r {
+					t.Errorf("%s on %s: applied %+v, %v; want it applied", r, res, applied, err)
+					continue
+				}
+				rapid.Check(t, func(rt *rapid.T) { checkNeverWidens(rt, base, got, applied, fs) })
+				if err := verify.Derives(base, got); err != nil {
+					t.Errorf("%s on %s: Derives refused: %v", r, res, err)
+				}
+			}
 		}
 	}
 }

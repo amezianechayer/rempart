@@ -15,7 +15,7 @@ import (
 var sourceHosts = map[string][]string{
 	"aws":      {"docs.aws.amazon.com", "aws.amazon.com"},
 	"azure":    {"learn.microsoft.com", "azure.microsoft.com", "datacenters.microsoft.com"},
-	"scaleway": {"www.scaleway.com", "scaleway.com"},
+	"scaleway": {"www.scaleway.com", "scaleway.com", "github.com"}, // github.com: /scaleway/docs-content only
 	"ovhcloud": {"www.ovhcloud.com", "help.ovhcloud.com", "ovhcloud.com"},
 }
 
@@ -49,7 +49,8 @@ func TestJurisdictionTableClosed(t *testing.T) {
 			t.Errorf("line %d (%s/%s): zone %q, want fr, eu or non_eu", i, r.Cloud, r.Region, r.Zone)
 		}
 		u, err := url.Parse(r.Source)
-		if err != nil || u.Scheme != "https" || !slices.Contains(sourceHosts[r.Cloud], u.Host) || u.User != nil {
+		if err != nil || u.Scheme != "https" || !slices.Contains(sourceHosts[r.Cloud], u.Host) || u.User != nil ||
+			(u.Host == "github.com" && !strings.HasPrefix(u.Path, "/scaleway/docs-content/blob/")) {
 			t.Errorf("line %d (%s/%s): source %q is not an https page of the provider", i, r.Cloud, r.Region, r.Source)
 		}
 		if r.Verified != "" {
@@ -119,4 +120,33 @@ func TestJurisdictionTableClosed(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestJurisdictionPendingFrozen (closing review of M2, conditions of (fj),
+// T114): the lines awaiting verification at the source are exactly these 13
+// Azure lines, whose risk the human accepts until the first run of L3 on an
+// Azure region (M3); no new unverified line, in fr or eu above all, enters
+// without changing this test. The Scaleway lines are dated, on the source
+// repository of the provider documentation.
+func TestJurisdictionPendingFrozen(t *testing.T) {
+	want := []string{
+		"azure/eastus", "azure/francecentral", "azure/francesouth", "azure/germanynorth", "azure/germanywestcentral",
+		"azure/italynorth", "azure/northeurope", "azure/polandcentral", "azure/spaincentral", "azure/swedencentral",
+		"azure/switzerlandnorth", "azure/uksouth", "azure/westeurope",
+	}
+	var got []string
+	for _, r := range domain.Regions() {
+		if r.Verified == "" {
+			got = append(got, r.Cloud+"/"+r.Region)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("lines awaiting verification %q, want %q", got, want)
+	}
+	for _, id := range []string{"fr-par", "nl-ams", "pl-waw"} {
+		i := slices.IndexFunc(domain.Regions(), func(r domain.Region) bool { return r.Cloud == "scaleway" && r.Region == id })
+		if i < 0 || domain.Regions()[i].Verified == "" {
+			t.Errorf("scaleway/%s: not dated", id)
+		}
+	}
 }

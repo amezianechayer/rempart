@@ -115,13 +115,13 @@ func Candidate(ctx context.Context, ev policy.Evaluator, g graphdomain.Graph, te
 	return []loopsdomain.Finding{}, nil
 }
 
-// internetToSensitive: a hop from the Internet to a confidential, regulated
-// or unclassified data store, or to a host (STORES) of one (T108).
+// internetToSensitive: a hop from the Internet to sensitive data (confidential,
+// regulated, unclassified, or under any regulation: FactNode.SensitiveData,
+// T139), or to a host (STORES) of it (T108).
 func internetToSensitive(f graphdomain.FactsGraph, r reach.Result) []loopsdomain.Finding {
 	sensitive := map[string]bool{}
 	for _, n := range f.Nodes {
-		c := n.Attrs.Classification
-		if n.Kind == graphdomain.KindDataStore && (c == nil || (*c != "public" && *c != "internal")) {
+		if n.SensitiveData() {
 			sensitive[n.ID] = true
 		}
 	}

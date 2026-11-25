@@ -170,13 +170,12 @@ func Analyze(g graphdomain.FactsGraph, findings []loopsdomain.Finding, p Pack) (
 	}, nil
 }
 
-// sensitiveData: a data store classified confidential or regulated, or with no
-// classification (read on the safe side, as the policies do).
+// sensitiveData: the data store id holds sensitive data
+// (FactNode.SensitiveData, as the policies read it, T139).
 func sensitiveData(g graphdomain.FactsGraph, id string) bool {
 	for _, n := range g.Nodes {
-		if n.ID == id && n.Kind == graphdomain.KindDataStore {
-			c := n.Attrs.Classification
-			return c == nil || (*c != "public" && *c != "internal")
+		if n.ID == id {
+			return n.SensitiveData()
 		}
 	}
 	return false

@@ -16,7 +16,7 @@ test_net_001_ko_dataset if lib.ko("NET-001", lib.with_hops(lib.base, [lib.hop_wo
 test_net_001_ko_host if lib.ko("NET-001", lib.with_hops(lib.base, [lib.hop_world("wl:db", "tcp", 5432, 5432)]))
 
 test_net_001_ok_public_data if {
-	inp := lib.set_node(lib.base, "data:customers", {"classification": "public"})
+	inp := lib.set_node(lib.base, "data:customers", {"classification": "public", "regulation": []})
 	lib.ok("NET-001", lib.with_hops(inp, [lib.hop_world("wl:db", "tcp", 5432, 5432)]))
 }
 
@@ -136,7 +136,7 @@ test_net_012_ok_object_storage if {
 }
 
 test_net_012_ok_public_data if {
-	inp := lib.set_node(lib.with_nodes(lib.base, [vm("wl:legacy", {})]), "data:customers", {"classification": "public"})
+	inp := lib.set_node(lib.with_nodes(lib.base, [vm("wl:legacy", {})]), "data:customers", {"classification": "public", "regulation": []})
 	lib.ok("NET-012", lib.with_edges(inp, [lib.member("wl:legacy", "net:vpc-app"), lib.edge("STORES", "wl:legacy", "data:customers", {})]))
 }
 
@@ -147,7 +147,7 @@ test_net_013_ko if lib.ko("NET-013", lib.set_node(lib.base, "lb:web-443", {"behi
 
 test_net_013_ok_no_sensitive_path if {
 	inp := lib.set_node(lib.base, "lb:web-443", {"behind": ["load_balancer"]})
-	lib.ok("NET-013", lib.set_node(inp, "data:customers", {"classification": "public"}))
+	lib.ok("NET-013", lib.set_node(inp, "data:customers", {"classification": "public", "regulation": []}))
 }
 
 # NET-014: management tier reachable from the Internet.
@@ -195,3 +195,20 @@ test_net_011_ko_cloud_absent if lib.ko("NET-011", lib.without_attr(lib.base, "wl
 test_net_011_ko_cloud_absent_source if lib.ko("NET-011", lib.without_attr(lib.base, "wl:web", "cloud"))
 
 test_net_013_ko_attrs_absent if lib.ko("NET-013", lib.without_attrs(lib.base, "lb:web-443"))
+
+# Closing review of M2 (high, T139): a regulation makes data sensitive,
+# whatever its classification.
+test_net_001_ko_regulated_internal if {
+	inp := lib.set_node(lib.base, "data:customers", {"classification": "internal", "regulation": ["health"]})
+	lib.ko("NET-001", lib.with_hops(inp, [lib.hop_world("wl:db", "tcp", 5432, 5432)]))
+}
+
+test_net_001_ok_internal_unregulated if {
+	inp := lib.set_node(lib.base, "data:customers", {"classification": "internal", "regulation": []})
+	lib.ok("NET-001", lib.with_hops(inp, [lib.hop_world("wl:db", "tcp", 5432, 5432)]))
+}
+
+test_net_012_ko_regulated_internal if {
+	inp := lib.set_node(lib.with_nodes(lib.base, [vm("wl:legacy", {})]), "data:customers", {"classification": "internal", "regulation": ["health"]})
+	lib.ko("NET-012", lib.with_edges(inp, [lib.member("wl:legacy", "net:vpc-app"), lib.edge("STORES", "wl:legacy", "data:customers", {})]))
+}

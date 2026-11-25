@@ -22,6 +22,7 @@ import (
 	"github.com/amezianechayer/rempart/internal/intent"
 	intentdomain "github.com/amezianechayer/rempart/internal/intent/domain"
 	"github.com/amezianechayer/rempart/internal/loops"
+	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
 	"github.com/amezianechayer/rempart/internal/loops/l2"
 	"github.com/amezianechayer/rempart/internal/loops/l2/activities"
 	"github.com/amezianechayer/rempart/internal/policy/adapters/opa"
@@ -532,4 +533,68 @@ func TestL2ThirdIterationKeepsOtherEdges(t *testing.T) {
 	if out.Loop.Iterations < 3 {
 		t.Errorf("%d iterations, want the third one that used to inherit the source", out.Loop.Iterations)
 	}
+}
+
+// TestL2RegulationMakesDataSensitive (closing review of M2, high, T139): data
+// classified internal but regulated is sensitive for L2 on both paths. On the
+// product path (subject ir), its exposed host escalates instead of
+// converging with the exposure; on the graph path, a direct hop from the
+// Internet to its host raises the core invariant and NET-001.
+func TestL2RegulationMakesDataSensitive(t *testing.T) {
+	t.Run("ir", func(t *testing.T) {
+		out := mustRun(t, confirmed(t, irOf(t, referenceIR, func(m map[string]any) {
+			data, _ := m["data"].([]any)
+			d, ok := data[0].(map[string]any)
+			if !ok {
+				t.Fatal("reference IR without data")
+			}
+			d["classification"], d["regulation"], d["stored_in"] = "internal", []any{"health"}, []any{"obs"}
+			m["exposure"] = []any{map[string]any{
+				"workload": "obs", "protocol": "https", "port": 443, "behind": []any{"waf", "load_balancer"}, "justification": "tableaux de bord",
+			}}
+		})))
+		if out.Status != l2.StatusEscalated || out.Graph != nil || !slices.ContainsFunc(out.InitialFindings, func(f loopsdomain.Finding) bool { return f.Code == "NET-015" }) {
+			t.Errorf("regulated data exposed through obs: %s %s, findings %v; want escalated on NET-015, no graph", out.Status, out.Reason, codesOf(out.InitialFindings))
+		}
+	})
+	t.Run("graph", func(t *testing.T) {
+		run := func(regulation []string) l2.Output {
+			raw, err := os.ReadFile("../../design/revise/testdata/enriched.graph.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var g graphdomain.Graph
+			if err := json.Unmarshal(raw, &g); err != nil {
+				t.Fatal(err)
+			}
+			internal := "internal"
+			for i := range g.Nodes {
+				if g.Nodes[i].ID == "data:billing" {
+					g.Nodes[i].Attrs.Classification, g.Nodes[i].Attrs.Regulation = &internal, regulation
+				}
+			}
+			d, err := confirm.DigestOfGraph(g)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return mustRun(t, l2.Input{Graph: &g, Confirmation: confirm.Confirmation{Subject: d.Subject, SubjectSHA256: d.SubjectSHA256, Exposures: d.Exposures, ConfirmedBy: "tester"}})
+		}
+		hit := func(out l2.Output, code string) bool {
+			return slices.ContainsFunc(out.InitialFindings, func(f loopsdomain.Finding) bool { return f.Code == code && f.Resource == "wl:billing" })
+		}
+		if out := run([]string{"health"}); !hit(out, "L2-INTERNET-TO-SENSITIVE") || !hit(out, "NET-001") {
+			t.Errorf("Internet hop to the host of regulated internal data: findings %v; want L2-INTERNET-TO-SENSITIVE and NET-001 on wl:billing", codesOf(out.InitialFindings))
+		}
+		if out := run(nil); hit(out, "L2-INTERNET-TO-SENSITIVE") {
+			t.Errorf("control: internal data without regulation raised the core invariant")
+		}
+	})
+}
+
+func codesOf(fs []loopsdomain.Finding) []string {
+	var out []string
+	for _, f := range fs {
+		out = append(out, f.Code+"@"+f.Resource)
+	}
+	return out
 }

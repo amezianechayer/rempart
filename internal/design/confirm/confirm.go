@@ -169,7 +169,7 @@ func sensitive(f graphdomain.FactsGraph) []SensitiveData {
 	out := []SensitiveData{}
 	for _, n := range f.Nodes {
 		c := n.Attrs.Classification
-		if n.Kind != graphdomain.KindDataStore || (c != nil && (*c == "public" || *c == "internal")) {
+		if !n.SensitiveData() { // T139: a regulation makes data sensitive
 			continue
 		}
 		d := SensitiveData{Data: n.ID, Classification: cmp.Or(str(c), "absent"), Hosts: []Placement{}}

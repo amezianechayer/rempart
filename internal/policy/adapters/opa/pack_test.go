@@ -17,7 +17,8 @@ import (
 
 // catalog freezes the controls of the pack (fiche M2-T03): control_id,
 // severity, remediation. Lowering a severity changes this test file, frozen in
-// the impl phase (T108). The 45 controls of the fiche M2-T03.
+// the impl phase (T108). The 45 controls of the fiche M2-T03, and DATA-005
+// (closing review of M2, T139).
 var catalog = []struct {
 	id  string
 	sev loopsdomain.Severity
@@ -29,6 +30,7 @@ var catalog = []struct {
 	{"DATA-002", "high", "enable_encryption"},
 	{"DATA-003", "medium", "advisory"},
 	{"DATA-004", "high", "escalate"},
+	{"DATA-005", "high", "escalate"},
 	{"IAM-001", "critical", "least_privilege"},
 	{"IAM-002", "critical", "least_privilege"},
 	{"IAM-003", "high", "dedicated_identity"},

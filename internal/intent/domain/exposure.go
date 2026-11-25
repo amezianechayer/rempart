@@ -17,7 +17,9 @@ func checkExposure(ix tokenIndex, d Draft) []loopsdomain.Finding {
 	for i, e := range d.Exposure {
 		sensitive := textSensitive || kinds[e.Workload] == "managed_db"
 		for _, x := range d.Data {
-			if (x.Classification == "confidential" || x.Classification == "regulated") && slices.Contains(x.StoredIn, e.Workload) {
+			// T139: a regulation makes data sensitive, whatever the
+			// classification the model chose.
+			if (x.Classification == "confidential" || x.Classification == "regulated" || len(x.Regulation) > 0) && slices.Contains(x.StoredIn, e.Workload) {
 				sensitive = true
 			}
 		}

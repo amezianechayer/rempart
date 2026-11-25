@@ -232,13 +232,15 @@ func TestDesignSuiteComposition(t *testing.T) {
 	}
 
 	// The untrusted text is never read: the injection gives the output of its
-	// trap, the graph (which carries the text) aside.
+	// trap, the graph (which carries the text) aside; the threat model and its
+	// delta, computed on facts only, are compared too (closing review of M2,
+	// T111).
 	strip := func(raw json.RawMessage) map[string]any {
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
 			t.Fatal(err)
 		}
-		for _, k := range []string{"graph", "subject", "loop", "threats", "threat_delta"} {
+		for _, k := range []string{"graph", "subject", "loop"} {
 			delete(m, k)
 		}
 		return m

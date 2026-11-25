@@ -37,12 +37,20 @@ type Region struct {
 const (
 	srcAWS      = "https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions.html"
 	srcAzure    = "https://learn.microsoft.com/en-us/azure/reliability/regions-list"
-	srcScaleway = "https://www.scaleway.com/en/docs/account/reference-content/products-availability/"
 	awsVerified = "2026-11-19"
+	// srcScaleway: the source of the Scaleway documentation, at the commit
+	// read on 2026-11-25 (www.scaleway.com out of reach from the session; the
+	// page published from it names each region and its city and country).
+	srcScaleway      = "https://github.com/scaleway/docs-content/blob/9cc4361c1ddcecee8cbf3a920e175f127ecb8bb9/macros/concepts/region.mdx"
+	scalewayVerified = "2026-11-25"
 )
 
 func aws(region string, z Zone) Region {
 	return Region{Cloud: "aws", Region: region, Zone: z, Source: srcAWS, Verified: awsVerified}
+}
+
+func scaleway(region string, z Zone) Region {
+	return Region{Cloud: "scaleway", Region: region, Zone: z, Source: srcScaleway, Verified: scalewayVerified}
 }
 
 // pending lines keep the zone of the L1 table of M1 (plan M1 section 6.3) or,
@@ -89,9 +97,9 @@ var table = func() []Region {
 		pending("azure", srcAzure, "uksouth", ZoneNonEU),
 		pending("azure", srcAzure, "westeurope", ZoneEU), // Netherlands
 
-		pending("scaleway", srcScaleway, "fr-par", ZoneFR),
-		pending("scaleway", srcScaleway, "nl-ams", ZoneEU),
-		pending("scaleway", srcScaleway, "pl-waw", ZoneEU),
+		scaleway("fr-par", ZoneFR), // France (Paris)
+		scaleway("nl-ams", ZoneEU), // Netherlands (Amsterdam)
+		scaleway("pl-waw", ZoneEU), // Poland (Warsaw)
 	}
 	slices.SortFunc(t, func(a, b Region) int { return cmp.Or(cmp.Compare(a.Cloud, b.Cloud), cmp.Compare(a.Region, b.Region)) })
 	return t
