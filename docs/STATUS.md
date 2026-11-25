@@ -437,6 +437,10 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
   - Fiche `docs/loops/L2.md` mise à jour (étapes prepare, verify, finalize, sorties). Aucun changement de séquence de commandes du workflow (champ ajouté à la requête de `Finalize`), donc (fo) sans objet ici.
   - Ajustements consignés par le harnais : lint seul sur les nouveaux tests (gofumpt, G304 sur un chemin de fixture, identifiant `max`).
   - Preuves : `make -f Makefile verify-quick` rc=0 ; `make evals EVAL=design`, `demo`, `intent` codes 0, aucune régression.
+- 2026-11-25 : **obligations (fx) et (fy) soldées** (règle (an), T77 ; helpers de test d'`internal/archtest`, donc cas rouges puis correctif en phase tests).
+  - (fy) `composeCallRe` voit tout blanc entre `docker` et `compose` (`[ \t]+`) ; seule l'espace unique est admise : `checkComposeInvocations` et `findComposeCalls` signalent toute autre forme.
+  - (fx) `shellState` rend l'état de guillemet en fin de ligne logique ; une ligne qui finit dans une chaîne ouverte est un problème signalé (bash lirait les lignes suivantes dans la chaîne : une ligne vue comme commentaire pourrait lancer `docker compose`). **Écart à la demande de la revue** : « toute forme non suivie devient un problème » n'est appliqué qu'aux guillemets ANSI-C `$'` et aux accents graves suivis d'une continuation ; les guillemets à l'intérieur de `$(...)` restent suivis par le lexeur (ils se referment par paire) et le Makefile en continue deux lignes conformes ; ne pas joindre une ligne reste le sens sûr (chaque ligne physique est alors vérifiée seule).
+  - Cas ajoutés (`multiline_quotes_and_blanks`, 9 cas plus un cas `Makefile`) : chaîne double ou simple qui cache un appel, forme non suivie continuée, deux espaces, tabulation, forme du lanceur espacée, `version` espacée, chaînes fermées et chaîne double continuée conformes. Preuves : `go test ./internal/archtest/` vert (dépôt réel compris), `make -f Makefile verify-quick` rc=0.
 
 
 ## En cours
@@ -464,7 +468,7 @@ Préalables humains (étape H0 du plan) :
 ## Reste à faire
 - ~~M2, étape humaine H3-design~~ : faite (`f646b13`). Reste à l'humain : valider les écarts de M2-T07 consignés dans « Fait » (entrée `unconfirmed` au lieu d'une `confirmation`, graphe de base compact, trappe 13 sur RES-002 seul).
 - ~~M2, en retard : (fp), (fq), (fs), (ft)~~ : soldées par M2-T08 `l2-harden` (revue sécurité en cours).
-- **M2, avant `/close-milestone M2`** : obligations (fx), (fy), (fj) ; menaces T108, T109, T111 à T117 à inscrire au modèle.
+- **M2, avant `/close-milestone M2`** : obligation (fj) (étape H-jurisdiction) ; menaces T108, T109, T111 à T117 à inscrire au modèle ; (fx) et (fy) soldées le 2026-11-25 (voir « Fait »).
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
@@ -1464,3 +1468,9 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-25 01:15 [harnais] PHASE FREE (discipline TDD suspendue) : tâche l2-harden terminée, revue sécurité à suivre
 
 - 2026-11-25 01:15 [harnais] phase : impl -> free
+
+- 2026-11-25 01:22 [harnais] phase : free -> tests
+
+- 2026-11-25 01:23 [harnais] PHASE FREE (discipline TDD suspendue) : obligations fx et fy soldées : helpers de test, rouge puis correctif en phase tests
+
+- 2026-11-25 01:23 [harnais] phase : tests -> free

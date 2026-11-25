@@ -978,7 +978,7 @@ const (
 )
 
 var (
-	composeCallRe      = regexp.MustCompile(`\bdocker(?: |-)compose(?:\s|;|$)`)
+	composeCallRe      = regexp.MustCompile(`\bdocker(?:[ \t]+|-)compose(?:\s|;|$)`) // obligation (fy): any blanks
 	composeSubcommands = []string{"up", "down"}
 	composeVolumesFlag = regexp.MustCompile(`^(-v|--volumes(=.*)?)$`)
 	dockerVolumeRmRe   = regexp.MustCompile(`\bdocker\s+volume\s+(rm|prune)\b`)
@@ -1020,6 +1020,10 @@ func findComposeCalls(mf parsedMakefile, problems *problemList) []composeCall {
 		for _, loc := range composeCallRe.FindAllStringIndex(text, -1) {
 			if strings.HasPrefix(text[loc[0]:], "docker-compose") {
 				problems.addf("Makefile line %d: legacy docker-compose binary, use \"docker compose%s...\": %q", l.Num, composeFlags, text)
+				continue
+			}
+			if !strings.HasPrefix(text[loc[0]:], "docker compose") { // obligation (fy)
+				problems.addf("Makefile line %d: docker compose with blanks other than one space (D9): %q", l.Num, text)
 				continue
 			}
 			rest := text[loc[0]+len("docker compose"):]

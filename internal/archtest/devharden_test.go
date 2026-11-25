@@ -464,6 +464,20 @@ func checkComposeInvocations(name, src string) []string {
 	var problems problemList
 	for _, l := range joinShellLines(src) {
 		text := l.Text
+		// Obligation (fx): in doubt, refused. A string still open at the end
+		// of the line makes bash read the next lines inside it (a line seen
+		// as a comment may run a command). ANSI-C quotes and backquotes are
+		// not followed by shellState: before a continuation they leave the
+		// join to a guess. Quotes inside $(...) pair up and stay followed;
+		// the Makefile continues such lines.
+		open, comment := shellState(text)
+		if !comment && open != 0 {
+			problems.addf("%s line %d: quoted string open at the end of the line (D18): %q", name, l.Num, text)
+		}
+		untracked := strings.Contains(text, "$'") || strings.Contains(text, "`")
+		if !comment && untracked && trailingBackslashes(text)%2 == 1 {
+			problems.addf("%s line %d: quoting not followed before a continuation (D18): %q", name, l.Num, text)
+		}
 		if strings.HasPrefix(strings.TrimLeft(text, " \t"), "#") {
 			continue
 		}
@@ -471,6 +485,10 @@ func checkComposeInvocations(name, src string) []string {
 			at := text[loc[0]:]
 			if strings.HasPrefix(at, "docker-compose") {
 				problems.addf("%s line %d: legacy docker-compose binary: docker compose outside %q: %q", name, l.Num, composeViaEnv+"<subcommand>", text)
+				continue
+			}
+			if !strings.HasPrefix(at, "docker compose") { // obligation (fy): only one space
+				problems.addf("%s line %d: docker compose outside %q, blanks other than one space: %q", name, l.Num, composeViaEnv+"<subcommand>", text)
 				continue
 			}
 			if strings.HasPrefix(at[len("docker compose"):], " version") {
@@ -535,6 +553,15 @@ func unsafeQuoting(text string) bool {
 // D18: a line wrongly seen as a comment is not joined, so its next physical
 // line is checked on its own.
 func shellComment(text string) bool {
+	_, comment := shellState(text)
+	return comment
+}
+
+// shellState lexes the logical line text as shellComment does and returns
+// the quote still open at its end (0 if none), or comment true when an
+// unquoted "#" starts a word (obligation (fx): the state of a line, not
+// restarted on each physical line by the caller).
+func shellState(text string) (byte, bool) {
 	i := 0
 	if strings.HasPrefix(text, "\t") {
 		for i < len(text) && strings.IndexByte(" \t@-+", text[i]) >= 0 {
@@ -562,11 +589,11 @@ func shellComment(text string) bool {
 		case c == '\'' || c == '"':
 			quote = c
 		case c == '#' && wordStart:
-			return true
+			return 0, true
 		}
 		wordStart = quote == 0 && strings.IndexByte(" \t;&|()<>", c) >= 0
 	}
-	return false
+	return quote, false
 }
 
 // TestJoinShellLines (M0-T04b V3, D18): the logical lines bash reads. A
@@ -770,6 +797,45 @@ func TestComposeOnlyThroughDevEnv(t *testing.T) {
 				}
 			})
 		}
+	})
+	// Obligations (fx) and (fy) (T77, rule (an)): a quoted string open at the
+	// end of a line makes bash read the next physical lines as part of it, so
+	// a line that looks like a comment may run a command; in doubt, refused.
+	// Any blanks between docker and compose still call compose; only the
+	// canonical single space is admitted.
+	t.Run("multiline_quotes_and_blanks", func(t *testing.T) {
+		const (
+			file    = "scripts/x.sh"
+			outside = "docker compose outside"
+		)
+		cases := []struct {
+			name, src string
+			want      []string // nil: conforming
+		}{
+			{name: "string_hides_call", src: "#!/usr/bin/env bash\necho \"a\n#\"; docker compose up -d\n", want: []string{file + " line 2: quoted string open at the end of the line"}},
+			{name: "single_quote_hides_call", src: "#!/usr/bin/env bash\necho 'a\n#'; docker compose up -d\n", want: []string{file + " line 2: quoted string open at the end of the line"}},
+			{name: "untracked_form_continued", src: "#!/usr/bin/env bash\nx=$'a' \\\n  # \\\n  docker compose up -d\n", want: []string{file + " line 2: quoting not followed", file + " line 4: " + outside}},
+			{name: "two_spaces", src: "#!/usr/bin/env bash\ndocker  compose up -d\n", want: []string{file + " line 2: " + outside}},
+			{name: "tab", src: "#!/usr/bin/env bash\ndocker\tcompose up -d\n", want: []string{file + " line 2: " + outside}},
+			{name: "spaced_runner_form", src: "#!/usr/bin/env bash\nbash scripts/dev-env.sh run docker  compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d\n", want: []string{file + " line 2: " + outside}},
+			{name: "spaced_version", src: "#!/usr/bin/env bash\ndocker \tcompose version\n", want: []string{file + " line 2: " + outside}},
+			{name: "closed_strings_conform", src: "#!/usr/bin/env bash\necho \"a # b\" 'c # d' \"e\\\"f\"\ndocker compose version\n"},
+			{name: "continued_double_quote_conforms", src: "#!/usr/bin/env bash\necho \"a \\\nb\"\ndocker compose version\n"},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				problems := checkComposeInvocations(file, c.src)
+				expectProblems(t, problems, c.want)
+				if len(problems) != len(c.want) {
+					t.Errorf("%d problems, want %d:\n%s", len(problems), len(c.want), strings.Join(problems, "\n"))
+				}
+			})
+		}
+		// Makefile lines (findComposeCalls): a non-canonical blank is refused too.
+		mf := parsedMakefile{Lines: []makeLine{{Num: 7, Text: "\tdocker  compose -p rempart-dev --env-file .env.dev -f docker-compose.yml up -d"}}}
+		var problems problemList
+		findComposeCalls(mf, &problems)
+		expectProblems(t, problems, []string{"Makefile line 7"})
 	})
 	t.Run("repository", func(t *testing.T) {
 		_, fsys := repoRoot(t)
