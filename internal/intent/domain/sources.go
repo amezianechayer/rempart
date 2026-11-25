@@ -20,10 +20,22 @@ func isAddrRune(r rune) bool {
 	return r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F' || r == '.' || r == ':' || r == '/'
 }
 
-// writtenPrefixes returns the canonical prefixes of the addresses and
-// prefixes of s: an address A as A/32 or A/128, a prefix masked.
+// The same text is read in two opposite directions (review of the pre-M3
+// batch, T102). Omission (checkSources, CitesAddress): every address of the
+// text must be kept, so reading more is the safe side and nothing is exempted.
+// Anchoring (writtenPrefixes): a source proposed by the model must be written,
+// so reading less is the safe side, and a list right after the word port or
+// ports never anchors (obligation (fb)).
+
+// writtenPrefixes returns the canonical prefixes that anchor a source in s,
+// an address A as A/32 or A/128, a prefix masked: those of the original text
+// and of its rereading, port lists excepted.
 func writtenPrefixes(s string) map[netip.Prefix]bool {
-	out, _ := readAddresses(s)
+	out, _ := readTokens(s)
+	if r := rearmQuads(s, true); r != s {
+		more, _ := readTokens(r)
+		maps.Copy(out, more)
+	}
 	return out
 }
 
@@ -39,31 +51,43 @@ var (
 	)
 	// review of M2-T01: blanks on both sides of the dot (never a sentence
 	// end), four groups outside any number (never the tail of an address).
-	spacedDot  = regexp.MustCompile(`([0-9])[ \t]+\.[ \t]+([0-9])`)
-	commaQuads = regexp.MustCompile(`(^|[^0-9.,])([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3})([^0-9.,]|$)`)
-	// Obligation (fb): four groups right after the word port or ports are a
-	// port list ("ports 22,80,110,143"), never an address.
-	portWord = regexp.MustCompile(`(?i)\bports?[ \t]*:?[ \t]*$`)
+	spacedDot = regexp.MustCompile(`([0-9])[ \t]+\.[ \t]+([0-9])`)
+	// The boundaries of a quad are checked apart, never consumed, so that a
+	// quad one character after another is read too (review of the pre-M3
+	// batch).
+	commaQuads = regexp.MustCompile(`([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3})`)
+	// Obligation (fb), anchoring only: four groups right after the word port
+	// or ports (Unicode word boundary) are a port list, never an anchor.
+	portWord = regexp.MustCompile(`(?i)(?:^|[^\p{L}\p{N}_])ports?\s*:?\s*$`)
 )
 
-func rearm(s string) string {
+// rearm rewrites the separators for the omission reader: nothing exempted.
+func rearm(s string) string { return rearmQuads(s, false) }
+
+func rearmQuads(s string, skipPorts bool) string {
 	s = defanged.Replace(s)
 	for prev := ""; prev != s; {
 		prev = s
 		s = spacedDot.ReplaceAllString(s, "$1.$2")
 	}
+	digit := func(i int) bool { return i >= 0 && i < len(s) && s[i] >= '0' && s[i] <= '9' }
+	// glued: the byte at i ties the quad to a number (a digit, a comma, or a
+	// dot with a digit beyond it); a sentence-ending dot does not.
+	glued := func(i, beyond int) bool {
+		if i < 0 || i >= len(s) {
+			return false
+		}
+		return digit(i) || s[i] == ',' || s[i] == '.' && digit(i+beyond)
+	}
 	var b strings.Builder
 	last := 0
 	for _, m := range commaQuads.FindAllStringSubmatchIndex(s, -1) {
-		b.WriteString(s[last:m[0]])
-		last = m[1]
-		if portWord.MatchString(s[:m[3]]) {
-			b.WriteString(s[m[0]:m[1]])
+		if glued(m[0]-1, -1) || glued(m[1], 1) || skipPorts && portWord.MatchString(s[:m[0]]) {
 			continue
 		}
-		b.WriteString(s[m[2]:m[3]])
-		b.WriteString(strings.Join([]string{s[m[4]:m[5]], s[m[6]:m[7]], s[m[8]:m[9]], s[m[10]:m[11]]}, "."))
-		b.WriteString(s[m[12]:m[13]])
+		b.WriteString(s[last:m[0]])
+		b.WriteString(strings.Join([]string{s[m[2]:m[3]], s[m[4]:m[5]], s[m[6]:m[7]], s[m[8]:m[9]]}, "."))
+		last = m[1]
 	}
 	b.WriteString(s[last:])
 	return b.String()
@@ -187,7 +211,8 @@ func checkSources(text string, d Draft) []loopsdomain.Finding {
 		return false
 	}
 	for _, o := range d.ExplicitOverrides {
-		for p := range writtenPrefixes(o.Statement) {
+		said, _ := readAddresses(o.Statement) // what the override captures: full reading
+		for p := range said {
 			kept[p] = true
 		}
 	}

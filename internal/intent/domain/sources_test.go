@@ -63,6 +63,14 @@ func TestExposureSourcesOmitted(t *testing.T) {
 		"leading_zeros":             {fr + " Accès depuis 203.000.113.010 seulement.", "203.000.113.010", nil},
 		"five_parts":                {fr + " Accès depuis 203.0.113.10.5 seulement.", "203.0.113.10.5", nil},
 		"leading_zeros_with_source": {fr + " Accès depuis 203.000.113.010 seulement.", "203.000.113.010", withSources("203.0.113.10/32")},
+		// Review of the pre-M3 batch: the omission reader never exempts a
+		// list after the word port, and a quad is read even when a single
+		// character separates it from the previous one.
+		"after_port_word":       {fr + " Port: 10,1,2,3 pour l'accès.", "10,1,2,3", nil},
+		"after_list_space":      {fr + " Ports 22,80,110,143 10,1,2,3.", "10,1,2,3", nil},
+		"after_list_semicolon":  {fr + " Ports 22,80,110,143;10,1,2,3.", "10,1,2,3", nil},
+		"after_list_newline":    {fr + " Ports 22,80,110,143\n10,1,2,3.", "10,1,2,3", nil},
+		"after_list_kept_first": {fr + " Ports 22,80,110,143 10,1,2,3.", "10,1,2,3", withOverride("ouvrir les ports 22,80,110,143")},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -209,6 +217,43 @@ func TestExposureSourcesRearmNeverRemoves(t *testing.T) {
 	}
 }
 
+// TestExposureSourcesPortListNeverAnchors (obligation (fb), review of the
+// pre-M3 batch): a list of four small numbers right after the word port or
+// ports never anchors an allowed source; captured in explicit_overrides, it
+// satisfies the omission rule; a quad that follows it, or that follows a word
+// merely ending in port (Unicode boundary), still anchors.
+func TestExposureSourcesPortListNeverAnchors(t *testing.T) {
+	fr := readText(t, "reference-request.txt")
+	ports := fr + " Ouvrir les ports 22,80,110,143."
+	got := Check(ports, draftFrom(t, "reference-draft.json", withSources("22.80.110.143/32")), TenantContext{})
+	if !hasFinding(got, "INTENT-TECHNICAL-VALUE", loopsdomain.SeverityHigh, "exposure[0].allowed_sources") {
+		t.Errorf("port list anchored a source: want INTENT-TECHNICAL-VALUE, got %+v", got)
+	}
+	if got := Check(ports, draftFrom(t, "reference-draft.json", withOverride("ouvrir les ports 22,80,110,143")), TenantContext{}); len(got) != 0 {
+		t.Errorf("port list captured in an override: want no finding, got %+v", got)
+	}
+	for name, tc := range map[string]struct{ text, override string }{
+		"after_list":   {fr + " Ports 22,80,110,143 10,1,2,3 seulement.", "ouvrir les ports 22,80,110,143"},
+		"word_deport":  {fr + " Accès depuis le site de déport 10,1,2,3 seulement.", ""},
+		"word_rapport": {fr + " Accès depuis le rapport 10,1,2,3 seulement.", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			edits := []func(*testing.T, map[string]any){withSources("10.1.2.3/32")}
+			if tc.override != "" {
+				edits = append(edits, withOverride(tc.override))
+			}
+			d := draftFrom(t, "reference-draft.json", func(t *testing.T, m map[string]any) {
+				for _, e := range edits {
+					e(t, m)
+				}
+			})
+			if got := Check(tc.text, d, TenantContext{}); len(got) != 0 {
+				t.Errorf("faithful draft refused: %+v", got)
+			}
+		})
+	}
+}
+
 // TestCitesAddress proves ADR 0012 D4 and obligation (ey): the reader of L1,
 // exported, says whether a text cites an address or a prefix, rearmed forms
 // and unreadable address-like tokens included (fail closed); a text without
@@ -222,6 +267,11 @@ func TestCitesAddress(t *testing.T) {
 		"bureau 203 . 0 . 113 . 10",
 		"accès depuis 203,0,113,10",
 		"source 999.1.2.3.4",
+		// Review of the pre-M3 batch: L2 reads overrides only to block, so a
+		// list of four small ports stays an address there (fail closed).
+		"ouvrir les ports 22,80,110,143",
+		"port 22,80,110,143",
+		"ports 22,80,110,143 10,1,2,3",
 	} {
 		if !CitesAddress(s) {
 			t.Errorf("CitesAddress(%q) = false, want true", s)
@@ -229,8 +279,8 @@ func TestCitesAddress(t *testing.T) {
 	}
 	for _, s := range []string{
 		"", "exposer en https sur le port 443", "version 1.2 du schéma", "à 10:30 le matin", "ouvert à tous",
-		// Obligation (fb): a list of ports is never read as an address.
-		"ouvrir les ports 22,80,110,143", "ports 22,80,443,8080", "port 22,80,110,143", "Ports : 22,80,443,8080", "open ports: 22,80,443,8080",
+		// A list with a number of four digits is never a quad.
+		"ports 22,80,443,8080", "Ports : 22,80,443,8080", "open ports: 22,80,443,8080",
 	} {
 		if CitesAddress(s) {
 			t.Errorf("CitesAddress(%q) = true, want false", s)
