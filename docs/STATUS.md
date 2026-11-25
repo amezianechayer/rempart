@@ -479,7 +479,7 @@ Préalables humains (étape H0 du plan) :
 ## Reste à faire
 - ~~M2, étape humaine H3-design~~ : faite (`f646b13`). Reste à l'humain : valider les écarts de M2-T07 consignés dans « Fait » (entrée `unconfirmed` au lieu d'une `confirmation`, graphe de base compact, trappe 13 sur RES-002 seul).
 - ~~M2, en retard : (fp), (fq), (fs), (ft)~~ : soldées par M2-T08 `l2-harden`, revue sécurité PASS ; suites (gb) à (gi) traitées sauf (ge) [bas, avant M3].
-- **M2, avant `/close-milestone M2`** : obligation (fj) (étape H-jurisdiction). (fx) et (fy) soldées le 2026-11-25 ; menaces T108, T109, T111 à T117 insérées dans `docs/02-THREAT-MODEL.md` le 2026-11-25 (à confirmer par la revue de clôture).
+- **M2, avant `/close-milestone M2`** : obligation (fj) (étape H-jurisdiction). Environnement cloud personnel `rempart` créé le 2026-11-25 avec l'accord de l'humain (hôtes `learn.microsoft.com` et `www.scaleway.com` ajoutés à ceux de l'environnement par défaut) ; la session en cours ne peut pas y basculer : vérification des 16 lignes (13 Azure, 3 Scaleway) à faire dans une session lancée sur `rempart`, ou par l'humain. (fx) et (fy) soldées le 2026-11-25 ; menaces T108, T109, T111 à T117 insérées dans `docs/02-THREAT-MODEL.md` le 2026-11-25 (à confirmer par la revue de clôture).
 - Installer la chaîne d'outils sur le poste principal : `docs/SETUP.md`, puis `bash scripts/check-tools.sh`.
 - `ContinueAsNew` avant l'attente d'approbation dans `temporal-loop-skeleton.md` : avec les tâches ADR 0001, au début de M1.
 - ADR non encore rédigés (après le choix du point d'entrée) : plan calculé par le runner et approbations signées par des clés du client ; L3 en compilateur déterministe ; pas de mode hébergé au MVP.
