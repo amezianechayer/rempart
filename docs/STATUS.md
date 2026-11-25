@@ -1595,3 +1595,5 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-25 16:20 [harnais] PHASE FREE (discipline TDD suspendue) : pre-M3 obligations done, security review PASS, medium finding fixed
 
 - 2026-11-25 16:20 [harnais] phase : impl -> free
+
+- 2026-11-25 22:11 [harnais] jalon courant : M3
