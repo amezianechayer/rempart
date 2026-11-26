@@ -1,10 +1,16 @@
 package archtest
 
 import (
+	"archive/zip"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"maps"
 	"net/url"
+	"os"
+	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -34,7 +40,18 @@ var (
 	lockIdentityRe = regexp.MustCompile(`^https://github\.com/[a-z0-9-]+/[a-z0-9-]+/\.github/workflows/[a-z0-9-]+\.ya?ml@refs/(tags|heads)/v[0-9.]+$`)
 	lockSourceRe   = regexp.MustCompile(`^registry\.opentofu\.org/hashicorp/([a-z0-9-]+)$`)
 	lockPluginRe   = regexp.MustCompile(`^github\.com/terraform-linters/tflint-ruleset-[a-z0-9]+$`)
+	lockH1Re       = regexp.MustCompile(`^h1:[A-Za-z0-9+/]{43}=$`)
 )
+
+// lockToolRepos freezes the github.com repository of each tool of the lock:
+// a tool of another owner, under the same name, is refused.
+var lockToolRepos = map[string]string{
+	"tofu":                   "opentofu/opentofu",
+	"tflint":                 "terraform-linters/tflint",
+	"tflint-ruleset-aws":     "terraform-linters/tflint-ruleset-aws",
+	"tflint-ruleset-azurerm": "terraform-linters/tflint-ruleset-azurerm",
+	"trivy":                  "aquasecurity/trivy",
+}
 
 func keysOf(m map[string]any) []string { return slices.Sorted(maps.Keys(m)) }
 
@@ -155,8 +172,13 @@ func checkIaCLock(src []byte, today time.Time) []string {
 		if name == "trivy" && slices.Contains(compromisedTrivy, version) {
 			problems.addf("%s: version %s is a compromised release (GHSA-69fq-xp46-6x23)", what, version)
 		}
-		if p := httpsOn(what, tl["url"]); p != "" && !strings.Contains(p, "/v"+version+"/") {
-			problems.addf("%s: url path %q does not name v%s", what, p, version)
+		if p := httpsOn(what, tl["url"]); p != "" {
+			if !strings.Contains(p, "/v"+version+"/") {
+				problems.addf("%s: url path %q does not name v%s", what, p, version)
+			}
+			if repo, ok := lockToolRepos[name]; !ok || !strings.HasPrefix(p, "/"+repo+"/releases/download/") {
+				problems.addf("%s: url path %q is not a release of the frozen repository %q", what, p, repo)
+			}
 		}
 		for _, h := range []string{"sha256", "binary_sha256"} {
 			if s, _ := tl[h].(string); !lockHexRe.MatchString(s) {
@@ -190,7 +212,7 @@ func checkIaCLock(src []byte, today time.Time) []string {
 			continue
 		}
 		seenP[source] = true
-		if k := keysOf(pv); !slices.Equal(k, []string{"published", "sha256", "signature", "source", "url", "version"}) {
+		if k := keysOf(pv); !slices.Equal(k, []string{"h1", "published", "sha256", "signature", "source", "url", "version"}) {
 			problems.addf("%s: keys %q", what, k)
 			continue
 		}
@@ -205,6 +227,11 @@ func checkIaCLock(src []byte, today time.Time) []string {
 		httpsOn(what, pv["url"])
 		if s, _ := pv["sha256"].(string); !lockHexRe.MatchString(s) {
 			problems.addf("%s: sha256 %q", what, s)
+		}
+		// T156: the h1 hash of the package, written in the .terraform.lock.hcl
+		// of each root, is what makes OpenTofu refuse an unpacked package.
+		if s, _ := pv["h1"].(string); !lockH1Re.MatchString(s) {
+			problems.addf("%s: h1 %q, want h1: and a base64 SHA-256", what, s)
 		}
 		published(what, pv["published"])
 		signature(what, pv["signature"], hashicorpKey)
@@ -251,15 +278,15 @@ const validIaCLock = `{
   "providers": [
     {"source": "registry.opentofu.org/hashicorp/aws", "version": "6.72.0", "published": "2026-11-04",
      "url": "https://releases.hashicorp.com/terraform-provider-aws/6.72.0/terraform-provider-aws_6.72.0_linux_amd64.zip",
-     "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "h1": "h1:v8OGTOUuY1sbRr4VDjYW7ypqV5NBB1cosUY5LrcwqTs=",
      "signature": {"kind": "gpg", "key": "C874011F0AB405110D02105534365D9472D7468F", "identity": "", "issuer": "", "checked": "2026-11-26", "note": ""}},
     {"source": "registry.opentofu.org/hashicorp/azurerm", "version": "5.13.0", "published": "2026-11-05",
      "url": "https://releases.hashicorp.com/terraform-provider-azurerm/5.13.0/terraform-provider-azurerm_5.13.0_linux_amd64.zip",
-     "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "h1": "h1:zjDGZDtBxgHrgAEPmK+zZnupOWTHNbGY5VoxwiJXIqk=",
      "signature": {"kind": "gpg", "key": "C874011F0AB405110D02105534365D9472D7468F", "identity": "", "issuer": "", "checked": "2026-11-26", "note": ""}},
     {"source": "registry.opentofu.org/hashicorp/helm", "version": "3.3.0", "published": "2026-09-16",
      "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_amd64.zip",
-     "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+     "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "h1": "h1:Qbt2+dtOJty3glPZI9jMCXq82GSAKBk/T2+wBMIdu0c=",
      "signature": {"kind": "gpg", "key": "C874011F0AB405110D02105534365D9472D7468F", "identity": "", "issuer": "", "checked": "2026-11-26", "note": ""}}
   ]
 }
@@ -302,6 +329,10 @@ func TestIaCToolsLockPinned(t *testing.T) {
 		{"provider_other_namespace", `registry.opentofu.org/hashicorp/helm`, `registry.opentofu.org/evil/helm`, "source"},
 		{"tool_missing", `{"name": "trivy", "kind": "tool"`, `{"name": "trivy-x", "kind": "tool"`, "tool trivy missing"},
 		{"unknown_key", `"platform": "linux_amd64"`, `"platform": "linux_amd64", "mirror": "https://evil.example"`, "lock keys"},
+		{"provider_no_h1", `"h1": "h1:Qbt2+dtOJty3glPZI9jMCXq82GSAKBk/T2+wBMIdu0c=",`, ``, "keys"},
+		{"provider_h1_zh", `h1:Qbt2+dtOJty3glPZI9jMCXq82GSAKBk/T2+wBMIdu0c=`, `zh:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`, "want h1:"},
+		{"tool_other_repository", `https://github.com/opentofu/opentofu/releases`, `https://github.com/evil/opentofu/releases`, "frozen repository"},
+		{"tool_unknown", `"name": "tofu", "kind": "tool"`, `"name": "tofux", "kind": "tool"`, "frozen repository"},
 		{"plugin_source_other", `"plugin_source": "github.com/terraform-linters/tflint-ruleset-aws"`, `"plugin_source": "github.com/evil/tflint-ruleset-aws"`, "plugin_source"},
 	}
 	for _, c := range cases {
@@ -357,5 +388,214 @@ func TestMakefileIaCToolsTarget(t *testing.T) {
 		{"reachable_from_verify", strings.Replace(valid, "verify: verify-quick\n", "verify: verify-quick iac-tools\n", 1), "reachable from verify"},
 	} {
 		t.Run(c.name, func(t *testing.T) { expectProblems(t, check(c.src), wants(c.want)) })
+	}
+}
+
+// iacScriptRun copies scripts/iac-tools.sh in a fresh tree next to the lock
+// lock, and runs "bash scripts/iac-tools.sh cmd" with a cache outside that
+// tree and a fake curl that fails (no network). It returns the result, the
+// directory holding the tree and the cache, and the cache.
+func iacScriptRun(t *testing.T, lock map[string]any, seed func(cache string), cmd string) (scriptResult, string, string) {
+	t.Helper()
+	_, fsys := repoRoot(t)
+	src, err := readRepoFile(fsys, "scripts/iac-tools.sh", "M3-T02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := t.TempDir()
+	tree, cache := filepath.Join(top, "repo"), filepath.Join(top, "cache")
+	if err := os.MkdirAll(filepath.Join(tree, "scripts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "scripts", "iac-tools.sh"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "scripts", "iac-tools.lock.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if seed != nil {
+		seed(cache)
+	}
+	fake := writeExecutable(t, "curl", "#!/bin/sh\necho fake curl: no network >&2\nexit 7\n")
+	res := runInEnv(t, tree, []string{"PATH=" + fake + ":/usr/bin:/bin", "REMPART_IAC_CACHE=" + cache}, "bash", "scripts/iac-tools.sh", cmd)
+	return res, top, cache
+}
+
+func iacSum(b []byte) string {
+	s := sha256.Sum256(b)
+	return hex.EncodeToString(s[:])
+}
+
+// iacZip is a zip holding member with content.
+func iacZip(t *testing.T, member string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(member)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// iacSeed writes b at cache/rel.
+func iacSeed(t *testing.T, cache, rel string, b []byte) {
+	t.Helper()
+	p := filepath.Join(cache, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func iacSignature() map[string]any {
+	return map[string]any{"kind": "gpg", "key": strings.Repeat("A", 40), "identity": "", "issuer": "", "checked": "2026-11-26", "note": ""}
+}
+
+// TestIaCToolsScriptRefusesTraversal proves T158: scripts/iac-tools.sh applies
+// the closed grammar of the lock before any write, so that no field of the
+// lock (name, version, plugin_source, binary, sha256, provider source) leads
+// it to write outside its cache. Each case seeds the cache with an archive
+// matching the hashes of the lock, so that only the grammar stops the write.
+func TestIaCToolsScriptRefusesTraversal(t *testing.T) {
+	tool := func() map[string]any {
+		return map[string]any{
+			"name": "tofu", "kind": "tool", "version": "1.13.2", "published": "2026-10-21",
+			"url":     "https://github.com/opentofu/opentofu/releases/download/v1.13.2/tofu_1.13.2_linux_amd64.zip",
+			"archive": "zip", "binary": "tofu", "signature": iacSignature(),
+		}
+	}
+	plugin := func() map[string]any {
+		return map[string]any{
+			"name": "tflint-ruleset-aws", "kind": "tflint-plugin", "plugin_source": "github.com/terraform-linters/tflint-ruleset-aws",
+			"version": "0.50.0", "published": "2026-10-23",
+			"url":     "https://github.com/terraform-linters/tflint-ruleset-aws/releases/download/v0.50.0/tflint-ruleset-aws_linux_amd64.zip",
+			"archive": "zip", "binary": "tflint-ruleset-aws", "signature": iacSignature(),
+		}
+	}
+	provider := func() map[string]any {
+		return map[string]any{
+			"source": "registry.opentofu.org/hashicorp/aws", "version": "6.72.0", "published": "2026-11-04",
+			"url": "https://releases.hashicorp.com/terraform-provider-aws/6.72.0/terraform-provider-aws_6.72.0_linux_amd64.zip",
+			"h1":  "h1:iXZnduFQyKroXFMinTur9F2KMpPFxE9M/KjsaeZNE44=", "signature": iacSignature(),
+		}
+	}
+	cases := map[string]struct {
+		tool     func() map[string]any
+		provider func() map[string]any
+		mutate   func(m map[string]any)
+		seedHash bool // the archive is seeded under dl/<sha256 of the lock>/
+	}{
+		"binary":        {tool: tool, mutate: func(m map[string]any) { m["binary"] = "../../../../escaped-binary" }, seedHash: true},
+		"name":          {tool: tool, mutate: func(m map[string]any) { m["name"] = "../../escaped-name" }, seedHash: true},
+		"version":       {tool: tool, mutate: func(m map[string]any) { m["version"] = "1.13.2/../../../../escaped-version" }, seedHash: true},
+		"plugin_source": {tool: plugin, mutate: func(m map[string]any) { m["plugin_source"] = "github.com/terraform-linters/../../../../escaped-plugin" }, seedHash: true},
+		"sha256":        {tool: tool, mutate: func(m map[string]any) { m["sha256"] = "../../escaped-dl" }},
+		"provider_source": {provider: provider, mutate: func(m map[string]any) {
+			m["source"] = "registry.opentofu.org/hashicorp/../../../../escaped-provider"
+		}, seedHash: true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			lock := map[string]any{
+				"lock_version": 1, "date": "2026-11-26", "min_age_days": 14, "platform": "linux_amd64",
+				"hosts": []any{"github.com", "releases.hashicorp.com"}, "tools": []any{}, "providers": []any{},
+			}
+			var entry map[string]any
+			var archive []byte
+			if c.tool != nil {
+				entry = c.tool()
+				c.mutate(entry)
+				binary, _ := entry["binary"].(string)
+				archive = iacZip(t, binary, []byte("binary"))
+				entry["sha256"], entry["binary_sha256"] = iacSum(archive), iacSum([]byte("binary"))
+				if name == "sha256" {
+					entry["sha256"] = "../../escaped-dl"
+				}
+				lock["tools"] = []any{entry}
+			} else {
+				entry = c.provider()
+				c.mutate(entry)
+				archive = iacZip(t, "terraform-provider-aws_v6.72.0_x5", []byte("provider"))
+				entry["sha256"] = iacSum(archive)
+				lock["providers"] = []any{entry}
+			}
+			rawURL, _ := entry["url"].(string)
+			res, top, _ := iacScriptRun(t, lock, func(cache string) {
+				if c.seedHash {
+					iacSeed(t, cache, "dl/"+iacSum(archive)+"/"+path.Base(rawURL), archive)
+				}
+			}, "install")
+			if res.code != 2 {
+				t.Errorf("install: exit %d, want 2 (lock refused before any write)\nstdout: %s\nstderr: %s", res.code, res.stdout, res.stderr)
+			}
+			entries, err := os.ReadDir(top)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			if !slices.Equal(names, []string{"cache", "repo"}) {
+				t.Errorf("entries next to the cache after install: %q, want only cache and repo (a write escaped the cache)", names)
+			}
+		})
+	}
+}
+
+// TestIaCToolsScriptVerifyMirror proves T156 on scripts/iac-tools.sh verify:
+// a mirror holding exactly the locked zip, with its h1, is conforming; an
+// entry the lock does not name (an unpacked package, another version), or a
+// lock whose h1 is not the one of the zip, fails the verification.
+func TestIaCToolsScriptVerifyMirror(t *testing.T) {
+	archive := iacZip(t, "terraform-provider-aws_v6.72.0_x5", []byte("provider"))
+	const zipRel = "mirror/registry.opentofu.org/hashicorp/aws/terraform-provider-aws_6.72.0_linux_amd64.zip"
+	lockWith := func(h1 string) map[string]any {
+		return map[string]any{
+			"lock_version": 1, "date": "2026-11-26", "min_age_days": 14, "platform": "linux_amd64",
+			"hosts": []any{"github.com", "releases.hashicorp.com"}, "tools": []any{},
+			"providers": []any{map[string]any{
+				"source": "registry.opentofu.org/hashicorp/aws", "version": "6.72.0", "published": "2026-11-04",
+				"url":    "https://releases.hashicorp.com/terraform-provider-aws/6.72.0/terraform-provider-aws_6.72.0_linux_amd64.zip",
+				"sha256": iacSum(archive), "h1": h1, "signature": iacSignature(),
+			}},
+		}
+	}
+	const goodH1 = "h1:iXZnduFQyKroXFMinTur9F2KMpPFxE9M/KjsaeZNE44="
+	for name, c := range map[string]struct {
+		h1    string
+		plant string
+		want  int
+	}{
+		"conforming":       {h1: goodH1, want: 0},
+		"unpacked_package": {h1: goodH1, plant: "mirror/registry.opentofu.org/hashicorp/aws/6.72.0/linux_amd64/terraform-provider-aws_v6.72.0_x5", want: 1},
+		"other_version":    {h1: goodH1, plant: "mirror/registry.opentofu.org/hashicorp/aws/terraform-provider-aws_6.73.0_linux_amd64.zip", want: 1},
+		"other_provider":   {h1: goodH1, plant: "mirror/registry.opentofu.org/hashicorp/evil/terraform-provider-evil_1.0.0_linux_amd64.zip", want: 1},
+		"h1_mismatch":      {h1: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", want: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, _, _ := iacScriptRun(t, lockWith(c.h1), func(cache string) {
+				iacSeed(t, cache, zipRel, archive)
+				if c.plant != "" {
+					iacSeed(t, cache, c.plant, []byte("#!/bin/sh\necho planted\n"))
+				}
+			}, "verify")
+			if res.code != c.want {
+				t.Errorf("verify: exit %d, want %d\nstdout: %s\nstderr: %s", res.code, c.want, res.stdout, res.stderr)
+			}
+		})
 	}
 }

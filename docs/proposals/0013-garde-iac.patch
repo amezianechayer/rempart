@@ -1,16 +1,62 @@
+diff --git a/.claude/hooks/guard_bash.py b/.claude/hooks/guard_bash.py
+index 020522e..f0dcfd1 100755
+--- a/.claude/hooks/guard_bash.py
++++ b/.claude/hooks/guard_bash.py
+@@ -48,6 +48,12 @@ RULES = [
+      r"(\bg?make\b[^|;&]*\bsandbox-(apply|destroy)\b|\bsandbox\.sh\b[^|;&]*\b(apply|destroy)\b)",
+      "bac à sable : seule la forme `make sandbox-apply SCENARIO=<nom>` (ou sandbox-destroy), seule sur la ligne, "
+      "est permise ; elle demande l'approbation humaine (T29)."),
++    # T149 (proposition 0013) : sandbox-plan lance un vrai plan avec l'identité de l'humain et sa recette
++    # ne demande aucune confirmation ; seule la forme canonique, couverte par la permission « ask », l'atteint.
++    (r"^(?!\s*make\s+sandbox-plan\s+SCENARIO=[a-z0-9][a-z0-9-]{0,62}\s*$)[\s\S]*"
++     r"(\bg?make\b[^|;&]*\bsandbox-plan\b|\bsandbox\.sh\b[^|;&]*\bplan\b)",
++     "bac à sable : seule la forme `make sandbox-plan SCENARIO=<nom>`, seule sur la ligne, est permise ; "
++     "elle demande l'approbation humaine (T149)."),
+     # T31 et T32 : options et variables qui changent le fichier lu par make ou ignorent les échecs de recette.
+     # Obligation (bt) et résidus T32 de M0-T04b : liste blanche d'options (make accepte les options longues
+     # abrégées, une liste noire est contournable), MAKE et MAKE_COMMAND refusés comme MAKEFLAGS.
+diff --git a/.claude/hooks/test_hooks.sh b/.claude/hooks/test_hooks.sh
+index 716b47e..769b867 100644
+--- a/.claude/hooks/test_hooks.sh
++++ b/.claude/hooks/test_hooks.sh
+@@ -125,7 +125,7 @@ cmd 0 "rm -rf build/"
+ cmd 2 'make dev-down SCENARIO=$(shell touch /tmp/x)'
+ cmd 2 'make evals EVAL=${shell id}'
+ cmd 0 "make -s opa-test POLICIES_DIR=policies"
+-cmd 0 'out=$(make sandbox-plan SCENARIO=demo 2>&1); echo "$out"'
++cmd 0 'out=$(make opa-test 2>&1); echo "$out"'
+ cmd 0 "make sandbox-apply SCENARIO=demo"
+ cmd 0 "make sandbox-destroy SCENARIO=demo-2"
+ cmd 2 "printf 'oui\\n' | make sandbox-apply SCENARIO=demo"
+@@ -134,6 +134,19 @@ cmd 2 "make SCENARIO=demo sandbox-destroy"
+ cmd 2 "make sandbox-apply SCENARIO=demo; echo fin"
+ cmd 2 "./scripts/sandbox.sh apply demo"
+ cmd 0 "make sandbox-plan SCENARIO=demo"
++# T149 (proposition 0013) : sandbox-plan sous la seule forme canonique, couverte par « ask »
++cmd 2 "make -s sandbox-plan SCENARIO=demo"
++cmd 2 "make SCENARIO=demo sandbox-plan"
++cmd 2 "make -j1 sandbox-plan SCENARIO=demo"
++cmd 2 "make -k sandbox-plan SCENARIO=demo"
++cmd 2 "make --no-print-directory sandbox-plan SCENARIO=demo"
++cmd 2 "make sandbox-guard sandbox-plan SCENARIO=demo"
++cmd 2 "make -f Makefile sandbox-plan SCENARIO=demo"
++cmd 2 "make -f Makefile -s sandbox-plan SCENARIO=demo"
++cmd 2 "make sandbox-plan SCENARIO=demo; echo fin"
++cmd 2 'out=$(make sandbox-plan SCENARIO=demo 2>&1); echo "$out"'
++cmd 2 "bash scripts/sandbox.sh plan demo"
++cmd 2 "./scripts/sandbox.sh plan demo"
+ cmd 2 "gmake -s sandbox-apply SCENARIO=demo"
+ cmd 2 'gmake dev FOO=$(shell id)'
+ cmd 2 "make --no-print-directory update-baseline"
 diff --git a/.claude/settings.json b/.claude/settings.json
-index bf5e2f2..475cca6 100644
+index bf5e2f2..8825389 100644
 --- a/.claude/settings.json
 +++ b/.claude/settings.json
-@@ -15,6 +15,11 @@
+@@ -15,6 +15,7 @@
      "ask": [
        "Bash(make sandbox-apply:*)",
        "Bash(make sandbox-destroy:*)",
-+      "Bash(make -f Makefile sandbox-apply:*)",
-+      "Bash(make -f Makefile sandbox-destroy:*)",
 +      "Bash(make sandbox-plan:*)",
-+      "Bash(make -f Makefile sandbox-plan:*)",
-+      "Bash(make -s -f Makefile sandbox-plan:*)",
        "Bash(git push:*)"
      ]
    },

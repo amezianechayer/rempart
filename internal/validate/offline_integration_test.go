@@ -43,9 +43,22 @@ func loadRepoToolchain(t *testing.T) *Toolchain {
 	return tc
 }
 
-// probeRoot copies testdata/probe/<name> to a fresh directory and writes the
+// probeSources is the provider of each probe root.
+var probeSources = map[string]string{
+	"aws":     "registry.opentofu.org/hashicorp/aws",
+	"azurerm": "registry.opentofu.org/hashicorp/azurerm",
+	"helm":    "registry.opentofu.org/hashicorp/helm",
+}
+
+// probeRoot copies testdata/probe/<name> to a fresh directory, writes its
+// .terraform.lock.hcl rendered from the lock (T156), and writes the
 // mirror-only CLI configuration next to it.
 func probeRoot(t *testing.T, tc *Toolchain, name string) (dir string, env []string) {
+	t.Helper()
+	return probeRootMirror(t, tc, name, tc.MirrorDir())
+}
+
+func probeRootMirror(t *testing.T, tc *Toolchain, name, mirror string) (dir string, env []string) {
 	t.Helper()
 	dir = t.TempDir()
 	src := filepath.Join("testdata", "probe", name)
@@ -66,7 +79,14 @@ func probeRoot(t *testing.T, tc *Toolchain, name string) (dir string, env []stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := TofuCLIConfig(tc.MirrorDir())
+	lockHCL, err := tc.ProviderLockFile(probeSources[name])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".terraform.lock.hcl"), lockHCL, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := TofuCLIConfig(mirror)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,23 +113,61 @@ func tofu(t *testing.T, tc *Toolchain, dir string, env []string, args ...string)
 	return res
 }
 
-// TestOfflineInitFromMirror proves D15 (T143): tofu init installs every
-// provider of the probe roots from the file mirror alone, network cut, with
-// no registry, and records the locked version.
+// TestOfflineInitFromMirror proves D15 (T143, T156): tofu init installs every
+// provider of the probe roots from the private file mirror alone, network
+// cut, with no registry, against the .terraform.lock.hcl rendered from the
+// lock (h1 and zh), in readonly mode: the lock file is left as rendered.
 func TestOfflineInitFromMirror(t *testing.T) {
 	tc := loadRepoToolchain(t)
-	for root, provider := range map[string]string{"aws": "hashicorp/aws", "azurerm": "hashicorp/azurerm", "helm": "hashicorp/helm"} {
+	for root, source := range probeSources {
 		t.Run(root, func(t *testing.T) {
 			dir, env := probeRoot(t, tc, root)
-			res := tofu(t, tc, dir, env, "init", "-input=false", "-no-color")
+			rendered, err := tc.ProviderLockFile(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := tofu(t, tc, dir, env, "init", "-input=false", "-no-color", "-lockfile=readonly")
 			if res.ExitCode != 0 {
 				t.Fatalf("tofu init: exit %d\n%s", res.ExitCode, res.Stderr)
 			}
 			lock, err := os.ReadFile(filepath.Join(dir, ".terraform.lock.hcl")) //nolint:gosec // G304: temporary directory of this test.
-			if err != nil || !strings.Contains(string(lock), `provider "registry.opentofu.org/`+provider+`"`) {
-				t.Fatalf("lock file: %v\n%s", err, lock)
+			if err != nil || string(lock) != string(rendered) {
+				t.Fatalf("lock file changed by init: %v\n%s", err, lock)
 			}
 		})
+	}
+}
+
+// TestOfflineInitRefusesPlantedPackage proves the second barrier of D15
+// against T156, independent of the private mirror: next to the locked helm
+// zip, a mirror holds an unpacked package of the same version (a script);
+// with the .terraform.lock.hcl rendered from the lock, tofu init refuses it
+// (its h1 matches no recorded checksum). Reproduces the review of M3-T02,
+// where a lock file with zh hashes only let the planted package in.
+func TestOfflineInitRefusesPlantedPackage(t *testing.T) {
+	tc := loadRepoToolchain(t)
+	mirror := t.TempDir()
+	const helm = "registry.opentofu.org/hashicorp/helm"
+	zipName := "terraform-provider-helm_3.3.0_linux_amd64.zip"
+	b, err := os.ReadFile(filepath.Join(tc.MirrorDir(), filepath.FromSlash(helm), zipName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	planted := filepath.Join(mirror, filepath.FromSlash(helm), "3.3.0", "linux_amd64")
+	if err := os.MkdirAll(planted, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mirror, filepath.FromSlash(helm), zipName), b, 0o600); err != nil { //nolint:gosec // G703: temporary directory of this test.
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(planted, "terraform-provider-helm_v3.3.0_x5"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil { //nolint:gosec // G306,G703: the planted fake provider.
+		t.Fatal(err)
+	}
+	dir, env := probeRootMirror(t, tc, "helm", mirror)
+	res := tofu(t, tc, dir, env, "init", "-input=false", "-no-color", "-lockfile=readonly")
+	// tofu wraps its diagnostics: compare on the text with collapsed spaces.
+	if msg := strings.Join(strings.Fields(string(res.Stderr)), " "); res.ExitCode == 0 || !strings.Contains(msg, "doesn't match any of the checksums previously recorded") {
+		t.Fatalf("tofu init with a planted package: exit %d, want a checksum refusal\n%s", res.ExitCode, res.Stderr)
 	}
 }
 
@@ -123,7 +181,7 @@ func TestOfflinePlanProbe(t *testing.T) {
 	tc := loadRepoToolchain(t)
 	plan := func(t *testing.T, root string) (toolexec.Result, string, []string) {
 		dir, env := probeRoot(t, tc, root)
-		if res := tofu(t, tc, dir, env, "init", "-input=false", "-no-color"); res.ExitCode != 0 {
+		if res := tofu(t, tc, dir, env, "init", "-input=false", "-no-color", "-lockfile=readonly"); res.ExitCode != 0 {
 			t.Fatalf("tofu init: exit %d\n%s", res.ExitCode, res.Stderr)
 		}
 		return tofu(t, tc, dir, env, "plan", "-refresh=false", "-lock=false", "-input=false", "-no-color", "-out=plan.bin"), dir, env

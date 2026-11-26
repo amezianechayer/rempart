@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -39,6 +40,13 @@ func TestTofuCLIConfigMirrorOnly(t *testing.T) {
 		}
 	}
 }
+
+// fixtureH1 is the dirhash Hash1 ("h1:", the hash OpenTofu records in a
+// .terraform.lock.hcl) of the fixture provider zip: one member
+// terraform-provider-aws_v6.72.0_x5 holding "provider". Computed outside Go
+// (an independent Python implementation of dirhash.Hash1, checked against the
+// h1 OpenTofu 1.13.2 writes for the real helm 3.3.0 package).
+const fixtureH1 = "h1:iXZnduFQyKroXFMinTur9F2KMpPFxE9M/KjsaeZNE44="
 
 func hexSum(b []byte) string {
 	s := sha256.Sum256(b)
@@ -104,7 +112,7 @@ func newFixture(t *testing.T) fixture {
 			map[string]any{
 				"source": "registry.opentofu.org/hashicorp/aws", "version": "6.72.0", "published": "2026-11-04",
 				"url":    "https://releases.hashicorp.com/terraform-provider-aws/6.72.0/terraform-provider-aws_6.72.0_linux_amd64.zip",
-				"sha256": hexSum(zbuf.Bytes()), "signature": gpg,
+				"sha256": hexSum(zbuf.Bytes()), "h1": fixtureH1, "signature": gpg,
 			},
 		},
 	}
@@ -118,6 +126,12 @@ func (f fixture) json(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func provider0(f fixture) map[string]any {
+	providers, _ := f.lock["providers"].([]any)
+	p, _ := providers[0].(map[string]any)
+	return p
 }
 
 func tool0(f fixture) map[string]any {
@@ -155,8 +169,28 @@ func TestLoadToolchain(t *testing.T) {
 	if b, err := os.ReadFile(plugin); err != nil || !bytes.Equal(b, f.bin["plugin"]) || strings.HasPrefix(tc.PluginDir(), f.cache) { //nolint:gosec // G304: test path.
 		t.Errorf("plugin copy %q: %v", plugin, err)
 	}
-	if tc.MirrorDir() != filepath.Join(f.cache, "mirror") {
-		t.Errorf("MirrorDir = %q", tc.MirrorDir())
+	// T156: OpenTofu reads a private mirror holding exactly the locked zips,
+	// copied and checked, never the mirror of the cache.
+	if strings.HasPrefix(tc.MirrorDir(), f.cache) || !filepath.IsAbs(tc.MirrorDir()) {
+		t.Errorf("MirrorDir = %q: want a private copy outside the cache", tc.MirrorDir())
+	}
+	var mirrored []string
+	if err := filepath.WalkDir(tc.MirrorDir(), func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(tc.MirrorDir(), p)
+		mirrored = append(mirrored, filepath.ToSlash(rel))
+		info, err := d.Info()
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o222 != 0 {
+			t.Errorf("private mirror entry %q: %v, want a read-only regular file", rel, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"registry.opentofu.org/hashicorp/aws/terraform-provider-aws_6.72.0_linux_amd64.zip"}; !slices.Equal(mirrored, want) {
+		t.Errorf("private mirror holds %q, want exactly %q", mirrored, want)
 	}
 	if _, ok := tc.Tool("trivy"); ok {
 		t.Error("Tool(trivy) found: not in the lock")
@@ -190,6 +224,20 @@ func TestLoadToolchain(t *testing.T) {
 	set := func(key string, v any) func(t *testing.T, f fixture) {
 		return func(_ *testing.T, f fixture) { tool0(f)[key] = v }
 	}
+	setProvider := func(key string, v any) func(t *testing.T, f fixture) {
+		return func(_ *testing.T, f fixture) { provider0(f)[key] = v }
+	}
+	plant := func(rel string) func(t *testing.T, f fixture) {
+		return func(t *testing.T, f fixture) {
+			p := filepath.Join(f.cache, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("#!/bin/sh\necho planted\n"), 0o700); err != nil { //nolint:gosec // G306: a planted fake provider.
+				t.Fatal(err)
+			}
+		}
+	}
 	refused := map[string]func(t *testing.T, f fixture){
 		"binary_tampered":   tamper("tools/tofu/1.13.2/tofu"),
 		"plugin_tampered":   tamper("tflint-plugins/github.com/terraform-linters/tflint-ruleset-aws/0.50.0/tflint-ruleset-aws"),
@@ -210,7 +258,23 @@ func TestLoadToolchain(t *testing.T) {
 			f.lock["tools"] = append(tools, tools[0])
 		},
 		"other_platform": func(_ *testing.T, f fixture) { f.lock["platform"] = "darwin_arm64" },
-		"lock_version_2": func(_ *testing.T, f fixture) { f.lock["lock_version"] = 2 },
+		// T156: an entry of the mirror that the lock does not name.
+		"planted_unpacked_package": plant("mirror/registry.opentofu.org/hashicorp/aws/6.72.0/linux_amd64/terraform-provider-aws_v6.72.0_x5"),
+		"planted_other_version":    plant("mirror/registry.opentofu.org/hashicorp/aws/terraform-provider-aws_6.73.0_linux_amd64.zip"),
+		"planted_other_provider":   plant("mirror/registry.opentofu.org/hashicorp/evil/terraform-provider-evil_1.0.0_linux_amd64.zip"),
+		"planted_mirror_link": func(t *testing.T, f fixture) {
+			if err := os.Symlink("/tmp", filepath.Join(f.cache, "mirror", "registry.opentofu.org", "hashicorp", "link")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		// T156: the h1 of the lock is the one of the checked zip.
+		"provider_h1_mismatch":  setProvider("h1", "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+		"provider_h1_missing":   func(_ *testing.T, f fixture) { delete(provider0(f), "h1") },
+		"provider_h1_malformed": setProvider("h1", "zh:"+strings.Repeat("0", 64)),
+		// Repository of each tool frozen (owner and name on github.com).
+		"tool_other_repository": set("url", "https://github.com/evil/opentofu/releases/download/v1.13.2/tofu_1.13.2_linux_amd64.zip"),
+		"tool_unknown_name":     set("name", "evil"),
+		"lock_version_2":        func(_ *testing.T, f fixture) { f.lock["lock_version"] = 2 },
 	}
 	for name, mutate := range refused {
 		t.Run(name, func(t *testing.T) {
@@ -237,4 +301,56 @@ func TestLoadToolchain(t *testing.T) {
 			t.Fatalf("LoadToolchain = %v, want ErrToolchain", err)
 		}
 	})
+}
+
+// TestProviderLockFile proves D15 against T156: the .terraform.lock.hcl of a
+// root is rendered from the lock, with the h1 hash of the package (which
+// OpenTofu checks against an unpacked package of the mirror) and the zh hash
+// of the zip; init then runs with -lockfile=readonly. A source the lock does
+// not name, no source, or a repeated source is refused.
+func TestProviderLockFile(t *testing.T) {
+	f := newFixture(t)
+	tc, err := LoadToolchain(f.json(t), f.cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tc.Close() })
+	got, err := tc.ProviderLockFile("registry.opentofu.org/hashicorp/aws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Rendered by Rempart from scripts/iac-tools.lock.json (ADR 0014 D15): never edited, never written by tofu.\n\n" +
+		"provider \"registry.opentofu.org/hashicorp/aws\" {\n" +
+		"  version     = \"6.72.0\"\n" +
+		"  constraints = \"6.72.0\"\n" +
+		"  hashes = [\n" +
+		"    \"" + fixtureH1 + "\",\n" +
+		"    \"zh:" + hexSum(mustZip(t, f)) + "\",\n" +
+		"  ]\n" +
+		"}\n"
+	if string(got) != want {
+		t.Fatalf("ProviderLockFile =\n%s\nwant\n%s", got, want)
+	}
+	for name, sources := range map[string][]string{
+		"none":     nil,
+		"unknown":  {"registry.opentofu.org/hashicorp/azurerm"},
+		"repeated": {"registry.opentofu.org/hashicorp/aws", "registry.opentofu.org/hashicorp/aws"},
+		"injected": {"registry.opentofu.org/hashicorp/aws\" {}\nprovider \"x"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := tc.ProviderLockFile(sources...); !errors.Is(err, ErrToolchain) {
+				t.Fatalf("ProviderLockFile(%q) = %v, want ErrToolchain", sources, err)
+			}
+		})
+	}
+}
+
+// mustZip reads the fixture provider zip of the cache.
+func mustZip(t *testing.T, f fixture) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(f.cache, "mirror", "registry.opentofu.org", "hashicorp", "aws", "terraform-provider-aws_6.72.0_linux_amd64.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

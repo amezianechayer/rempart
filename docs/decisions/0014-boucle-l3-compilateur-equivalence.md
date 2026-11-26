@@ -525,8 +525,10 @@ D1 à D20 reprennent la numérotation de la section 3 du plan. Correspondance av
   - Règle de version : la plus récente publiée depuis au moins 14 jours, sauf correctif de sécurité consigné.
 - **Providers** :
   - miroir fichier peuplé depuis `releases.hashicorp.com`, sommes vérifiées sur `SHA256SUMS` signé ;
+  - le verrou porte, pour chaque provider, la somme `zh:` de l'archive et la somme `h1:` du paquet (dirhash Hash1 de son contenu) ; `LoadToolchain` vérifie que le `h1:` est celui de l'archive vérifiée ;
+  - OpenTofu lit un **miroir privé** : chaque archive du verrou y est copiée et hachée pendant la copie, rien d'autre. Toute entrée du miroir du cache que le verrou ne nomme pas (paquet dépaqueté, autre version, autre provider, lien) fait refuser le chargement (T156) ;
   - configuration CLI `provider_installation` en miroir seul (aucun `direct`, `network_mirror` ni `credentials`) ;
-  - OpenTofu vérifie ensuite chaque paquet contre le verrou de la racine (`-lockfile=readonly`).
+  - le `.terraform.lock.hcl` de chaque racine est rendu depuis le verrou (`ProviderLockFile` : version, `h1:` et `zh:`), jamais repris de la racine, puis OpenTofu s'initialise avec `-lockfile=readonly`. **Correction issue de la revue de M3-T02** : un verrou de racine qui ne porte que des sommes `zh:` n'authentifie rien. OpenTofu 1.13.2 installe alors un paquet dépaqueté planté à côté de l'archive vérifiée, avec un simple avertissement (« unauthenticated »). Seule la somme `h1:` le fait refuser (`TestOfflineInitRefusesPlantedPackage`).
 - **Vérification au moment de l'exécution** : `LoadToolchain` revérifie la somme sur une copie privée en lecture seule placée dans le répertoire éphémère, et l'outil s'exécute depuis cette copie. Il n'y a donc pas de fenêtre entre vérification et exécution sur un fichier modifiable par un tiers.
 - **Checkov** :
   - venv installé par `pip --require-hashes` (`scripts/checkov-requirements.lock`) ;
@@ -534,7 +536,7 @@ D1 à D20 reprennent la numérotation de la section 3 du plan. Correspondance av
   - lancé par `python3 -I` avec `--skip-download`.
 - **Trivy** : tourne sur ses règles embarquées, sans mise à jour (option exacte vérifiée en T02). L'incident signalé sur ses artefacts au premier semestre 2026 doit être vérifié à la source avant d'épingler (R3).
 - **tflint** : rulesets et charts Helm pris depuis les actifs de releases GitHub, sommes au verrou ; jamais `tflint --init`.
-- **Revue** : l'humain relit le verrou (H-tools-lock). Le verrou est sous CODEOWNERS et sous garde d'écriture (proposition 0013).
+- **Revue** : l'humain relit le verrou (H-tools-lock). Le verrou est sous CODEOWNERS (proposition 0013). Il n'a **pas** de garde d'écriture : la proposition 0013 l'exclut, car l'agent doit pouvoir le monter de version. Résidu : un verrou modifié par l'agent sous injection n'est arrêté que par sa grammaire fermée (Go, script, archtest), par la relecture humaine et par les code owners.
 
 ### D16. Exceptions de scanners (option 11a, T30, T148)
 - **Aucune annotation**, nulle part, modules compris.

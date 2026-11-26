@@ -110,6 +110,7 @@
       "published": "2026-11-04",
       "url": "https://releases.hashicorp.com/terraform-provider-aws/6.72.0/terraform-provider-aws_6.72.0_linux_amd64.zip",
       "sha256": "2ffb6b2caaf320b61b406cff192d6e4303b64e32990b69384a056fe5af3d015b",
+      "h1": "h1:v8OGTOUuY1sbRr4VDjYW7ypqV5NBB1cosUY5LrcwqTs=",
       "signature": {
         "kind": "gpg",
         "key": "C874011F0AB405110D02105534365D9472D7468F",
@@ -125,6 +126,7 @@
       "published": "2026-11-05",
       "url": "https://releases.hashicorp.com/terraform-provider-azurerm/5.13.0/terraform-provider-azurerm_5.13.0_linux_amd64.zip",
       "sha256": "4063473301ef49cb91d206ab9aec2d78462b54f6dc27fe5cf33230db40562085",
+      "h1": "h1:zjDGZDtBxgHrgAEPmK+zZnupOWTHNbGY5VoxwiJXIqk=",
       "signature": {
         "kind": "gpg",
         "key": "C874011F0AB405110D02105534365D9472D7468F",
@@ -140,6 +142,7 @@
       "published": "2026-09-16",
       "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_amd64.zip",
       "sha256": "24a942352667cf49bed467c51a951f17a6c13e0cdf1c505b01b41f75a1a60d0f",
+      "h1": "h1:Qbt2+dtOJty3glPZI9jMCXq82GSAKBk/T2+wBMIdu0c=",
       "signature": {
         "kind": "gpg",
         "key": "C874011F0AB405110D02105534365D9472D7468F",

@@ -546,11 +546,59 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
   - `scripts/iac-tools.sh` (`install`, `verify`, `mirror`, `env` ; cache hors dépôt, refus d'un cache dans le dépôt, linux_amd64 seulement, téléchargement par `curl --proto =https`, extraction du seul membre attendu) ; cible `make iac-tools` (jamais atteinte par `verify-quick` ni `verify`) ; `scripts/check-tools.sh` vérifie le verrou au lieu du `PATH` ; `docs/SETUP.md` (section « Chaîne d'outils IaC », Conftest retiré, ADR 0014 D9).
   - R6 levé pour tflint (rulesets placés à la main, jamais `tflint --init`, `TFLINT_PLUGIN_DIR`) et Trivy (`--skip-check-update`, règles embarquées), tous deux sans réseau (`unshare -rn`).
   - **Écart** : Checkov (venv à hachages, `scripts/checkov-requirements.lock`) reporté à M3-T03, où la chaîne l'exécute : un verrou à hachages dépend de la version de Python du poste (3.11 ici, 3.12 sous Ubuntu 24.04) et doit couvrir les deux.
-  - Proposition harnais `docs/proposals/0013-garde-iac.md` et son patch : permissions « ask » sur la forme `make -f Makefile sandbox-apply` et `sandbox-destroy` (**trou constaté** : seule la forme `make sandbox-apply` était sous « ask ») et sur `make sandbox-plan` ; code owners sur `/modules/`, l'exécutant, le chargeur, la table IAM et l'équivalence.
-  - Modèle de menace : T6 et T8 complétées, T143 insérée.
+  - Proposition harnais `docs/proposals/0013-garde-iac.md` et son patch, **seconde version** après la revue : règle `guard_bash` calquée sur T29 pour `make sandbox-plan` (seule la forme canonique, sous une seule entrée « ask » ; 12 cas dans `test_hooks.sh`, 169 réussis dans une copie jetable) ; code owners sur `/modules/`, l'exécutant, le chargeur, la table IAM et l'équivalence. **Diagnostic de la première version corrigé** : il n'y avait pas de trou sur `make -f Makefile sandbox-apply` (la règle T29 refuse déjà toute autre forme que `make sandbox-apply SCENARIO=<nom>`) ; le vrai trou est `sandbox-plan`, sans confirmation dans sa recette ni permission « ask ».
+  - Modèle de menace : T6 et T8 complétées, T143 insérée ; après la revue, T156 à T159 insérées, T8 (résidu) et T143 complétées, T149 complétée dans le plan M3.
   - Preuves : critères 1 à 6 de la fiche (`8` tests clés ; `make -f Makefile iac-tools` rc=0 ; `bash scripts/iac-tools.sh verify` rc=0 ; `2` tests d'intégration hors ligne ; `0` importeur d'`os/exec` hors `archtest`, `toolexec` et `cmd/rempart-evals` ; verrou conforme) ; `make -f Makefile verify-quick` rc=0. **Tests modifiés** : `TestDefaultRules` et `TestRuleDetectsViolation` figent la liste des règles par défaut : `exec-confined` y est ajoutée (nom, type, cas de violation, cible `os/exec` admise comme externe).
   - Étapes humaines : H-tools-lock (relire le verrou ; confirmer l'empreinte GPG d'OpenTofu sur opentofu.org, celle de HashiCorp sur hashicorp.com/security, et la signature sans clé de tflint avec `cosign verify-blob`, commande dans `docs/SETUP.md`) ; H-harness-M3 (proposition 0013) ; `make -f Makefile iac-tools` avant `make verify` (les tests d'intégration de la chaîne échouent sinon).
-  - Revue sécurité : en cours.
+  - **Revue sécurité, première passe : BLOCK.**
+    - **Constat haut (T156), corrigé.** Le miroir de providers du cache n'était pas vérifié : un paquet dépaqueté planté à côté de l'archive vérifiée était installé par `tofu init`, même avec `-lockfile=readonly`, tant que le verrou de la racine ne portait que des sommes `zh:` (démontré par le relecteur et reproduit par l'agent sur OpenTofu 1.13.2). Correctif :
+      - OpenTofu lit désormais un miroir privé (archives du verrou copiées et hachées pendant la copie, rien d'autre) ;
+      - toute entrée du miroir du cache que le verrou ne nomme pas fait refuser `LoadToolchain` et `iac-tools.sh verify` ;
+      - le verrou porte la somme `h1:` de chaque provider (calculée par l'agent, et égale à celle qu'OpenTofu écrit lui-même pour helm 3.3.0), vérifiée contre l'archive par le chargeur et par le script ;
+      - `ProviderLockFile` rend le `.terraform.lock.hcl` d'une racine depuis le verrou (version, `h1:`, `zh:`), et les tests d'intégration s'initialisent en `-lockfile=readonly` ;
+      - `TestOfflineInitRefusesPlantedPackage` prouve la seconde barrière seule : tofu refuse le paquet planté.
+    - **Constat moyen (T158), corrigé** (obligation avant toute modification du verrou, qui a reçu les `h1:`). Les champs du verrou servaient de chemins dans le script : écriture hors du cache démontrée par le relecteur, reproduite par 6 cas de `TestIaCToolsScriptRefusesTraversal`, qui échouaient avant le correctif. Correctif :
+      - le script relit le verrou sous la grammaire fermée du chargeur Go avant toute écriture (code 2) ;
+      - chaque écriture se fait dans le cache, chemin résolu ;
+      - les écritures passent par un fichier exclusif dans `cache/tmp`, renommé sur la cible ;
+      - un cache dans le dépôt est refusé une fois les chemins résolus ; un cache d'un autre compte ou inscriptible par d'autres est refusé aussi.
+    - **Constat moyen, proposition 0013 : corrigée** (voir plus haut). L'application par l'humain reste dans l'obligation (hh).
+    - **Constats bas corrigés au passage :**
+      - `curl -q --proto-redir =https --max-filesize` ;
+      - dépôt GitHub de chaque outil figé (chargeur, script, archtest) ;
+      - ADR 0014 D15 aligné : le verrou n'a pas de garde d'écriture, résidu écrit ;
+      - phrase des hôtes de `docs/SETUP.md` corrigée (redirections de GitHub).
+    - **Tests modifiés** (phase tests) :
+      - `TestLoadToolchain` attendait `MirrorDir` dans le cache ; il attend désormais une copie privée, et compte 9 refus de plus ;
+      - `TestOfflineInitFromMirror` exige le lock file inchangé en `-lockfile=readonly` ;
+      - `TestIaCToolsLockPinned` exige `h1` et le dépôt figé, avec 4 cas de plus.
+
+      Ajouts : `TestProviderLockFile`, `TestOfflineInitRefusesPlantedPackage`, `TestIaCToolsScriptRefusesTraversal`, `TestIaCToolsScriptVerifyMirror`.
+    - **Preuves** :
+      - `make -f Makefile iac-tools` rc=0 ;
+      - `bash scripts/iac-tools.sh verify` rc=0 (5 outils, 3 providers, `h1:` compris) ;
+      - les 3 tests d'intégration hors ligne passent ;
+      - `golangci-lint` 0 constat, y compris avec l'étiquette `integration`.
+  - **Obligations datées (revue de M3-T02)** :
+    - **(hf)** avant M3-T03 (T159) : `toolexec` passe d'une liste noire à une liste blanche de noms de variables (`TF_CLI_CONFIG_FILE`, `CHECKPOINT_DISABLE`, `TF_IN_AUTOMATION`, `TFLINT_PLUGIN_DIR`, `TF_VAR_[a-z0-9_]+`, clés factices de D8). En plus :
+      - `TF_DATA_DIR` forcé dans le répertoire éphémère ;
+      - répertoire de travail créé par Rempart (`os.Root`), qui ne reçoit que la copie des fichiers admis ;
+      - `PATH` minimal ;
+      - un test pour chaque point.
+    - **(hg)** avant tout câblage de `toolexec` dans `rempart check` (M3-T03) ou `rempart-worker` (M3-T08) (T157) : isolation de l'outil.
+      - `PR_SET_DUMPABLE=0` dans le lanceur ;
+      - espaces de noms utilisateur, réseau, PID et montage (bwrap ou équivalent) ;
+      - système de fichiers en lecture seule hors du répertoire de travail ;
+      - cgroup pour tuer les descendants échappés.
+
+      Le résidu est écrit dans T8, T143 et T157.
+    - **(hh)** avant la création de `scripts/sandbox.sh` : proposition 0013 (seconde version) appliquée par l'humain (H-harness-M3).
+    - **(hi)** avant M3-T03 (constats bas) :
+      - `toolexec.Tool` construit par le seul chargeur, ou exécution du descripteur haché (`ExtraFiles`, `/proc/self/fd/3`), avec un parent appartenant à l'uid effectif et non inscriptible par d'autres ;
+      - `LoadToolchain` refuse un cache d'un autre compte ou inscriptible par d'autres ;
+      - un outil tué par un signal hors délai ou hors borne rend une erreur, et non `ExitCode -1`.
+    - **(hj)** avant M3-T03 (constat bas) : `exec-confined` couvre aussi `syscall.Syscall*` et `RawSyscall*` (`SYS_EXECVE`, `SYS_EXECVEAT`), `unix.Syscall*`, `plugin.Open` et cgo. Un test fige la liste des importeurs tiers transitifs admis d'`os/exec` (aujourd'hui `opa/internal/compiler/wasm`, lié dans `cmd/rempart` et `rempart-worker`).
+  - Revue sécurité, seconde passe : en cours.
 
 ## En cours
 **M1 démarré.** Décisions de l'humain (2026-09-30) : Q2 à Q5 selon les recommandations de `docs/plans/M1-overview.md` ; Q1 : faux LLM scripté en CI, **plus vrais LLM multi-fournisseurs** (Claude, OpenAI, DeepSeek, Qwen, open-weight auto-hébergés) en exécution manuelle, avec refonte du rédacteur avant tout appel réel, adaptateur compatible OpenAI et politique des fournisseurs par ADR (recommandation de l'agent, à confirmer par l'humain avant ces tâches : evals synthétiques vers tout fournisseur, données client seulement vers un fournisseur traitant dans l'UE ou auto-hébergé). Plan amendé en conséquence. **Attente humaine** : accepter l'ADR 0004 (avant M1-T01) et l'ADR 0005, poser le tag `m1-start`, fournir au moins une clé API avant les tâches LLM réel. Aucune tâche en cours. ADR 0004, 0005 et 0006 acceptés par l'humain (`885a556`), tag `m1-start` posé. Prochaine tâche : M1-T02 `codec-replay`, précédée de l'obligation (ct). **Skill `intent-to-spec` modifié en M1-T03** (note D2 : `tenant_id` du scénario de référence invalide, `internal/intent/testdata/reference-ir.json` fait foi), à relire par l'humain. **Mode accéléré** (humain, 2026-09-30, « ça prend bcp de temps ») : seuls les constats critiques ou hauts de la revue sécurité relancent un cycle ; les constats moyens et bas deviennent des obligations datées pour M1 ; une seule campagne de mutations par tâche ; garde-fous inchangés (TDD, revue, acceptation, baseline humaine). **Périmètre réduit de M0-T23** (humain, 2026-09-30, « fais seulement le nécessaire ») : les 7 tests de la fiche seulement (plus les adaptations indispensables de `internal/archtest`), une mutation par test ; l'étape A du plan (obligations (s) à (w) et (y) de M0-T22 sur `internal/evals`) est reportée à M1. **Skill `loop-engineering/references/temporal-loop-skeleton.md` modifié en M0-T19d et M0-T20, à relire.** Rappel des décisions de M0-T19c (section 11 de son plan) retenues sur délégation de l'humain : (1) vérificateur factice réservé aux tests, même en `-dev` : T20 enregistre dans `make demo` un vérificateur qui refuse tout (issue `timed_out`) ; (2) en T19d, `Author` et le délai d'approbation viennent de l'entrée, `Author` restant une identité déclarée jusqu'à M4 ; (3) T19d : `func Spec() loops.LoopSpec` renvoyant un littéral constant, littéral `loops.ApprovalRequest` écrit dans l'appel ; (4) faux positifs acceptés (`internal/archtest` exempté de la règle des chaînes, import `.` interdit partout). Décisions de M0-T19b : Décisions de la section 10 du plan retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes dans le sens le plus strict, réversibles : (1) signal d'approbation admis seulement sous forme canonique, octets du hash et de la signature `[A-Za-z0-9+/=._:-@]` (plus strict que D2 de M0-T15, à confirmer avant M4 : une signature JSON ou PEM serait refusée) ; (2) charge trop grosse : `InvalidLoopSpec` avant toute activité ; (3) échec du proposeur sans `ProposeFailure` non repris (l'adaptateur LLM de T20 doit toujours le renvoyer après un appel facturé) ; (4) obligation (m) couverte par un critère statique en M0, test de rejeu d'historique en M1 ; (5) exemption du décodeur JSON retirée de `workflowcheck.config.yaml` en T19c ; (6) noms de spécification bornés (64 octets, jeu fermé). Amendement A3 retenu sur délégation de l'humain : M0-T19 découpée en T19a à T19d, M0 passe à 22 tâches (`docs/plans/M0-overview.md`, section 0 bis). A1 prime sur la fiche : pas de `ContinueAsNew` en M0. Décisions humaines ouvertes (section 13 du plan) : (1) relire A3 ; (3) liste d'admission ASCII et français pour les prompts ; (4) avant T20, câblage du vérificateur factice (étiquette de build avec ADR, binaire de développement distinct, ou vérificateur qui refuse tout) ; (5) avant T20, `-llm=anthropic` refusé en M0 sauf décision contraire ; (6) forme canonique du signal d'approbation en T19b, à confirmer avant M4.
@@ -1673,3 +1721,9 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-26 16:41 [harnais] RETOUR EN PHASE TESTS depuis impl : lint only in the new test files (errcheck, gosec, nolintlint); implementation complete
 
 - 2026-11-26 16:41 [harnais] phase : impl -> tests
+
+- 2026-11-26 17:05 [harnais] phase : tests -> impl
+
+- 2026-11-26 17:09 [harnais] RETOUR EN PHASE TESTS depuis impl : lint only: three unused nolint directives in the new test lines; implementation of the review cycle complete
+
+- 2026-11-26 17:09 [harnais] phase : impl -> tests
