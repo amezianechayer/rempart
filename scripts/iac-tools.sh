@@ -128,7 +128,8 @@ def check_lock(lock):
             refuse("plugin_source")
         if not full(SEMVER, version):
             refuse("version d'outil")
-        if not url_ok(t["url"], hosts) or not t["url"].startswith("https://github.com/%s/releases/download/v%s/" % (REPOS[name], version)):
+        prefix = "https://github.com/%s/releases/download/v%s/" % (REPOS[name], version)
+        if not url_ok(t["url"], hosts) or not t["url"].startswith(prefix) or not full(FILE, t["url"][len(prefix):]):
             refuse("URL d'outil")
         if not full(SHA256, t["sha256"]) or not full(SHA256, t["binary_sha256"]):
             refuse("somme d'outil")

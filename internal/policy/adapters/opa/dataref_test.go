@@ -8,8 +8,12 @@ import (
 	opaast "github.com/open-policy-agent/opa/v1/ast"
 )
 
-// foreignRefReason is the reason of the barrier for obligation (fk).
-const foreignRefReason = "data reference outside the pack"
+// Reasons of the two barriers of obligation (fk), distinct so that a test
+// tells which one refused (obligation (hd), review of M3-T01).
+const (
+	foreignRefReason  = "data reference outside the pack"             // checkModule, before compilation
+	compiledRefReason = "compiled reference to data outside the pack" // checkCompiledDataRefs
+)
 
 // withRef is the test deny rule reading extra after its output is bound.
 func withRef(extra string) map[string]string {
@@ -84,43 +88,116 @@ func TestEngineRefusesForeignDataRefs(t *testing.T) {
 	}
 }
 
-// TestCompiledDataRefsChecked proves the second barrier of obligation (fk)
-// (review of M3-T01, defense in depth): on the compiled modules (imports
-// resolved, comprehensions rewritten), checkCompiledDataRefs refuses a data
-// reference outside the pack whatever the form that produced it, and admits
-// the compiled design pack of the repository.
-func TestCompiledDataRefsChecked(t *testing.T) {
-	compile := func(t *testing.T, files map[string]string) *opaast.Compiler {
+// headRefForms are rules whose head reference holds a data reference outside
+// the pack (second pass of the review of M3-T01): OPA's AST visitor does not
+// walk Head.Reference, so a barrier must walk it itself.
+var headRefForms = map[string]string{
+	"multi_value_head":    "h[data.rempart.design_test.h.on] contains 1\n",
+	"single_value_head":   "h[data.rempart.design_test.h.on].z := true\n",
+	"function_head":       "a[data.rempart.iac.k].f(x) := x\n",
+	"else_chain_value":    "e.x := 1 if {\n\tcount(input.graph.nodes) == 1\n} else := data.rempart.iac.v\n",
+	"nested_head_term":    "n[[data.rempart.iac.k][0]] contains 1\n",
+	"head_object_index":   "o[{\"k\": data.rempart.design_test.v}[\"k\"]] contains 1\n",
+	"head_with_body_data": "w[n.id] contains y if {\n\tsome n in input.graph.nodes\n\ty := data.rempart.iac.v\n}\n",
+}
+
+// TestSourceBarrierWalksRuleHeads proves obligation (hd): the barrier before
+// compilation (checkModule), alone, refuses a data reference outside the pack
+// held in the head reference of a rule, an else chain included, with its own
+// reason; a head reference that reads input is admitted.
+func TestSourceBarrierWalksRuleHeads(t *testing.T) {
+	parse := func(t *testing.T, src string) *opaast.Module {
 		t.Helper()
-		modules := map[string]*opaast.Module{}
-		for name, src := range files {
-			m, err := opaast.ParseModuleWithOpts(name, src, opaast.ParserOptions{ProcessAnnotation: true, RegoVersion: opaast.RegoV1})
-			if err != nil {
-				t.Fatal(err)
-			}
-			modules[name] = m
+		m, err := opaast.ParseModuleWithOpts("t.rego", "package rempart.design.t\n\n"+src, opaast.ParserOptions{
+			ProcessAnnotation: true, RegoVersion: opaast.RegoV1, Capabilities: capabilities(),
+		})
+		if err != nil {
+			t.Fatalf("parse: %v", err)
 		}
-		c := opaast.NewCompiler()
-		if c.Compile(modules); c.Failed() {
-			t.Fatalf("compile: %v", c.Errors)
-		}
-		return c
+		return m
 	}
-	iac := "package rempart.iac.lib\n\nsecret := \"s\"\n"
-	for name, body := range map[string]string{
-		"direct":        "\tx := data.rempart.iac.lib.secret\n\tx != \"\"",
-		"head_array":    "\tx := [data.rempart.iac.lib.secret][0]\n\tx != \"\"",
-		"comprehension": "\tx := [y | y := data.rempart.iac.lib.secret][0]\n\tx != \"\"",
-		"call":          "\tx := object.union({\"s\": data.rempart.iac.lib.secret}, {})[\"s\"]\n\tx != \"\"",
-	} {
+	for name, src := range headRefForms {
 		t.Run("refused_"+name, func(t *testing.T) {
-			c := compile(t, map[string]string{"iac.rego": iac, "t.rego": "package rempart.design.t\n\nok if {\n" + body + "\n}\n"})
-			err := checkCompiledDataRefs(c)
+			err := checkModule(parse(t, src))
 			if !errors.Is(err, ErrPackInvalid) || !strings.Contains(err.Error(), foreignRefReason) {
-				t.Fatalf("checkCompiledDataRefs = %v; want ErrPackInvalid, %q", err, foreignRefReason)
+				t.Fatalf("checkModule = %v; want ErrPackInvalid, %q (the head reference is not walked)", err, foreignRefReason)
+			}
+		})
+		t.Run("engine_refused_"+name, func(t *testing.T) {
+			files := map[string]string{"t.rego": module("t", meta("TST-001", "high", "escalate"), computeBody) + "\n" + src}
+			e, err := newEngine(pack(files), DefaultOptions)
+			if e != nil || !errors.Is(err, ErrPackInvalid) || !strings.Contains(err.Error(), foreignRefReason) {
+				t.Fatalf("newEngine = %v, %v; want the source barrier (%q)", e, err, foreignRefReason)
 			}
 		})
 	}
+	t.Run("admitted_input_head", func(t *testing.T) {
+		if err := checkModule(parse(t, "h[n.id] contains 1 if {\n\tsome n in input.graph.nodes\n}\n\nk[x.id] := 1 if {\n\tsome x in input.graph.nodes\n}\n")); err != nil {
+			t.Fatalf("checkModule = %v; a head reference on input is admitted", err)
+		}
+	})
+}
+
+// engineCompile compiles files with the options of newEngine (strict mode,
+// capabilities, input schema, no print), the source barrier skipped: the
+// second barrier is then the only one on the path.
+func engineCompile(t *testing.T, files map[string]string) *opaast.Compiler {
+	t.Helper()
+	modules := map[string]*opaast.Module{}
+	for name, src := range files {
+		m, err := opaast.ParseModuleWithOpts(name, src, opaast.ParserOptions{ProcessAnnotation: true, RegoVersion: opaast.RegoV1, Capabilities: capabilities()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		modules[name] = m
+	}
+	ss, err := inputSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := opaast.NewCompiler().WithStrict(true).WithCapabilities(capabilities()).WithEnablePrintStatements(false).WithSchemas(ss)
+	if c.Compile(modules); c.Failed() {
+		t.Fatalf("compile: %v", c.Errors)
+	}
+	return c
+}
+
+// TestCompiledDataRefsChecked proves the second barrier of obligation (fk)
+// alone (obligation (hd)): on modules compiled with the options of the engine,
+// none of them foreign (every module is package rempart.design.t),
+// checkCompiledDataRefs refuses a data reference outside the pack, in a body,
+// a composite head, a comprehension, a call or a rule head reference, with
+// its own reason; it admits a reference inside the pack and the compiled
+// design pack.
+func TestCompiledDataRefsChecked(t *testing.T) {
+	const header = "package rempart.design.t\n\n"
+	refused := map[string]string{
+		"direct":        "ok if {\n\tx := data.rempart.iac.lib.secret\n\tx != \"\"\n}\n",
+		"head_array":    "ok if {\n\tx := [data.rempart.iac.lib.secret][0]\n\tx != \"\"\n}\n",
+		"comprehension": "ok if {\n\tx := [y | y := data.rempart.iac.lib.secret][0]\n\tx != \"\"\n}\n",
+		"call":          "ok if {\n\tx := object.union({\"s\": data.rempart.iac.lib.secret}, {})[\"s\"]\n\tx != \"\"\n}\n",
+		"test_package":  "ok if {\n\tdata.rempart.design_test.lib.base\n}\n",
+	}
+	for name, src := range headRefForms {
+		refused["rule_"+name] = src
+	}
+	for name, src := range refused {
+		t.Run("refused_"+name, func(t *testing.T) {
+			err := checkCompiledDataRefs(engineCompile(t, map[string]string{"t.rego": header + src}))
+			if !errors.Is(err, ErrPackInvalid) || !strings.Contains(err.Error(), compiledRefReason) {
+				t.Fatalf("checkCompiledDataRefs = %v; want ErrPackInvalid, %q", err, compiledRefReason)
+			}
+		})
+	}
+	t.Run("admitted_own_pack", func(t *testing.T) {
+		files := map[string]string{
+			"lib.rego": "package rempart.design.lib\n\ny := 1\n",
+			"t.rego":   header + "ok if {\n\tdata.rempart.design.lib.y == 1\n}\n\nh[n.id] contains 1 if {\n\tsome n in input.graph.nodes\n}\n",
+		}
+		if err := checkCompiledDataRefs(engineCompile(t, files)); err != nil {
+			t.Fatalf("checkCompiledDataRefs = %v; a reference inside the pack is admitted", err)
+		}
+	})
 	t.Run("admitted_design_pack", func(t *testing.T) {
 		if _, err := NewDesign(); err != nil {
 			t.Fatalf("NewDesign: %v; the design pack reads data.rempart.design only", err)

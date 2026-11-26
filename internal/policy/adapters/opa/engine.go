@@ -244,10 +244,24 @@ func checkModule(m *ast.Module) error {
 // packRoot is the document of the compiled pack: data.rempart.design.
 var packRoot = ast.Ref{ast.DefaultRootDocument, ast.StringTerm("rempart"), ast.StringTerm("design")}
 
+// headTerms are the terms of the head reference of r and of each rule of its
+// else chain, past the rule name: OPA's AST visitor walks the key, the value
+// and the arguments of a head, never its reference (obligation (hd)).
+func headTerms(r *ast.Rule) []*ast.Term {
+	var out []*ast.Term
+	for ; r != nil; r = r.Else {
+		if ref := r.Head.Ref(); len(ref) > 1 {
+			out = append(out, ref[1:]...)
+		}
+	}
+	return out
+}
+
 // checkDataRefs: obligation (fk) (ADR 0011 D3, T109). Every reference to data,
-// in a package, an import, a rule head or body, a comprehension, an every
-// domain or an index, starts with packRoot: no bare data, no index on data or
-// on rempart, no other pack, no test package.
+// in a package, an import, a rule head (its reference included, obligation
+// (hd)) or body, a comprehension, an every domain or an index, starts with
+// packRoot: no bare data, no index on data or on rempart, no other pack, no
+// test package.
 func checkDataRefs(m *ast.Module) error {
 	var bad error
 	var visit func(x any) bool
@@ -282,22 +296,34 @@ func checkDataRefs(m *ast.Module) error {
 		return false
 	}
 	ast.NewGenericVisitor(visit).Walk(m)
+	for _, r := range m.Rules {
+		for _, t := range headTerms(r) {
+			ast.NewGenericVisitor(visit).Walk(t)
+		}
+	}
 	return bad
 }
 
 // checkCompiledDataRefs is the second barrier of obligation (fk) (review of
 // M3-T01, defense in depth): on the compiled modules, imports resolved and
 // comprehensions rewritten, every reference whose head is data starts with
-// packRoot.
+// packRoot, in the head reference of every rule too (obligation (hd)); its
+// reason is its own, so that a test tells the two barriers apart.
 func checkCompiledDataRefs(c *ast.Compiler) error {
 	var bad error
+	visit := func(x any) bool {
+		if r, ok := x.(ast.Ref); ok && bad == nil && len(r) > 0 && r[0].Equal(ast.DefaultRootDocument) && !r.HasPrefix(packRoot) {
+			bad = invalid("compiled reference to data outside the pack")
+		}
+		return bad != nil
+	}
 	for _, m := range c.Modules {
-		ast.NewGenericVisitor(func(x any) bool {
-			if r, ok := x.(ast.Ref); ok && bad == nil && len(r) > 0 && r[0].Equal(ast.DefaultRootDocument) && !r.HasPrefix(packRoot) {
-				bad = invalid("data reference outside the pack")
+		ast.NewGenericVisitor(visit).Walk(m)
+		for _, r := range m.Rules {
+			for _, t := range headTerms(r) {
+				ast.NewGenericVisitor(visit).Walk(t)
 			}
-			return bad != nil
-		}).Walk(m)
+		}
 	}
 	return bad
 }

@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/amezianechayer/rempart/internal/validate/toolexec"
 )
@@ -85,7 +86,10 @@ var (
 	pluginSrcRe = regexp.MustCompile(`^github\.com/terraform-linters/tflint-ruleset-[a-z0-9]+$`)
 	providerRe  = regexp.MustCompile(`^registry\.opentofu\.org/hashicorp/([a-z0-9-]+)$`)
 	h1Re        = regexp.MustCompile(`^h1:[A-Za-z0-9+/]{43}=$`)
-	lockHosts   = []string{"github.com", "releases.hashicorp.com"}
+	// assetRe is the file name of a release asset (obligation (hl)): one path
+	// segment, never . or .., no escape, nothing a client would normalize.
+	assetRe   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	lockHosts = []string{"github.com", "releases.hashicorp.com"}
 	// toolRepos freezes the github.com repository of each tool: a tool of
 	// another owner under the same name, or an unknown tool, is refused.
 	toolRepos = map[string]string{
@@ -142,7 +146,7 @@ func parseLock(lock []byte) (lockFile, error) {
 			return lockFile{}, toolchainErr("plugin source")
 		case !semverRe.MatchString(t.Version) || !httpsOn(t.URL):
 			return lockFile{}, toolchainErr("tool version or url")
-		case toolRepos[t.Name] == "" || !strings.HasPrefix(t.URL, "https://github.com/"+toolRepos[t.Name]+"/releases/download/v"+t.Version+"/"):
+		case toolRepos[t.Name] == "" || !releaseAsset(t.URL, toolRepos[t.Name], t.Version):
 			return lockFile{}, toolchainErr("tool repository")
 		case !sha256Re.MatchString(t.SHA256) || !sha256Re.MatchString(t.BinarySHA256):
 			return lockFile{}, toolchainErr("tool hash")
@@ -167,8 +171,22 @@ func parseLock(lock []byte) (lockFile, error) {
 	return lf, nil
 }
 
+// releaseAsset reports whether raw is exactly a release asset of repo at
+// version: https://github.com/<repo>/releases/download/v<version>/<file>.
+func releaseAsset(raw, repo, version string) bool {
+	asset, ok := strings.CutPrefix(raw, "https://github.com/"+repo+"/releases/download/v"+version+"/")
+	return ok && assetRe.MatchString(asset)
+}
+
 func providerZip(typ, version string) string {
 	return "terraform-provider-" + typ + "_" + version + "_linux_amd64.zip"
+}
+
+// ownedPrivate reports whether info is owned by the effective user and
+// writable by no one else.
+func ownedPrivate(info fs.FileInfo) bool {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == os.Geteuid() && info.Mode().Perm()&0o022 == 0
 }
 
 // copyChecked copies the regular file src to dst (created, 0700), hashing
@@ -288,6 +306,10 @@ func hash1Zip(p string) (string, error) {
 func LoadToolchain(lock []byte, cacheDir string) (*Toolchain, error) {
 	if !filepath.IsAbs(cacheDir) {
 		return nil, toolchainErr("cache directory is not absolute")
+	}
+	// Obligation (hi): a cache that another user owns or can write is refused.
+	if info, err := os.Stat(cacheDir); err != nil || !info.IsDir() || !ownedPrivate(info) { //nolint:gosec // G703: the absolute cache directory of the toolchain, checked here.
+		return nil, toolchainErr("cache directory missing, owned by another user or writable by others")
 	}
 	lf, err := parseLock(lock)
 	if err != nil {

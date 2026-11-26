@@ -5,6 +5,7 @@ package validate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -53,28 +54,29 @@ var probeSources = map[string]string{
 // probeRoot copies testdata/probe/<name> to a fresh directory, writes its
 // .terraform.lock.hcl rendered from the lock (T156), and writes the
 // mirror-only CLI configuration next to it.
-func probeRoot(t *testing.T, tc *Toolchain, name string) (dir string, env []string) {
+func probeRoot(t *testing.T, tc *Toolchain, name string) (ws *toolexec.Workspace, env []string) {
 	t.Helper()
 	return probeRootMirror(t, tc, name, tc.MirrorDir())
 }
 
-func probeRootMirror(t *testing.T, tc *Toolchain, name, mirror string) (dir string, env []string) {
+func probeRootMirror(t *testing.T, tc *Toolchain, name, mirror string) (ws *toolexec.Workspace, env []string) {
 	t.Helper()
-	dir = t.TempDir()
+	ws, err := toolexec.NewWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ws.Close() })
 	src := filepath.Join("testdata", "probe", name)
-	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+	err = filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return err
 		}
 		rel, _ := filepath.Rel(src, p)
-		if d.IsDir() {
-			return os.MkdirAll(filepath.Join(dir, rel), 0o700)
-		}
 		b, err := os.ReadFile(p) //nolint:gosec // G304: testdata of this package.
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(filepath.Join(dir, rel), b, 0o600) //nolint:gosec // G703: a copy of this package's testdata into a temporary directory.
+		return ws.WriteFile(filepath.ToSlash(rel), b)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +85,7 @@ func probeRootMirror(t *testing.T, tc *Toolchain, name, mirror string) (dir stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, ".terraform.lock.hcl"), lockHCL, 0o600); err != nil {
+	if err := ws.WriteFile(".terraform.lock.hcl", lockHCL); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := TofuCLIConfig(mirror)
@@ -94,17 +96,17 @@ func probeRootMirror(t *testing.T, tc *Toolchain, name, mirror string) (dir stri
 	if err := os.WriteFile(cfgPath, cfg, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return dir, []string{"TF_CLI_CONFIG_FILE=" + cfgPath, "CHECKPOINT_DISABLE=1", "TF_IN_AUTOMATION=1"}
+	return ws, []string{"TF_CLI_CONFIG_FILE=" + cfgPath, "CHECKPOINT_DISABLE=1", "TF_IN_AUTOMATION=1"}
 }
 
-func tofu(t *testing.T, tc *Toolchain, dir string, env []string, args ...string) toolexec.Result {
+func tofu(t *testing.T, tc *Toolchain, ws *toolexec.Workspace, env []string, args ...string) toolexec.Result {
 	t.Helper()
 	bin, ok := tc.Tool("tofu")
 	if !ok {
 		t.Fatal("tofu absent from the toolchain")
 	}
 	res, err := toolexec.Run(context.Background(), toolexec.Spec{
-		Tool: bin, Args: args, Dir: dir, Env: env,
+		Tool: bin, Args: args, Workspace: ws, Env: env,
 		Timeout: 5 * time.Minute, MaxStdout: 64 << 20, MaxStderr: 8 << 20,
 	})
 	if err != nil {
@@ -121,16 +123,19 @@ func TestOfflineInitFromMirror(t *testing.T) {
 	tc := loadRepoToolchain(t)
 	for root, source := range probeSources {
 		t.Run(root, func(t *testing.T) {
-			dir, env := probeRoot(t, tc, root)
+			ws, env := probeRoot(t, tc, root)
 			rendered, err := tc.ProviderLockFile(source)
 			if err != nil {
 				t.Fatal(err)
 			}
-			res := tofu(t, tc, dir, env, "init", "-input=false", "-no-color", "-lockfile=readonly")
+			res := tofu(t, tc, ws, env, "init", "-input=false", "-no-color", "-lockfile=readonly")
 			if res.ExitCode != 0 {
 				t.Fatalf("tofu init: exit %d\n%s", res.ExitCode, res.Stderr)
 			}
-			lock, err := os.ReadFile(filepath.Join(dir, ".terraform.lock.hcl")) //nolint:gosec // G304: temporary directory of this test.
+			if _, err := os.Stat(filepath.Join(ws.Dir(), ".terraform")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("tofu wrote .terraform in the tree: TF_DATA_DIR is not the one of the workspace (obligation (hf))")
+			}
+			lock, err := os.ReadFile(filepath.Join(ws.Dir(), ".terraform.lock.hcl"))
 			if err != nil || string(lock) != string(rendered) {
 				t.Fatalf("lock file changed by init: %v\n%s", err, lock)
 			}
@@ -163,8 +168,8 @@ func TestOfflineInitRefusesPlantedPackage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(planted, "terraform-provider-helm_v3.3.0_x5"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil { //nolint:gosec // G306,G703: the planted fake provider.
 		t.Fatal(err)
 	}
-	dir, env := probeRootMirror(t, tc, "helm", mirror)
-	res := tofu(t, tc, dir, env, "init", "-input=false", "-no-color", "-lockfile=readonly")
+	ws, env := probeRootMirror(t, tc, "helm", mirror)
+	res := tofu(t, tc, ws, env, "init", "-input=false", "-no-color", "-lockfile=readonly")
 	// tofu wraps its diagnostics: compare on the text with collapsed spaces.
 	if msg := strings.Join(strings.Fields(string(res.Stderr)), " "); res.ExitCode == 0 || !strings.Contains(msg, "doesn't match any of the checksums previously recorded") {
 		t.Fatalf("tofu init with a planted package: exit %d, want a checksum refusal\n%s", res.ExitCode, res.Stderr)
@@ -179,15 +184,15 @@ func TestOfflineInitRefusesPlantedPackage(t *testing.T) {
 // changes behavior, this test fails and the branch of D8 is reconsidered.
 func TestOfflinePlanProbe(t *testing.T) {
 	tc := loadRepoToolchain(t)
-	plan := func(t *testing.T, root string) (toolexec.Result, string, []string) {
-		dir, env := probeRoot(t, tc, root)
-		if res := tofu(t, tc, dir, env, "init", "-input=false", "-no-color", "-lockfile=readonly"); res.ExitCode != 0 {
+	plan := func(t *testing.T, root string) (toolexec.Result, *toolexec.Workspace, []string) {
+		ws, env := probeRoot(t, tc, root)
+		if res := tofu(t, tc, ws, env, "init", "-input=false", "-no-color", "-lockfile=readonly"); res.ExitCode != 0 {
 			t.Fatalf("tofu init: exit %d\n%s", res.ExitCode, res.Stderr)
 		}
-		return tofu(t, tc, dir, env, "plan", "-refresh=false", "-lock=false", "-input=false", "-no-color", "-out=plan.bin"), dir, env
+		return tofu(t, tc, ws, env, "plan", "-refresh=false", "-lock=false", "-input=false", "-no-color", "-out=plan.bin"), ws, env
 	}
-	addresses := func(t *testing.T, dir string, env []string) []string {
-		res := tofu(t, tc, dir, env, "show", "-json", "plan.bin")
+	addresses := func(t *testing.T, ws *toolexec.Workspace, env []string) []string {
+		res := tofu(t, tc, ws, env, "show", "-json", "plan.bin")
 		var p struct {
 			ResourceChanges []struct{ Address string } `json:"resource_changes"`
 		}
@@ -202,22 +207,22 @@ func TestOfflinePlanProbe(t *testing.T) {
 		return out
 	}
 	t.Run("aws_feasible_with_settings", func(t *testing.T) {
-		res, dir, env := plan(t, "aws")
+		res, ws, env := plan(t, "aws")
 		if res.ExitCode != 0 {
 			t.Fatalf("tofu plan: exit %d\n%s", res.ExitCode, res.Stderr)
 		}
-		got := addresses(t, dir, env)
+		got := addresses(t, ws, env)
 		want := []string{"aws_eks_cluster.c", "aws_iam_role.eks", "aws_iam_user.injected", "aws_kms_key.k", "aws_security_group.sg", "aws_subnet.a", "aws_subnet.b", "aws_vpc.v"}
 		if !slices.Equal(got, want) {
 			t.Fatalf("planned resources %q, want %q", got, want)
 		}
 	})
 	t.Run("helm_feasible", func(t *testing.T) {
-		res, dir, env := plan(t, "helm")
+		res, ws, env := plan(t, "helm")
 		if res.ExitCode != 0 {
 			t.Fatalf("tofu plan: exit %d\n%s", res.ExitCode, res.Stderr)
 		}
-		if got := addresses(t, dir, env); !slices.Equal(got, []string{"helm_release.r"}) {
+		if got := addresses(t, ws, env); !slices.Equal(got, []string{"helm_release.r"}) {
 			t.Fatalf("planned resources %q", got)
 		}
 	})

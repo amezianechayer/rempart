@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,11 +20,26 @@ const toolexecDir = "internal/validate/toolexec"
 
 // processStarters are the functions that start a process without os/exec,
 // by import path then name (ADR 0014 D6, deviation 8).
+// Raw system calls are refused too (obligation (hj)): SYS_EXECVE and
+// SYS_EXECVEAT reach execve without any of the functions above.
 var processStarters = map[string][]string{
 	"os":                    {"StartProcess"},
-	"syscall":               {"Exec", "ForkExec", "StartProcess"},
-	"golang.org/x/sys/unix": {"Exec"},
+	"syscall":               {"Exec", "ForkExec", "StartProcess", "Syscall", "Syscall6", "RawSyscall", "RawSyscall6"},
+	"golang.org/x/sys/unix": {"Exec", "Syscall", "Syscall6", "RawSyscall", "RawSyscall6", "RawSyscallNoError", "SyscallNoError"},
 }
+
+// forbiddenImports load or run code outside Go's own process model
+// (obligation (hj)): a Go plugin, and cgo.
+var forbiddenImports = map[string]string{
+	"plugin": "a Go plugin loads native code",
+	"C":      "cgo runs native code, which can start a process",
+}
+
+// allowedTransitiveExec are the packages outside the repository and the
+// standard library that import os/exec and are linked in cmd/rempart or
+// cmd/rempart-worker (obligation (hj)): a new one is a dependency that can
+// start a process, reviewed before it is admitted.
+var allowedTransitiveExec = []string{"github.com/open-policy-agent/opa/internal/compiler/wasm"}
 
 // checkProcessSource refuses, in a Go file outside toolexecDir, any call or
 // reference to a process starter, through the import name in use (renamed
@@ -40,6 +56,10 @@ func checkProcessSource(name, src string) []string {
 	for _, imp := range f.Imports {
 		p, err := strconv.Unquote(imp.Path.Value)
 		if err != nil {
+			continue
+		}
+		if why, bad := forbiddenImports[p]; bad {
+			problems.addf("%s: import %q outside %s: %s (ADR 0014 D6, T8)", name, p, toolexecDir, why)
 			continue
 		}
 		if _, starter := processStarters[p]; !starter {
@@ -112,6 +132,15 @@ func TestExecConfined(t *testing.T) {
 			{"renamed_syscall", "package p\n\nimport sc \"syscall\"\n\nvar _ = sc.ForkExec\n", []string{"syscall.ForkExec"}},
 			{"renamed_os", "package p\n\nimport sys \"os\"\n\nvar _ = sys.StartProcess\n", []string{"os.StartProcess"}},
 			{"dot_syscall", "package p\n\nimport . \"syscall\"\n\nvar _ = ForkExec\n", []string{"dot import of syscall"}},
+			// Obligation (hj): raw system calls, plugins, cgo.
+			{"raw_syscall_execve", "package p\n\nimport \"syscall\"\n\nfunc f() { syscall.RawSyscall(syscall.SYS_EXECVE, 0, 0, 0) }\n", []string{"syscall.RawSyscall"}},
+			{"syscall6", "package p\n\nimport \"syscall\"\n\nvar _ = syscall.Syscall6\n", []string{"syscall.Syscall6"}},
+			{"unix_syscall", "package p\n\nimport \"golang.org/x/sys/unix\"\n\nfunc f() { unix.Syscall(unix.SYS_EXECVEAT, 0, 0, 0) }\n", []string{"golang.org/x/sys/unix.Syscall"}},
+			{"unix_raw_no_error", "package p\n\nimport \"golang.org/x/sys/unix\"\n\nvar _ = unix.RawSyscallNoError\n", []string{"golang.org/x/sys/unix.RawSyscallNoError"}},
+			{"plugin_open", "package p\n\nimport \"plugin\"\n\nvar _, _ = plugin.Open(\"x.so\")\n", []string{"import \"plugin\""}},
+			{"renamed_plugin", "package p\n\nimport pl \"plugin\"\n\nvar _, _ = pl.Open(\"x.so\")\n", []string{"import \"plugin\""}},
+			{"cgo", "package p\n\n// #include <unistd.h>\nimport \"C\"\n\nfunc f() { C.execv(nil, nil) }\n", []string{"import \"C\""}},
+			{"allowed_sys_constant", "package p\n\nimport \"syscall\"\n\nvar _ = syscall.SIGKILL\n", nil},
 		}
 		for _, c := range cases {
 			t.Run(c.name, func(t *testing.T) { expectProblems(t, checkProcessSource(c.name+".go", c.src), c.want) })
@@ -128,6 +157,32 @@ func TestExecConfined(t *testing.T) {
 		}
 		if got := Check(m, pkgs, []Rule{rule}); got != nil {
 			t.Errorf("exec-confined violations:\n%s", formatViolations(got))
+		}
+	})
+	// Obligation (hj): the third-party packages linked in the binaries that
+	// import os/exec are frozen.
+	t.Run("transitive_importers", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}} {{join .Imports \" \"}}{{end}}", "./cmd/rempart", "./cmd/rempart-worker")
+		cmd.Dir = dir
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("go list -deps: %v", err)
+		}
+		var got []string
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || !slices.Contains(fields[1:], "os/exec") || strings.HasPrefix(fields[0], m+"/") {
+				continue
+			}
+			if !slices.Contains(got, fields[0]) {
+				got = append(got, fields[0])
+			}
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, allowedTransitiveExec) {
+			t.Errorf("packages outside the repository importing os/exec in the binaries: %q, want %q (a new one is reviewed before it is admitted, ADR 0014 D6)", got, allowedTransitiveExec)
 		}
 	})
 	t.Run("repository_sources", func(t *testing.T) {

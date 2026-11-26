@@ -273,6 +273,13 @@ func TestLoadToolchain(t *testing.T) {
 		"provider_h1_malformed": setProvider("h1", "zh:"+strings.Repeat("0", 64)),
 		// Repository of each tool frozen (owner and name on github.com).
 		"tool_other_repository": set("url", "https://github.com/evil/opentofu/releases/download/v1.13.2/tofu_1.13.2_linux_amd64.zip"),
+		// Obligation (hl): the exact form of a release asset, one file name
+		// after the version, nothing that a client would normalize.
+		"tool_url_dot_segments": set("url", "https://github.com/opentofu/opentofu/releases/download/v1.13.2/../../../../evil/fork/releases/download/v9/tofu.zip"),
+		"tool_url_dot":          set("url", "https://github.com/opentofu/opentofu/releases/download/v1.13.2/./tofu_1.13.2_linux_amd64.zip"),
+		"tool_url_encoded":      set("url", "https://github.com/opentofu/opentofu/releases/download/v1.13.2/%2e%2e/tofu.zip"),
+		"tool_url_double_slash": set("url", "https://github.com/opentofu/opentofu/releases/download/v1.13.2//tofu_1.13.2_linux_amd64.zip"),
+		"tool_url_subdirectory": set("url", "https://github.com/opentofu/opentofu/releases/download/v1.13.2/sub/tofu_1.13.2_linux_amd64.zip"),
 		"tool_unknown_name":     set("name", "evil"),
 		"lock_version_2":        func(_ *testing.T, f fixture) { f.lock["lock_version"] = 2 },
 	}
@@ -289,6 +296,16 @@ func TestLoadToolchain(t *testing.T) {
 			}
 		})
 	}
+	// Obligation (hi): a cache a third party can write is refused.
+	t.Run("shared_cache", func(t *testing.T) {
+		f := newFixture(t)
+		if err := os.Chmod(f.cache, 0o777); err != nil { //nolint:gosec // G302: test cache made writable by all on purpose.
+			t.Fatal(err)
+		}
+		if _, err := LoadToolchain(f.json(t), f.cache); !errors.Is(err, ErrToolchain) {
+			t.Fatalf("LoadToolchain on a cache writable by others = %v, want ErrToolchain", err)
+		}
+	})
 	t.Run("relative_cache", func(t *testing.T) {
 		f := newFixture(t)
 		if _, err := LoadToolchain(f.json(t), "relative/cache"); !errors.Is(err, ErrToolchain) {

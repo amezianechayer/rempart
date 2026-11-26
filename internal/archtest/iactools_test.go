@@ -41,6 +41,9 @@ var (
 	lockSourceRe   = regexp.MustCompile(`^registry\.opentofu\.org/hashicorp/([a-z0-9-]+)$`)
 	lockPluginRe   = regexp.MustCompile(`^github\.com/terraform-linters/tflint-ruleset-[a-z0-9]+$`)
 	lockH1Re       = regexp.MustCompile(`^h1:[A-Za-z0-9+/]{43}=$`)
+	// lockAssetRe is the file name of a release asset (obligation (hl)): one
+	// path segment, never . or .., no escape, no separator.
+	lockAssetRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 )
 
 // lockToolRepos freezes the github.com repository of each tool of the lock:
@@ -54,6 +57,9 @@ var lockToolRepos = map[string]string{
 }
 
 func keysOf(m map[string]any) []string { return slices.Sorted(maps.Keys(m)) }
+
+// asString is v as a string, "" when it is not one.
+func asString(v any) string { str, _ := v.(string); return str }
 
 // checkIaCLock applies D15 to the lock src, today being the date of the check.
 func checkIaCLock(src []byte, today time.Time) []string {
@@ -176,8 +182,10 @@ func checkIaCLock(src []byte, today time.Time) []string {
 			if !strings.Contains(p, "/v"+version+"/") {
 				problems.addf("%s: url path %q does not name v%s", what, p, version)
 			}
-			if repo, ok := lockToolRepos[name]; !ok || !strings.HasPrefix(p, "/"+repo+"/releases/download/") {
-				problems.addf("%s: url path %q is not a release of the frozen repository %q", what, p, repo)
+			repo, ok := lockToolRepos[name]
+			asset, isAsset := strings.CutPrefix(p, "/"+repo+"/releases/download/v"+version+"/")
+			if !ok || !isAsset || !lockAssetRe.MatchString(asset) || strings.Contains(asString(tl["url"]), "%") {
+				problems.addf("%s: url path %q is not exactly a release asset of the frozen repository %q (obligation (hl))", what, p, repo)
 			}
 		}
 		for _, h := range []string{"sha256", "binary_sha256"} {
@@ -333,6 +341,9 @@ func TestIaCToolsLockPinned(t *testing.T) {
 		{"provider_h1_zh", `h1:Qbt2+dtOJty3glPZI9jMCXq82GSAKBk/T2+wBMIdu0c=`, `zh:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`, "want h1:"},
 		{"tool_other_repository", `https://github.com/opentofu/opentofu/releases`, `https://github.com/evil/opentofu/releases`, "frozen repository"},
 		{"tool_unknown", `"name": "tofu", "kind": "tool"`, `"name": "tofux", "kind": "tool"`, "frozen repository"},
+		{"tool_url_dot_segments", `download/v1.13.2/tofu_1.13.2_linux_amd64.zip`, `download/v1.13.2/../../../../evil/fork/releases/download/v9/tofu_1.13.2_linux_amd64.zip`, "frozen repository"},
+		{"tool_url_encoded", `download/v1.13.2/tofu_1.13.2_linux_amd64.zip`, `download/v1.13.2/%2e%2e/tofu_1.13.2_linux_amd64.zip`, "frozen repository"},
+		{"tool_url_double_slash", `download/v1.13.2/tofu_1.13.2_linux_amd64.zip`, `download/v1.13.2//tofu_1.13.2_linux_amd64.zip`, "frozen repository"},
 		{"plugin_source_other", `"plugin_source": "github.com/terraform-linters/tflint-ruleset-aws"`, `"plugin_source": "github.com/evil/tflint-ruleset-aws"`, "plugin_source"},
 	}
 	for _, c := range cases {
@@ -503,6 +514,11 @@ func TestIaCToolsScriptRefusesTraversal(t *testing.T) {
 		"version":       {tool: tool, mutate: func(m map[string]any) { m["version"] = "1.13.2/../../../../escaped-version" }, seedHash: true},
 		"plugin_source": {tool: plugin, mutate: func(m map[string]any) { m["plugin_source"] = "github.com/terraform-linters/../../../../escaped-plugin" }, seedHash: true},
 		"sha256":        {tool: tool, mutate: func(m map[string]any) { m["sha256"] = "../../escaped-dl" }},
+		// Obligation (hl): a URL whose dot segments leave the frozen
+		// repository (curl normalizes them) is refused like a traversal.
+		"url_dot_segments": {tool: tool, mutate: func(m map[string]any) {
+			m["url"] = "https://github.com/opentofu/opentofu/releases/download/v1.13.2/../../../../evil/fork/releases/download/v9/tofu_1.13.2_linux_amd64.zip"
+		}, seedHash: true},
 		"provider_source": {provider: provider, mutate: func(m map[string]any) {
 			m["source"] = "registry.opentofu.org/hashicorp/../../../../escaped-provider"
 		}, seedHash: true},
