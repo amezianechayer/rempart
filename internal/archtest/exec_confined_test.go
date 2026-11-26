@@ -36,8 +36,9 @@ var forbiddenImports = map[string]string{
 }
 
 // allowedTransitiveExec are the packages outside the repository and the
-// standard library that import os/exec and are linked in cmd/rempart or
-// cmd/rempart-worker (obligation (hj)): a new one is a dependency that can
+// standard library that import os/exec and are linked in a binary of cmd/,
+// rempart-evals aside (obligation (hj), extended to every binary by the review
+// of the pre-T03 lot, obligation (hu)): a new one is a dependency that can
 // start a process, reviewed before it is admitted.
 var allowedTransitiveExec = []string{"github.com/open-policy-agent/opa/internal/compiler/wasm"}
 
@@ -159,12 +160,26 @@ func TestExecConfined(t *testing.T) {
 			t.Errorf("exec-confined violations:\n%s", formatViolations(got))
 		}
 	})
-	// Obligation (hj): the third-party packages linked in the binaries that
-	// import os/exec are frozen.
+	// Obligations (hj) and (hu): the third-party packages linked in the
+	// binaries that import os/exec are frozen, for every binary of cmd/ but the
+	// evaluation command (which runs git itself, rule exec-confined).
 	t.Run("transitive_importers", func(t *testing.T) {
+		entries, err := fs.ReadDir(fsys, "cmd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		args := []string{"list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}} {{join .Imports \" \"}}{{end}}"}
+		for _, e := range entries {
+			if e.IsDir() && e.Name() != "rempart-evals" {
+				args = append(args, "./cmd/"+e.Name())
+			}
+		}
+		if len(args) < 4+5 {
+			t.Fatalf("binaries listed: %q, want every binary of cmd/", args[4:])
+		}
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}} {{join .Imports \" \"}}{{end}}", "./cmd/rempart", "./cmd/rempart-worker")
+		cmd := exec.CommandContext(ctx, "go", args...)
 		cmd.Dir = dir
 		out, err := cmd.Output()
 		if err != nil {

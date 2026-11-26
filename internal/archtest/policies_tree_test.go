@@ -21,7 +21,10 @@ const opaAdapterSources = "internal/policy/adapters/opa"
 const policiesImport = modulePath + "/policies"
 
 // regoPackageRe is the package clause of a .rego file: the first line that is
-// neither empty nor a comment.
+// neither empty nor a comment. Deliberately narrow, failing closed: a clause
+// followed by a comment on the same line, or a path with a bracket element
+// (package rempart.design["x"]), is refused although Rego admits it (review
+// of the pre-T03 lot, obligation (hv)).
 var regoPackageRe = regexp.MustCompile(`^package\s+([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)\s*$`)
 
 // adapterReads returns the variables of policies that the adapter sources

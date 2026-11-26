@@ -647,7 +647,38 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
     - (hg) isolation des outils, à décider (voir plus bas) ;
     - (hm) se fait dans M3-T03 même (la chaîne n'existe pas encore) ;
     - le verrou de Checkov (écart de M3-T02).
-  - Revue sécurité : en cours.
+  - **Revue sécurité (une passe) : PASS**, aucun constat critique ni haut.
+    - Vérifié par le relecteur : dans OPA v1.22.4, `GenericVisitor` parcourt tout ce qui peut référencer `data`, sauf `Head.Reference`, que `headTerms` couvre, `else` compris (les annotations ne lisent pas `data`).
+    - Le rejeu couvre 168 cas sans saut.
+    - `os.Root` refuse tout lien qui sort de l'arbre, et `O_EXCL` échoue sur un lien existant.
+    - La liste blanche ne refuse rien d'utile à Trivy ni à Checkov : leurs réglages hors ligne passent par des options.
+  - **Constats bas corrigés au passage** (code de test seul, phase tests) :
+    - (hu) : gel des importeurs tiers d'`os/exec` étendu à tous les binaires de `cmd/` sauf `rempart-evals` (`rempart-runner`, `rempartd`, `rempart-mcp` n'en ont aucun aujourd'hui) ;
+    - (hv) : refus volontairement étroits de `regoPackageRe` documentés (commentaire sur la ligne de `package`, chemin entre crochets).
+  - **Obligations datées (revue du lot)** :
+    - **(hp)** (constat moyen, T160) : avant les tests du pack `iac` de M3-T03 pour ce pack, avant `/close-milestone M3` pour le pack `design`. Le rejeu prouve la concordance entre `opa test` et le moteur, pas que les entrées soient réalisables : 165 entrées capturées sur 168 sont refusées par `Check()`. Une fois les faits recalculés par `NewDesignInput`, 18 verdicts s'inversent :
+      - 16 cas `ko` de résidence, car `zones()` écrit `derived.jurisdiction` à la main ;
+      - 2 cas `ok` qui déclenchent : `test_obs_001_ok_dev`, `test_avl_001_ok_staging`.
+
+      Correctif :
+      - les cas `ko` modifient le graphe ;
+      - le rejeu évalue aussi l'entrée recalculée et exige le même verdict, avec une liste figée et justifiée des cas qui isolent volontairement une règle ;
+      - même dispositif pour le pack `iac`.
+    - **(hq)** avant les tests de M3-T03 (T159) :
+      - `Workspace.Seal()` : arbre en 0500/0400 avant la première exécution, `path/` en 0500 ;
+      - avant chaque `Run`, l'arbre ne contient que les entrées écrites par `WriteFile` ;
+      - sorties des outils (plan) hors de l'arbre ;
+      - `WriteFile` limité à la liste fermée de D7 (ni `terraform.tfstate*` ni `*.tfvars`).
+    - **(hr)** avant les tests de M3-T03 : `TF_CLI_CONFIG_FILE` et `TFLINT_PLUGIN_DIR` fournis par `Toolchain` (`PluginDir`, configuration rendue), plus jamais un chemin libre ; configuration CLI imposée à tofu.
+    - **(hs)** conception de M3-T03 : depuis (hi), Checkov ne peut plus être lancé par `python3 -I` tel que D15 le prévoit. Le `python3` d'un venv est un lien, refusé par `O_NOFOLLOW`, et l'interpréteur système appartient à root. Ne pas relâcher le contrôle en bloc : au besoin, admettre un propriétaire root (fichier et répertoire non inscriptibles par le groupe ou les autres) et hacher l'arbre du venv en lecture seule.
+    - **(ht)** avec (hg) (T157) : propriétaire et mode n'arrêtent pas le même uid. Correctif : copie dans un `memfd` scellé (`F_SEAL_WRITE`), `execveat(AT_EMPTY_PATH)`, contrôle du `TMPDIR`.
+  - Modèle de menace : T160 insérée, T157 et T159 complétées.
+  - Fermeture du lot : (hb), (he), (gz), (hd), (hf), (hi), (hj), (hl) faites ; (hu) et (hv) faites ; `make -f Makefile verify-quick` rc=0.
+  - **Reste avant les tests de M3-T03** :
+    - (hg) : ADR 0015 en rédaction par `architect`, à accepter par l'humain ;
+    - (hq), (hr) ;
+    - (hm) dans M3-T03 ;
+    - verrou de Checkov, avec (hs).
 
 ## En cours
 **M1 démarré.** Décisions de l'humain (2026-09-30) : Q2 à Q5 selon les recommandations de `docs/plans/M1-overview.md` ; Q1 : faux LLM scripté en CI, **plus vrais LLM multi-fournisseurs** (Claude, OpenAI, DeepSeek, Qwen, open-weight auto-hébergés) en exécution manuelle, avec refonte du rédacteur avant tout appel réel, adaptateur compatible OpenAI et politique des fournisseurs par ADR (recommandation de l'agent, à confirmer par l'humain avant ces tâches : evals synthétiques vers tout fournisseur, données client seulement vers un fournisseur traitant dans l'UE ou auto-hébergé). Plan amendé en conséquence. **Attente humaine** : accepter l'ADR 0004 (avant M1-T01) et l'ADR 0005, poser le tag `m1-start`, fournir au moins une clé API avant les tâches LLM réel. Aucune tâche en cours. ADR 0004, 0005 et 0006 acceptés par l'humain (`885a556`), tag `m1-start` posé. Prochaine tâche : M1-T02 `codec-replay`, précédée de l'obligation (ct). **Skill `intent-to-spec` modifié en M1-T03** (note D2 : `tenant_id` du scénario de référence invalide, `internal/intent/testdata/reference-ir.json` fait foi), à relire par l'humain. **Mode accéléré** (humain, 2026-09-30, « ça prend bcp de temps ») : seuls les constats critiques ou hauts de la revue sécurité relancent un cycle ; les constats moyens et bas deviennent des obligations datées pour M1 ; une seule campagne de mutations par tâche ; garde-fous inchangés (TDD, revue, acceptation, baseline humaine). **Périmètre réduit de M0-T23** (humain, 2026-09-30, « fais seulement le nécessaire ») : les 7 tests de la fiche seulement (plus les adaptations indispensables de `internal/archtest`), une mutation par test ; l'étape A du plan (obligations (s) à (w) et (y) de M0-T22 sur `internal/evals`) est reportée à M1. **Skill `loop-engineering/references/temporal-loop-skeleton.md` modifié en M0-T19d et M0-T20, à relire.** Rappel des décisions de M0-T19c (section 11 de son plan) retenues sur délégation de l'humain : (1) vérificateur factice réservé aux tests, même en `-dev` : T20 enregistre dans `make demo` un vérificateur qui refuse tout (issue `timed_out`) ; (2) en T19d, `Author` et le délai d'approbation viennent de l'entrée, `Author` restant une identité déclarée jusqu'à M4 ; (3) T19d : `func Spec() loops.LoopSpec` renvoyant un littéral constant, littéral `loops.ApprovalRequest` écrit dans l'appel ; (4) faux positifs acceptés (`internal/archtest` exempté de la règle des chaînes, import `.` interdit partout). Décisions de M0-T19b : Décisions de la section 10 du plan retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes dans le sens le plus strict, réversibles : (1) signal d'approbation admis seulement sous forme canonique, octets du hash et de la signature `[A-Za-z0-9+/=._:-@]` (plus strict que D2 de M0-T15, à confirmer avant M4 : une signature JSON ou PEM serait refusée) ; (2) charge trop grosse : `InvalidLoopSpec` avant toute activité ; (3) échec du proposeur sans `ProposeFailure` non repris (l'adaptateur LLM de T20 doit toujours le renvoyer après un appel facturé) ; (4) obligation (m) couverte par un critère statique en M0, test de rejeu d'historique en M1 ; (5) exemption du décodeur JSON retirée de `workflowcheck.config.yaml` en T19c ; (6) noms de spécification bornés (64 octets, jeu fermé). Amendement A3 retenu sur délégation de l'humain : M0-T19 découpée en T19a à T19d, M0 passe à 22 tâches (`docs/plans/M0-overview.md`, section 0 bis). A1 prime sur la fiche : pas de `ContinueAsNew` en M0. Décisions humaines ouvertes (section 13 du plan) : (1) relire A3 ; (3) liste d'admission ASCII et français pour les prompts ; (4) avant T20, câblage du vérificateur factice (étiquette de build avec ADR, binaire de développement distinct, ou vérificateur qui refuse tout) ; (5) avant T20, `-llm=anthropic` refusé en M0 sauf décision contraire ; (6) forme canonique du signal d'approbation en T19b, à confirmer avant M4.
@@ -1788,3 +1819,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-26 21:36 [harnais] RETOUR EN PHASE TESTS depuis impl : lint only: three unused nolint directives in the new test lines; implementation of the pre-T03 obligations complete
 
 - 2026-11-26 21:36 [harnais] phase : impl -> tests
+
+- 2026-11-26 21:47 [harnais] PHASE FREE (discipline TDD suspendue) : lot des obligations avant M3-T03 terminé, revue sécurité PASS
+
+- 2026-11-26 21:47 [harnais] phase : tests -> free
