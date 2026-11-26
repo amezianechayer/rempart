@@ -112,6 +112,9 @@ func newEngine(pack fs.FS, o Options) (*Engine, error) {
 	if c.Compile(modules); c.Failed() {
 		return nil, invalid("compile: " + c.Errors.Error())
 	}
+	if err := checkCompiledDataRefs(c); err != nil {
+		return nil, err
+	}
 	controls, err := verifyMetadata(c)
 	if err != nil {
 		return nil, err
@@ -258,8 +261,16 @@ func checkDataRefs(m *ast.Module) error {
 				bad = invalid("data reference outside the pack")
 				return true
 			}
-			// The head is checked; an index may hold another reference.
-			for _, t := range v[1:] {
+			// A head that is a variable is checked above; any other head (array,
+			// object, set, comprehension, call) is walked like the indexes
+			// (review of M3-T01, T108).
+			terms := v
+			if len(v) > 0 {
+				if _, isVar := v[0].Value.(ast.Var); isVar {
+					terms = v[1:]
+				}
+			}
+			for _, t := range terms {
 				ast.NewGenericVisitor(visit).Walk(t)
 			}
 			return true
@@ -271,6 +282,23 @@ func checkDataRefs(m *ast.Module) error {
 		return false
 	}
 	ast.NewGenericVisitor(visit).Walk(m)
+	return bad
+}
+
+// checkCompiledDataRefs is the second barrier of obligation (fk) (review of
+// M3-T01, defense in depth): on the compiled modules, imports resolved and
+// comprehensions rewritten, every reference whose head is data starts with
+// packRoot.
+func checkCompiledDataRefs(c *ast.Compiler) error {
+	var bad error
+	for _, m := range c.Modules {
+		ast.NewGenericVisitor(func(x any) bool {
+			if r, ok := x.(ast.Ref); ok && bad == nil && len(r) > 0 && r[0].Equal(ast.DefaultRootDocument) && !r.HasPrefix(packRoot) {
+				bad = invalid("data reference outside the pack")
+			}
+			return bad != nil
+		}).Walk(m)
+	}
 	return bad
 }
 

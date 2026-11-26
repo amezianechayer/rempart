@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	opaast "github.com/open-policy-agent/opa/v1/ast"
 )
 
 // foreignRefReason is the reason of the barrier for obligation (fk).
@@ -39,6 +41,18 @@ func TestEngineRefusesForeignDataRefs(t *testing.T) {
 			"deny contains f if {\n" + computeBody + "\n\tlib.y\n}\n"},
 		"import_root": {"t.rego": header + "import data\n\n" + meta("TST-001", "high", "escalate") +
 			"deny contains f if {\n" + computeBody + "\n\tdata.y\n}\n"},
+		// Review of M3-T01 (high, T108, T109): a reference whose head is a
+		// composite term (array, object, set, comprehension, call) hides the
+		// data reference inside its head.
+		"head_array":                withRef("x := [data.rempart.iac][0]\n\tx != null"),
+		"head_object":               withRef("x := {\"a\": data.rempart.iac}[\"a\"]\n\tx != null"),
+		"head_set":                  withRef("x := {data.rempart.iac}[_]\n\tx != null"),
+		"head_array_comprehension":  withRef("x := [y | y := data.rempart.iac][0]\n\tx != null"),
+		"head_object_comprehension": withRef("x := {k: v | some k, v in data.rempart.iac}[_]\n\tx != null"),
+		"head_set_comprehension":    withRef("x := {y | some y in data.rempart.iac}[_]\n\tx != null"),
+		"head_call":                 withRef("x := object.union(data.rempart.iac, {})[_]\n\tx != null"),
+		"every_composite_domain":    withRef("every y in [data.rempart.iac][0] { y }"),
+		"test_package_composite":    withRef("[v | v := data.rempart.design_test.h.on][0]"),
 	}
 	for name, files := range refused {
 		t.Run("refused_"+name, func(t *testing.T) {
@@ -68,4 +82,48 @@ func TestEngineRefusesForeignDataRefs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCompiledDataRefsChecked proves the second barrier of obligation (fk)
+// (review of M3-T01, defense in depth): on the compiled modules (imports
+// resolved, comprehensions rewritten), checkCompiledDataRefs refuses a data
+// reference outside the pack whatever the form that produced it, and admits
+// the compiled design pack of the repository.
+func TestCompiledDataRefsChecked(t *testing.T) {
+	compile := func(t *testing.T, files map[string]string) *opaast.Compiler {
+		t.Helper()
+		modules := map[string]*opaast.Module{}
+		for name, src := range files {
+			m, err := opaast.ParseModuleWithOpts(name, src, opaast.ParserOptions{ProcessAnnotation: true, RegoVersion: opaast.RegoV1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			modules[name] = m
+		}
+		c := opaast.NewCompiler()
+		if c.Compile(modules); c.Failed() {
+			t.Fatalf("compile: %v", c.Errors)
+		}
+		return c
+	}
+	iac := "package rempart.iac.lib\n\nsecret := \"s\"\n"
+	for name, body := range map[string]string{
+		"direct":        "\tx := data.rempart.iac.lib.secret\n\tx != \"\"",
+		"head_array":    "\tx := [data.rempart.iac.lib.secret][0]\n\tx != \"\"",
+		"comprehension": "\tx := [y | y := data.rempart.iac.lib.secret][0]\n\tx != \"\"",
+		"call":          "\tx := object.union({\"s\": data.rempart.iac.lib.secret}, {})[\"s\"]\n\tx != \"\"",
+	} {
+		t.Run("refused_"+name, func(t *testing.T) {
+			c := compile(t, map[string]string{"iac.rego": iac, "t.rego": "package rempart.design.t\n\nok if {\n" + body + "\n}\n"})
+			err := checkCompiledDataRefs(c)
+			if !errors.Is(err, ErrPackInvalid) || !strings.Contains(err.Error(), foreignRefReason) {
+				t.Fatalf("checkCompiledDataRefs = %v; want ErrPackInvalid, %q", err, foreignRefReason)
+			}
+		})
+	}
+	t.Run("admitted_design_pack", func(t *testing.T) {
+		if _, err := NewDesign(); err != nil {
+			t.Fatalf("NewDesign: %v; the design pack reads data.rempart.design only", err)
+		}
+	})
 }

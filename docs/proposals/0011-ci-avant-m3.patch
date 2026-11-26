@@ -33,7 +33,7 @@ index e4f9241..2646d4e 100644
          env:
            EVAL_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
 diff --git a/internal/archtest/ci_test.go b/internal/archtest/ci_test.go
-index 2d85df5..eff588e 100644
+index 2d85df5..9018bf3 100644
 --- a/internal/archtest/ci_test.go
 +++ b/internal/archtest/ci_test.go
 @@ -21,11 +21,16 @@ import (
@@ -74,7 +74,13 @@ index 2d85df5..eff588e 100644
  			p.addf("line %d: want uses: owner/repo@<sha> # vX.Y.Z", i+1)
  		}
  	}
-@@ -177,8 +184,7 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
+@@ -173,12 +180,12 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
+ 	if j.RunsOn != "ubuntu-24.04" || j.Timeout < 1 || j.Timeout > 60 {
+ 		p.addf("runs-on %q timeout-minutes %d", j.RunsOn, j.Timeout)
+ 	}
+-	if !strings.Contains(wf.Concurrency.Group, ciGroup) || !maps.Equal(j.Env, map[string]string{"GOTOOLCHAIN": "local"}) {
++	if wf.Concurrency.Group != "verify-${{ "+ciGroup+" }}" || wf.Concurrency.Cancel != "${{ github.event_name == 'pull_request' }}" ||
++		!maps.Equal(j.Env, map[string]string{"GOTOOLCHAIN": "local"}) {
  		p.addf("concurrency group %q or job env %v", wf.Concurrency.Group, j.Env)
  	}
  	want := []string{
@@ -84,7 +90,7 @@ index 2d85df5..eff588e 100644
  		"run:make -f Makefile dev-preflight", "run:make -f Makefile verify", "run:make -f Makefile dev-down",
  	}
  	var got []string
-@@ -188,6 +194,9 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
+@@ -188,6 +195,9 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
  		if s.Uses != "" {
  			step = "uses:" + name
  		}
@@ -94,7 +100,7 @@ index 2d85df5..eff588e 100644
  		got = append(got, step)
  		if strings.Contains(s.Run, "${{") {
  			p.addf("step %d: expression in run (template injection)", i+1)
-@@ -212,6 +221,37 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
+@@ -212,6 +222,60 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
  	return p
  }
  
@@ -117,22 +123,45 @@ index 2d85df5..eff588e 100644
 +}
 +
 +func checkCIExpressions(_ ciWorkflow, src string) (p problemList) {
-+	found := regexp.MustCompile(`\$\{\{.*?\}\}`).FindAllString(src, -1)
-+	for _, e := range found {
-+		if !slices.Contains(ciExpressions, e) {
-+			p.addf("expression %q outside the closed list %q", e, ciExpressions)
++	closed := func(where, text string) {
++		found := ciExpressionRe.FindAllString(text, -1)
++		for _, e := range found {
++			if !slices.Contains(ciExpressions, e) {
++				p.addf("%s: expression %q outside the closed list %q", where, e, ciExpressions)
++			}
++		}
++		if n := strings.Count(text, "${{"); n != len(found) {
++			p.addf("%s: %d expression openings, %d closed expressions on one line", where, n, len(found))
 +		}
 +	}
-+	if n := strings.Count(src, "${{"); n != len(found) {
-+		p.addf("%d expression openings, %d closed expressions on one line", n, len(found))
++	closed("text", src)
++	// Review of M3-T01: a YAML escape (\x24{{, \u0024{{) is decoded into an
++	// expression GitHub evaluates; the closed list applies to the decoded
++	// scalars too.
++	var doc yaml.Node
++	if err := yaml.Unmarshal([]byte(src), &doc); err != nil {
++		p.addf("decoded scalars: %v", err)
++		return p
 +	}
++	var walk func(n *yaml.Node)
++	walk = func(n *yaml.Node) {
++		if n.Kind == yaml.ScalarNode {
++			closed(fmt.Sprintf("line %d (decoded)", n.Line), n.Value)
++		}
++		for _, c := range n.Content {
++			walk(c)
++		}
++	}
++	walk(&doc)
 +	return p
 +}
++
++var ciExpressionRe = regexp.MustCompile(`\$\{\{.*?\}\}`)
 +
  func checkCINoSecrets(_ ciWorkflow, src string) (p problemList) {
  	if regexp.MustCompile(`(?i)secrets|github\.token|github_token`).MatchString(src) {
  		p.addf("the workflow names a secret or the workflow token")
-@@ -306,6 +346,7 @@ func TestCIActionsPinnedBySHA(t *testing.T) {
+@@ -306,6 +370,7 @@ func TestCIActionsPinnedBySHA(t *testing.T) {
  	runCI(t, checkCIPinned, checkCIPinned,
  		"@"+ciSHAA, "@v5", pinned,
  		"@"+ciSHAB, "@89abcde", pinned,
@@ -140,7 +169,7 @@ index 2d85df5..eff588e 100644
  		ciSHAB+" # v6.0.0", ciSHAB, "want uses:",
  		"actions/setup-go@", "actionz/setup-go@", "exactly once")
  }
-@@ -326,10 +367,25 @@ func TestCIRunsMakeVerify(t *testing.T) {
+@@ -326,10 +391,27 @@ func TestCIRunsMakeVerify(t *testing.T) {
  		ciBase, "${{ github.head_ref }}", "env map[EVAL_BASE",
  		"dev-preflight\n", "dev-preflight ${{ github.head_ref }}\n", "template injection",
  		"@v2.14.0", "@v2.13.1", "steps",
@@ -160,13 +189,15 @@ index 2d85df5..eff588e 100644
 +		"github.event.pull_request.number || github.sha", "github.event.pull_request.number || github.ref", outside,
 +		ciBase, "${{ github.event.pull_request.head.sha }}", outside,
 +		"\non:\n", "\n# ${{ github.event.issue.title }}\non:\n", outside,
-+		"\non:\n", "\n# ${{ github.sha\non:\n", "expression openings")
++		"\non:\n", "\n# ${{ github.sha\non:\n", "expression openings",
++		"      - name: Docker preflight\n", "      - name: \"\\x24{{ github.event.pull_request.title }}\"\n", "(decoded)",
++		"      - name: Docker preflight\n", "      - name: \"\\u0024{{ github.head_ref }}\"\n", "(decoded)")
 +}
 +
  func TestCINoSecrets(t *testing.T) {
  	const at = "          EVAL_BASE: "
  	runCI(t, checkCINoSecrets, checkCINoSecrets,
-@@ -542,7 +598,7 @@ func TestNoShadowMakefile(t *testing.T) {
+@@ -542,7 +624,7 @@ func TestNoShadowMakefile(t *testing.T) {
  // allCIChecks runs every workflow check on one decoded workflow.
  func allCIChecks(wf ciWorkflow, src string) (p problemList) {
  	for _, check := range []func(ciWorkflow, string) problemList{
@@ -175,7 +206,7 @@ index 2d85df5..eff588e 100644
  		func(wf ciWorkflow, _ string) problemList { return checkCIVerify(wf, "v2.14.0") },
  	} {
  		p = append(p, check(wf, src)...)
-@@ -553,7 +609,8 @@ func allCIChecks(wf ciWorkflow, src string) (p problemList) {
+@@ -553,7 +635,8 @@ func allCIChecks(wf ciWorkflow, src string) (p problemList) {
  // TestParseCIWorkflowDecoding lifts risk R6 of docs/plans/M0-ci.md: how
  // go.yaml.in/yaml/v3 decodes the key "on", a key with a null value, the
  // scalars 0 and false into string fields, and fields without a yaml tag. Its
