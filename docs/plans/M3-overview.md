@@ -2,7 +2,7 @@
 
 - Date : 2026-11-25 (M2 accepté le même jour, tag `m2-done` à poser par l'humain)
 - Auteur : subagent `architect`
-- Statut : **proposé**. Questions Q1 à Q13 à trancher par l'humain (section 12) ; ADR 0014 à rédiger pendant T01 et à faire accepter avant la phase tests de T02.
+- Statut : **validé** par l'humain le 2026-11-25 (Q1 à Q13 selon les recommandations) ; ADR 0014 accepté le 2026-11-26. Écarts de l'ADR 0014 reportés ci-dessous (section 13), au début de T02.
 - Sources : `prompts/M3.md` (objectif, livrables, critères C1 à C4) ; `docs/00-VISION.md` (sections 3, 4, mode runner) ; `docs/01-LOOPS.md` (L3) ; `docs/02-THREAT-MODEL.md` (T2, T6, T8, T30, T31, T115 à T117, section 4.2) ; `docs/STATUS.md` (« M2 ACCEPTÉ », « Reste à faire », obligations (fk), (fl), (fd), garde « Avant M3 (création de `scripts/sandbox.sh`) », lot CI de la section 8.2 du plan M2) ; `docs/plans/M2-overview.md` ; `docs/plans/M0-squelette.md` (section 0, contre-revue R1) ; `docs/loops/L2.md` ; ADR 0010 (D2, D6, D8), 0011 (D1 à D6, vérification 13), 0012 (D2, D5), 0013 (D0.5, question 2) ; skills `secure-iac-generation` (`references/module-contract.md`, `scripts/validate.sh`, `scripts/normalize_findings.py`), `multicloud-networking` (`references/aws-azure-vpn.md`), `secrets-and-identity`, `kubernetes-gitops`, `loop-engineering` (gabarit), `agent-evals`, `policy-as-code` ; code : `internal/loops/{spec.go,l2}`, `internal/design/{build.go,planof.go,cidr,verify,confirm,revise}`, `internal/graph/{domain,reach}`, `internal/policy/adapters/opa/engine.go`, `policies/embed.go`, `cmd/rempart-evals/{targets.go,design.go}`, `evals/design/`, `Makefile` (cibles `sandbox-*`), `internal/{iacgen,validate,plan}` (vides), `policies/iac/` (vide, `.gitkeep`), `modules/` (vide).
 - Contraintes de conduite transmises pour M3 : mode allégé (plan court, tests essentiels, code d'une traite, phases TDD du harnais) ; `architect` seulement pour les ADR ; `security-reviewer` une passe sur les tâches sensibles, seuls critiques et hauts relancent un cycle, moyens et bas deviennent des obligations datées ; une seule acceptation à `/close-milestone M3` ; 6 à 9 tâches livrables chacune en une session ; aucun identifiant cloud détenu par l'agent.
 - Environnement mesuré le 2026-11-25 (session cloud) : aucun outil IaC installé ; téléchargeables : actifs de releases GitHub, PyPI, `releases.hashicorp.com` ; bloqués : API GitHub, pages HTML de releases, `registry.opentofu.org`, `registry.terraform.io`, API de prix d'Infracost ; pas de démon Docker.
@@ -537,3 +537,22 @@ Chaque tâche : plan court, phase tests (tests rouges pour la bonne raison), pha
 - **Q11. Admission Kubernetes et `policies/k8s/`.** **Recommandation** : `admission_policy` réalisé en M3 par Pod Security Admission `restricted` (intégré, aucun composant de plus) ; Kyverno ou Gatekeeper par ADR en M5 avec `policies/k8s/` et le collecteur Kubernetes.
 - **Q12. Nom et place des evals.** **Recommandation** : `evals/iac`, cible `iac` (cohérent avec `evals/design`), `loop: L3-iac`, `runs: 1`, baseline `evals/iac/baseline.json` hors registre des routes, rejouée en CI après H-CI-2.
 - **Q13. Obligations trouvées ouvertes hors de la liste transmise.** (fd) (moyen, ADR 0011) et le lot CI de la section 8.2 du plan M2 ((ce), (cg), (bq), (br), (cf)) sont datés « avant M3 » et encore ouverts. **Recommandation** : (fd) et (cf) dans T01 (code), le reste par la proposition 0011 appliquée par l'humain (H-CI-1).
+
+## 13. Écarts de l'ADR 0014, reportés au début de M3-T02
+
+L'ADR 0014 (accepté le 2026-11-26) précise ce plan. Ses décisions priment ; sauf mention, les comptes des critères d'acceptation ne changent pas.
+
+1. **D6, étage `composition`** en tête de la chaîne de L3, en Go, avant le rendu ; `Stage` gagne `composition`, `StageResult` gagne `Root` (étages `plan`, `policy` et `equivalence` rendus racine par racine).
+2. **D7, garde statique en liste blanche** (fichiers, blocs, attributs de provider, sources de données, fonctions) ; refus ajoutés : blocs `ephemeral`, `import`, `removed`, `check` ; `templatestring`, fonctions non déterministes et fonctions de provider ; attributs `endpoints` et d'identité des providers.
+3. **D8, réglages hors ligne** portés par la variable `rempart_offline_plan` du bundle (défaut `false`), jamais par un fichier de surcharge.
+4. **D2, catalogue de réparation** : codes fixés, `L3-MODULE-VERSION` ajouté.
+5. **D3 et fiche L3** : `Prepare` n'escalade sans boucle que pour `payload_too_large` ; `module_missing` et `no_translation` passent par la stagnation.
+6. **Branche de repli** (sonde : azurerm impossible hors ligne) : les critères 2 et 3 de M3-T07 portent sur `internal/iacgen/testdata/aws-only-input.json` (racine `infra` sans azurerm) ; la référence, qui mêle AWS et azurerm dans `infra`, n'a pas de plan hors ligne (étages `plan`, `policy`, `equivalence` à `not_evaluated` pour cette racine).
+7. **D20, règle `hcl-confined`** ajoutée à `DefaultRules`, vérifiée par `TestRepositoryConforms` (T03, avec la dépendance `hcl/v2` v2.25.0).
+8. **D6, `exec-confined`** complétée d'un contrôle de sources (`os.StartProcess`, `syscall.Exec`, `syscall.ForkExec`, `syscall.StartProcess`, `unix.Exec`), sous-cas de `TestExecConfined` (T02).
+9. **D16** : périmètre des exceptions limité aux findings des scanners sur le code des modules ; `Report.Excepted`, `Options.Today`, `LoadExceptions` ; parité avec le script étendue aux exceptions.
+10. **D10** : `EQUIV-EGRESS` (`low`).
+11. **D9** : un `control_id` partagé garde la même sévérité ; un type sans extracteur échoue fermé.
+12. **D4** : le compilateur de M3 ne produit aucun `extra`.
+
+Obligations ajoutées par la revue de M3-T01 et datées dans ce plan : (hd), (he), (gz), (hb) avant M3-T03 ; (hc) avant M3-T06 ; (ha) avant M3-T07 ; (gy) avant M3-T09.

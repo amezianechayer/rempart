@@ -1,0 +1,153 @@
+{
+  "lock_version": 1,
+  "date": "2026-11-26",
+  "min_age_days": 14,
+  "platform": "linux_amd64",
+  "hosts": ["github.com", "releases.hashicorp.com"],
+  "tools": [
+    {
+      "name": "tofu",
+      "kind": "tool",
+      "version": "1.13.2",
+      "published": "2026-10-21",
+      "url": "https://github.com/opentofu/opentofu/releases/download/v1.13.2/tofu_1.13.2_linux_amd64.zip",
+      "sha256": "723bebb0df8411daff1e5fc3862e28ff5581fe5634087f4c29a9aa41d78208b5",
+      "archive": "zip",
+      "binary": "tofu",
+      "binary_sha256": "949061cbb3c3d4558928ca9a459a5052b8c5e5545d17656f33316d2e3bc335f2",
+      "signature": {
+        "kind": "gpg",
+        "key": "E3E6E43D84CB852EADB0051D0C0AF313E5FD9F80",
+        "identity": "",
+        "issuer": "",
+        "checked": "2026-11-26",
+        "note": "Signature GPG de tofu_1.13.2_SHA256SUMS vérifiée par l'agent ; clé lue sur keyserver.ubuntu.com (uid OpenTofu <core@opentofu.org>), empreinte corroborée par une source tierce seulement : à confirmer par l'humain sur opentofu.org. La signature cosign du même fichier (workflow release.yml@refs/heads/v1.13) a été vérifiée contre la chaîne Fulcio, sans le journal de transparence (hôte bloqué dans la session)."
+      }
+    },
+    {
+      "name": "tflint",
+      "kind": "tool",
+      "version": "0.66.0",
+      "published": "2026-11-08",
+      "url": "https://github.com/terraform-linters/tflint/releases/download/v0.66.0/tflint_linux_amd64.zip",
+      "sha256": "22be11cadc25cd02401e94c0ccc91aa63467debb8485c2a755d98f4c0a9d1e2e",
+      "archive": "zip",
+      "binary": "tflint",
+      "binary_sha256": "8f33a3e34dd83cd4bf43646f2e8492d4d5bb8941036a9ae517b611e56004e70d",
+      "signature": {
+        "kind": "cosign-keyless",
+        "key": "",
+        "identity": "https://github.com/terraform-linters/tflint/.github/workflows/release.yml@refs/tags/v0.66.0",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "checked": "2026-11-26",
+        "note": "Signature de checksums.txt vérifiée par l'agent contre son certificat et la chaîne Fulcio à la date de signature ; journal de transparence non vérifié (rekor.sigstore.dev bloqué dans la session) : à revérifier par l'humain avec cosign verify-blob. Aucune signature GPG publiée pour cette version."
+      }
+    },
+    {
+      "name": "tflint-ruleset-aws",
+      "kind": "tflint-plugin",
+      "plugin_source": "github.com/terraform-linters/tflint-ruleset-aws",
+      "version": "0.50.0",
+      "published": "2026-10-23",
+      "url": "https://github.com/terraform-linters/tflint-ruleset-aws/releases/download/v0.50.0/tflint-ruleset-aws_linux_amd64.zip",
+      "sha256": "cdd433fdbc0929e7b9f9709dd9e72237fdfe1fc235674445c284b1e4b94a5c26",
+      "archive": "zip",
+      "binary": "tflint-ruleset-aws",
+      "binary_sha256": "74827e78596c9bc9a74cefef85479f39f7b40fb3fdee4c93572e95217406c8b5",
+      "signature": {
+        "kind": "gpg",
+        "key": "2DA7A4B11347B217385231D1131A2054C7B3FB65",
+        "identity": "",
+        "issuer": "",
+        "checked": "2026-11-26",
+        "note": "Signature GPG de checksums.txt vérifiée par l'agent (clé du mainteneur de tflint, sous-clé 8CE69160EB3F2FE9, clé principale expirée, lue sur keyserver.ubuntu.com) ; aucune signature cosign publiée pour cette version."
+      }
+    },
+    {
+      "name": "tflint-ruleset-azurerm",
+      "kind": "tflint-plugin",
+      "plugin_source": "github.com/terraform-linters/tflint-ruleset-azurerm",
+      "version": "0.33.0",
+      "published": "2026-10-25",
+      "url": "https://github.com/terraform-linters/tflint-ruleset-azurerm/releases/download/v0.33.0/tflint-ruleset-azurerm_linux_amd64.zip",
+      "sha256": "cd372389bd9ef17096ed7a9fbd856c0122521df141301685e974b269322819a8",
+      "archive": "zip",
+      "binary": "tflint-ruleset-azurerm",
+      "binary_sha256": "a71db870916e15c62523698f42fe4cd53db3eb7818362f64d966336bb8550474",
+      "signature": {
+        "kind": "gpg",
+        "key": "2DA7A4B11347B217385231D1131A2054C7B3FB65",
+        "identity": "",
+        "issuer": "",
+        "checked": "2026-11-26",
+        "note": "Signature GPG de checksums.txt vérifiée par l'agent (même clé que tflint-ruleset-aws)."
+      }
+    },
+    {
+      "name": "trivy",
+      "kind": "tool",
+      "version": "0.76.1",
+      "published": "2026-10-21",
+      "url": "https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz",
+      "sha256": "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0",
+      "archive": "tar.gz",
+      "binary": "trivy",
+      "binary_sha256": "d1dfca6ae10a1ad4540bb94e64f0510077c47008920a9b554986b39dca573d83",
+      "signature": {
+        "kind": "cosign-keyless",
+        "key": "",
+        "identity": "https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v0.76.1",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "checked": "2026-11-26",
+        "note": "Bundle sigstore vérifié par l'agent avec cosign 3.1.1 hors ligne (racine de confiance lue dans sigstore/root-signing sans TUF) ; entrée du journal de transparence du 2026-10-21. Version postérieure à l'incident GHSA-69fq-xp46-6x23 (versions compromises 0.69.4 à 0.69.6) et non citée par l'avis."
+      }
+    }
+  ],
+  "providers": [
+    {
+      "source": "registry.opentofu.org/hashicorp/aws",
+      "version": "6.72.0",
+      "published": "2026-11-04",
+      "url": "https://releases.hashicorp.com/terraform-provider-aws/6.72.0/terraform-provider-aws_6.72.0_linux_amd64.zip",
+      "sha256": "2ffb6b2caaf320b61b406cff192d6e4303b64e32990b69384a056fe5af3d015b",
+      "signature": {
+        "kind": "gpg",
+        "key": "C874011F0AB405110D02105534365D9472D7468F",
+        "identity": "",
+        "issuer": "",
+        "checked": "2026-11-26",
+        "note": "Signature GPG de SHA256SUMS vérifiée par l'agent (HashiCorp Security, clé lue sur keyserver.ubuntu.com, à confirmer par l'humain sur hashicorp.com/security)."
+      }
+    },
+    {
+      "source": "registry.opentofu.org/hashicorp/azurerm",
+      "version": "5.13.0",
+      "published": "2026-11-05",
+      "url": "https://releases.hashicorp.com/terraform-provider-azurerm/5.13.0/terraform-provider-azurerm_5.13.0_linux_amd64.zip",
+      "sha256": "4063473301ef49cb91d206ab9aec2d78462b54f6dc27fe5cf33230db40562085",
+      "signature": {
+        "kind": "gpg",
+        "key": "C874011F0AB405110D02105534365D9472D7468F",
+        "identity": "",
+        "issuer": "",
+        "checked": "2026-11-26",
+        "note": "Signature GPG de SHA256SUMS vérifiée par l'agent."
+      }
+    },
+    {
+      "source": "registry.opentofu.org/hashicorp/helm",
+      "version": "3.3.0",
+      "published": "2026-09-16",
+      "url": "https://releases.hashicorp.com/terraform-provider-helm/3.3.0/terraform-provider-helm_3.3.0_linux_amd64.zip",
+      "sha256": "24a942352667cf49bed467c51a951f17a6c13e0cdf1c505b01b41f75a1a60d0f",
+      "signature": {
+        "kind": "gpg",
+        "key": "C874011F0AB405110D02105534365D9472D7468F",
+        "identity": "",
+        "issuer": "",
+        "checked": "2026-11-26",
+        "note": "Signature GPG de SHA256SUMS vérifiée par l'agent."
+      }
+    }
+  ]
+}

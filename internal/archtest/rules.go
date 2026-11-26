@@ -202,6 +202,13 @@ func DefaultRules(module string) []Rule {
 			Targets:     []string{"github.com/open-policy-agent/opa/...", m("policies/...")},
 			AllowedFrom: []string{m("internal/policy/adapters/opa/...")},
 		},
+		{ // ADR 0014 D6: one runner of external commands, toolexec (T8); the
+			// architecture tests (go list) and the evaluation command (git) are
+			// development tooling, never shipped.
+			Name: "exec-confined", Kind: Confine,
+			Targets:     []string{"os/exec"},
+			AllowedFrom: []string{m("internal/validate/toolexec"), m("internal/archtest"), m("cmd/rempart-evals")},
+		},
 	}
 }
 

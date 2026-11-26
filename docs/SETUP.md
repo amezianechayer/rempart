@@ -24,12 +24,9 @@ Propositions à appliquer par toi si ce n'est pas encore fait (le harnais est pr
 | govulncheck | v1.8.0, épinglée par la directive `tool` de `go.mod` et lancée par `go tool govulncheck` ; binaire séparé facultatif | M0 | `go install golang.org/x/vuln/cmd/govulncheck@v1.8.0` |
 | gofumpt | récent | M0 | `go install mvdan.cc/gofumpt@latest` |
 | OPA | aucune installation | M2 | version de `go.mod`, lancée par `go tool opa` (ADR 0011) ; un `opa` du `PATH` n'est jamais utilisé |
-| Conftest | récent | M2 | conftest.dev |
-| OpenTofu | récent | M3 | opentofu.org (page Install) |
-| tflint | récent | M3 | github.com/terraform-linters/tflint |
-| Checkov | récent | M3 | `pipx install checkov` |
-| Trivy | récent | M3 | trivy.dev |
-| Infracost | récent | M3 | infracost.io (clé API gratuite, à garder hors du dépôt) |
+| OpenTofu, tflint et ses rulesets, Trivy, providers | versions exactes de `scripts/iac-tools.lock.json` | M3 | `make -f Makefile iac-tools` (section « Chaîne d'outils IaC ») ; jamais une version du `PATH` |
+| Checkov | verrou à hachages (M3-T03) | M3 | installé par `scripts/iac-tools.sh` à partir de M3-T03 |
+| Infracost | récent, facultatif | M3 | infracost.io ; seulement dans `scripts/sandbox.sh`, sur le poste de l'humain, si `INFRACOST_API_KEY` est présente (ADR 0014 D14) |
 | Temporal CLI | récent | utile | docs.temporal.io/cli (`temporal server start-dev` évite Docker pour Temporal) |
 | GitHub CLI (`gh`) | récent | utile | cli.github.com |
 | Node.js LTS | récent | M5 (web) | nodejs.org |
@@ -46,6 +43,14 @@ Propositions à appliquer par toi si ce n'est pas encore fait (le harnais est pr
 - Tests d'intégration, en deux passes (`make verify` les enchaîne) : `go test -tags=integration $(go list ./... | grep -v '/internal/archtest$')`, sans aucun secret, puis `bash scripts/dev-env.sh run go test -count=1 -tags=integration ./internal/archtest`, seul paquet qui reçoit les valeurs de `.env.dev` (le script valide le fichier avant de les exporter).
 - Windows : Docker Desktop appelé depuis Git Bash est joint par un pipe nommé (`npipe://`), refusé par `dev-preflight`. Méthode vérifiée le 2026-11-17 : tout lancer depuis WSL2 Ubuntu, dépôt cloné dans `~/rempart`, Docker Engine installé dans la distribution (`sudo apt install -y docker.io docker-compose-v2`, `sudo systemctl enable --now docker`, `sudo usermod -aG docker $USER`, puis `wsl --shutdown` dans PowerShell) ; systemd actif dans WSL (`[boot]` puis `systemd=true` dans `/etc/wsl.conf`) ; intégration WSL de Docker Desktop désactivée pour cette distribution. Les commandes `wsl` se tapent dans PowerShell, jamais dans Ubuntu (le paquet Ubuntu `wsl` est un autre outil).
 - Docker Hub limite les téléchargements anonymes (erreur 429). Parade : démon lancé avec un miroir, par exemple `dockerd --registry-mirror=https://mirror.gcr.io`, ou `"registry-mirrors"` dans `/etc/docker/daemon.json`. Les images restent épinglées par empreinte `sha256`, le miroir ne peut donc pas en substituer une autre.
+
+## Chaîne d'outils IaC (M3-T02, ADR 0014 D15)
+- `make -f Makefile iac-tools` (une fois, puis à chaque changement du verrou) : `bash scripts/iac-tools.sh install` télécharge OpenTofu, tflint, ses rulesets AWS et Azure, Trivy et les providers `aws`, `azurerm` et `helm` du verrou `scripts/iac-tools.lock.json`, vérifie chaque archive et chaque binaire par SHA-256, puis `verify` revérifie tout le cache. Hôtes contactés : `github.com` (actifs de releases) et `releases.hashicorp.com` seulement ; aucun registre (`registry.opentofu.org`, `registry.terraform.io`) n'est utilisé.
+- Cache hors dépôt : `REMPART_IAC_CACHE`, sinon `~/.cache/rempart/iac-tools` (`bash scripts/iac-tools.sh env` affiche la valeur). Disposition : `tools/<outil>/<version>/`, `tflint-plugins/<source>/<version>/`, `mirror/` (miroir fichier des providers), `dl/<sha256>/` (archives). Plateforme : linux_amd64 seulement (WSL2 sur Windows).
+- Rempart n'exécute jamais un outil depuis le cache : `validate.LoadToolchain` en fait une copie privée en lecture seule, vérifiée, et `toolexec.Run` revérifie la somme avant chaque exécution, sans shell, avec un environnement construit (aucune variable `AWS_*`, `ARM_*`, `TF_*` ni mandataire hérités) et un mandataire injoignable.
+- Tests d'intégration de la chaîne (`go test -tags=integration ./internal/validate/...`, inclus dans `make verify`) : ils échouent tant que `make iac-tools` n'a pas été lancé.
+- Relecture humaine du verrou (étape H-tools-lock) : versions publiées depuis au moins 14 jours, sommes, et signatures notées dans chaque entrée. À confirmer depuis le poste de l'humain : l'empreinte de la clé GPG d'OpenTofu (`E3E6 E43D 84CB 852E ADB0 051D 0C0A F313 E5FD 9F80`) sur opentofu.org ; celle de HashiCorp (`C874 011F 0AB4 0511 0D02 1055 3436 5D94 72D7 468F`) sur hashicorp.com/security ; la signature sans clé de tflint 0.66.0 avec `cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.keyless.sig --certificate-identity https://github.com/terraform-linters/tflint/.github/workflows/release.yml@refs/tags/v0.66.0 --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt` (le journal de transparence n'est pas joignable depuis la session de l'agent).
+- Trivy : jamais les versions 0.69.4 à 0.69.6 (attaque de la chaîne d'approvisionnement de mars 2026, avis GHSA-69fq-xp46-6x23) ; `TestIaCToolsLockPinned` les refuse.
 
 ## Evals sur un vrai modèle (M1, ADR 0008)
 - Seulement depuis le terminal de l'humain, jamais depuis un agent ni la CI (refus dans le binaire). Route vérifiée de bout en bout le 2026-11-18 : `--llm openrouter --model openai/gpt-4o-2024-08-06`.

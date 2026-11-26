@@ -26,13 +26,13 @@ row M0 golangci-lint golangci-lint --version
 row M0 govulncheck govulncheck -version
 row M0 gofumpt gofumpt --version
 row M0 opa opa version
-echo "Requis à partir de M2 ou M3 :"
-row M2 conftest conftest --version
-row M3 tofu tofu version
-row M3 tflint tflint --version
-row M3 checkov checkov --version
-row M3 trivy trivy --version
-row M3 infracost infracost --version
+echo "Chaîne IaC (M3, verrou scripts/iac-tools.lock.json ; jamais un outil du PATH) :"
+if bash "$(dirname "$0")/iac-tools.sh" verify >/dev/null 2>&1; then
+  printf '  %-14s %s\n' iac-tools "conforme au verrou"
+else
+  printf '  %-14s %s\n' iac-tools "ABSENT ou modifié (M3) : make -f Makefile iac-tools"
+fi
+row option infracost infracost --version
 echo "Utiles :"
 row option temporal temporal --version
 row option gh gh --version

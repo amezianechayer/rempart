@@ -451,7 +451,7 @@ func defaultRuleNames() []string {
 		"domain-pure", "adapters-edge", "sdk-confine-anthropic", "sdk-confine-temporal",
 		"sdk-confine-sql", "loops-agnostic", "fakes-wired-in-cmd", "loops-fake-tests-only",
 		"llm-adapters-evals-cli-only", "llm-calibration-evals-cli-only", "secrets-fake-dev-only",
-		"opa-confined",
+		"opa-confined", "exec-confined",
 	}
 }
 
@@ -470,7 +470,7 @@ func TestDefaultRules(t *testing.T) {
 	}
 
 	t.Run("names_and_kinds", func(t *testing.T) {
-		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine, Confine, Confine, Confine, Confine}
+		kinds := []RuleKind{Restrict, Confine, Confine, Confine, Confine, Restrict, Confine, Confine, Confine, Confine, Confine, Confine, Confine}
 		names := defaultRuleNames()
 		if len(rules) != len(names) {
 			t.Fatalf("DefaultRules returned %d rules, want %d (%q)", len(rules), len(names), names)
@@ -552,7 +552,7 @@ func TestDefaultRules(t *testing.T) {
 		if len(otherRules) != len(defaultRuleNames()) {
 			t.Fatalf("DefaultRules(%q) returned %d rules, want %d", other, len(otherRules), len(defaultRuleNames()))
 		}
-		thirdParty := []string{"std", "...", "github.com/", "go.temporal.io/", "database/sql/..."}
+		thirdParty := []string{"std", "...", "github.com/", "go.temporal.io/", "database/sql/...", "os/exec"}
 		for _, r := range otherRules {
 			for _, p := range rulePatterns(r) {
 				if strings.Contains(p, "amezianechayer") {
@@ -683,6 +683,12 @@ func TestRuleDetectsViolation(t *testing.T) {
 			// adapter only (T6, T109); cmd wires the adapter, never the pack.
 			v("opa-confined", m+"/cmd/rempart-worker", m+"/policies"),
 			v("opa-confined", m+"/internal/policy", "github.com/open-policy-agent/opa/v1/rego"),
+		}},
+		{"exec-confined", []Violation{
+			// ADR 0014 D6: toolexec is the only runner of external commands
+			// (T8); the worker reaches it, never os/exec.
+			v("exec-confined", m+"/cmd/rempart-worker", "os/exec"),
+			v("exec-confined", m+"/internal/iacgen", "os/exec"),
 		}},
 	}
 	if len(cases) != len(defaultRuleNames()) {

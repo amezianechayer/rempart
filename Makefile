@@ -20,7 +20,7 @@ export GOWORK := off
 override GOFLAGS := -mod=readonly
 export GOFLAGS
 
-.PHONY: verify-quick verify opa-test arch-test evals update-baseline
+.PHONY: verify-quick verify opa-test arch-test evals update-baseline iac-tools
 .PHONY: dev dev-preflight dev-down demo l1-demo l2-demo sandbox-guard sandbox-plan sandbox-apply sandbox-destroy
 
 # Menace T32 : sans règle explicite pour lui, GNU make referait le Makefile par une règle
@@ -55,6 +55,13 @@ opa-test:
 arch-test:
 	go test -count=1 ./internal/archtest/...
 	go tool workflowcheck ./internal/loops/...
+
+# Chaîne d'outils IaC (M3-T02, ADR 0014 D15) : outils, rulesets et providers du verrou
+# scripts/iac-tools.lock.json, téléchargés et vérifiés par sommes dans un cache hors dépôt.
+# Jamais lancée par verify-quick ni verify (aucun téléchargement pendant une vérification).
+iac-tools:
+	bash scripts/iac-tools.sh install
+	bash scripts/iac-tools.sh verify
 
 # Evals (M0-T23) : EVAL=<suite>, all ou changed ; changed lit EVAL_BASE (SHA de base, sinon toutes les suites).
 evals:
