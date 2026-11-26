@@ -1,6 +1,6 @@
 # 0014. Boucle L3 : compilateur déterministe, composition typée, équivalence et chaîne d'outils
 
-- Statut : **proposé**. Rédigé pendant M3-T01. Deux sections restent à compléter au début de M3-T02, avant l'acceptation : « Résultat de la sonde », qui fixe la branche de Q2, et « Mesure de la dépendance » (D20). L'humain accepte l'ADR avant la phase tests de M3-T02 (étape H0-M3.2). Les recommandations Q1 à Q13 du plan M3 ont été retenues par l'humain le 2026-11-25 (« validé, suis tes recommandations ») : cet ADR les consigne comme décisions et les précise sans les rediscuter. Seule la branche de Q2 attend la sonde.
+- Statut : **proposé**. Rédigé pendant M3-T01. Les deux sections mesurées avant l'acceptation sont complétées (2026-11-26) : « Résultat de la sonde », qui fixe la branche de Q2 (repli pour toute racine qui contient azurerm), et « Mesure de la dépendance » (D20). Mesure faite sur une copie de travail jetable : le dépôt n'a pas encore `hcl/v2`. L'humain accepte l'ADR avant la phase tests de M3-T02 (étape H0-M3.2). Les recommandations Q1 à Q13 du plan M3 ont été retenues par l'humain le 2026-11-25 (« validé, suis tes recommandations ») : cet ADR les consigne comme décisions et les précise sans les rediscuter. La branche de Q2 est fixée par la sonde.
 - Date : 2026-11-25
 - Jalon : M3. Mise en oeuvre par tâche :
   - M3-T02 : D6 (exécution confinée), D15, D20 et la sonde de D8 ;
@@ -596,7 +596,7 @@ D1 à D20 reprennent la numérotation de la section 3 du plan. Correspondance av
 ### D20. Dépendance `github.com/hashicorp/hcl/v2` (option 14a, T6)
 - **Usage** : `hcl/v2` (`hclsyntax` pour la garde, `hclwrite` pour le rendu) et `github.com/zclconf/go-cty`.
 - **Confinement** : importés par `internal/validate` et `internal/iacgen` seulement, sous la règle archtest `hcl-confined` (`Confine`, écart 7 ; vérification 5).
-- **Mesure** : à compléter en T02 (section « Mesure de la dépendance »).
+- **Mesure** : faite le 2026-11-26 (section « Mesure de la dépendance ») : v2.25.0, 10 modules de plus au graphe, 6 liés par binaire, environ 1,3 Mo par binaire, ni `net/http` ni `os/exec` tirés, aucune vulnérabilité ; licence MPL-2.0 de `hcl/v2` signalée à l'humain.
 - **Règle de montée** :
   - `go tool govulncheck ./...` rend 0 ; `go mod verify` passe ;
   - l'empreinte du bundle de référence ne change pas, ou son diff est relu (golden de `TestCompileReferenceScenario`) ;
@@ -862,7 +862,7 @@ Ligne `rempart check`, texte cible :
 - **`loop-engineering`** : aucun amendement. L'exemple de `references/loop-spec-template.md` reste illustratif ; la fiche normative est `docs/loops/L3.md`.
 - **ADR 0005** : amendé en M3-T09 seulement si la cible `iac` l'exige (`runs: 1`, baseline hors registre des routes, comme pour `design`).
 
-## Résultat de la sonde (à compléter au début de M3-T02)
+## Résultat de la sonde (mesuré les 2026-11-25 et 2026-11-26, avant la phase tests de M3-T02)
 
 **Protocole** (étape 0 de M3-T02 ; rien n'entre dans le dépôt) :
 1. Outils et providers du verrou dans un cache hors dépôt, sommes et signatures vérifiées.
@@ -880,18 +880,18 @@ Une racine est planifiable hors ligne si tous ses providers sont faisables, avec
 
 | Champ | Valeur |
 |---|---|
-| Date de la sonde | à compléter au début de M3-T02 |
-| Version d'OpenTofu | à compléter au début de M3-T02 |
-| Méthode de coupure réseau | à compléter au début de M3-T02 |
+| Date de la sonde | 2026-11-25 et 2026-11-26 |
+| Version d'OpenTofu | 1.13.2 (actifs de release GitHub, publiés le 2026-10-21 ; somme SHA256SUMS vérifiée, signature non vérifiée dans la sonde) |
+| Méthode de coupure réseau | environnement construit (`env -i`) et mandataire injoignable (`HTTPS_PROXY=http://127.0.0.1:9`), puis `unshare -rn` (espace de noms sans interface, disponible dans la session) : résultats identiques |
 
 | Provider | Version | Racine de sonde | Résultat (faisable, faisable avec réglage, impossible) | Réglage retenu | Preuve (commande, code) |
 |---|---|---|---|---|---|
-| `hashicorp/aws` | | VPC, sous-réseaux, EKS, rôle IAM et politique en ligne | | | |
-| `hashicorp/azurerm` | | VNet, VM Linux, passerelle VPN | | | |
-| `hashicorp/helm` | | release d'un chart local vendorisé | | | |
-| `hashicorp/kubernetes` (si un module l'emploie) | | espace de noms étiqueté, NetworkPolicy | | | |
+| `hashicorp/aws` | 6.72.0 (2026-11-04) | VPC, deux sous-réseaux, groupe de sécurité, clé KMS, rôle IAM, EKS chiffré, `aws_iam_user` injecté | faisable avec réglage | `skip_credentials_validation`, `skip_requesting_account_id`, `skip_metadata_api_check`, `skip_region_validation`, clés factices marquées FAKE (jamais de la forme d'un vrai identifiant : la garde de secrets refuse `AKIA...`) | `tofu plan -refresh=false -lock=false -out` code 0, 8 ressources dont `aws_iam_user.injected` |
+| `hashicorp/azurerm` | 5.13.0 (2026-11-05) | groupe de ressources, VNet, sous-réseau, interface, VM Linux | **impossible** (plan) ; `validate` faisable ; `tofu test` avec `mock_provider` faisable avec réglage | aucun pour le plan : le provider demande un jeton à `login.microsoftonline.com` dès sa configuration (`building account: could not acquire access token`) ; seul un faux point d'authentification le contournerait (exclu par D8). Pour `tofu test` : `mock_resource` avec des `defaults` d'identifiants Azure bien formés (l'azurerm valide la forme des identifiants et de la clé publique SSH) | plan code 1 ; `tofu validate -json` valid ; `tofu test` 1 passé |
+| `hashicorp/helm` | 3.3.0 (2026-09-16) | release d'un chart local, cluster injoignable | faisable | aucun | plan code 0, 1 ressource |
+| `hashicorp/kubernetes` (si un module l'emploie) | non mesuré | espace de noms étiqueté, NetworkPolicy | à mesurer si un module l'emploie (T05) | | |
 
-**Branche retenue** : à compléter au début de M3-T02 (nominale, ou repli pour les racines : ...).
+**Branche retenue** : nominale pour une racine AWS seule ou Helm seule ; **repli** pour toute racine qui contient azurerm, donc pour la racine `infra` du scénario de référence (AWS et Azure) : équivalence de composition et manifestes de modules dans la boucle, plan réel par l'humain (`sandbox.sh`) puis par le runner (M4). L'écart 6 (C3 démontré sur un scénario AWS seul) s'applique. Les modules Azure sont testés par `tofu test` avec `mock_provider` (C1). Miroir fichier : `init` code 0 pour les trois providers, sans registre ; versions choisies par la règle des 14 jours ; `api.releases.hashicorp.com` est bloqué, les dates viennent de l'en-tête `Last-Modified` du fichier SHA256SUMS de chaque version.
 
 **Reports qui en découlent** :
 - réglages exacts dans D8 ;
@@ -900,21 +900,21 @@ Une racine est planifiable hors ligne si tous ses providers sont faisables, avec
 - valeurs figées par `TestOfflinePlanProbe` ;
 - entrée dans `docs/STATUS.md`.
 
-## Mesure de la dépendance (D20, à compléter en M3-T02)
+## Mesure de la dépendance (D20, mesurée le 2026-11-26)
 
 Comme l'ADR 0011 pour OPA, la mesure se fait sur une copie jetable du module, dépôt intact. Elle est consignée ici et dans `docs/STATUS.md`.
 
 | Mesure | Valeur |
 |---|---|
-| Version de `github.com/hashicorp/hcl/v2` et date de publication | à compléter en M3-T02 |
-| Version de `github.com/zclconf/go-cty` | à compléter en M3-T02 |
-| Nombre de modules au graphe, avant et après | à compléter en M3-T02 |
-| Modules ajoutés (diff de `go list -m all`) et leurs licences | à compléter en M3-T02 |
-| Modules liés dans `rempart` et `rempart-worker`, avant et après | à compléter en M3-T02 |
-| Taille des deux binaires, avant et après | à compléter en M3-T02 |
-| Paquets `net/http` ou `os/exec` tirés par `hclsyntax` et `hclwrite` | à compléter en M3-T02 |
-| `go tool govulncheck ./...` | à compléter en M3-T02 |
-| `go mod verify` | à compléter en M3-T02 |
+| Version de `github.com/hashicorp/hcl/v2` et date de publication | v2.25.0, 2026-09-15 (proxy de modules Go) ; licence MPL-2.0 (copyleft au niveau du fichier : usage sans modification des fichiers de hcl sans obligation pour Rempart ; toute modification de ces fichiers serait à publier) |
+| Version de `github.com/zclconf/go-cty` | v1.19.0 (2026-07-06), choisie par la sélection de version minimale, licence MIT ; v1.20.0 non requise |
+| Nombre de modules au graphe, avant et après | 252, puis 262 |
+| Modules ajoutés (diff de `go list -m all`) et leurs licences | `hcl/v2` v2.25.0 (MPL-2.0), `go-cty` v1.19.0 (MIT), `go-textseg/v15` v15.0.0 et `/v17` v17.0.1 (MIT), `agext/levenshtein` v1.2.1 (Apache-2.0), `mitchellh/go-wordwrap` v1.0.1 (MIT), et, pour les tests de ces modules seulement, `go-test/deep`, `vmihailenco/msgpack/v5`, `vmihailenco/tagparser/v2`, `zclconf/go-cty-debug` |
+| Modules liés dans `rempart` et `rempart-worker`, avant et après | `rempart` 23 puis 29, `rempart-worker` 40 puis 46 (ajoutés : `hcl/v2`, `go-cty`, `go-textseg/v17`, `agext/levenshtein`, `go-wordwrap`, `google/go-cmp`) |
+| Taille des deux binaires, avant et après | `rempart` 33,9 puis 35,2 Mo ; `rempart-worker` 55,3 puis 56,8 Mo |
+| Paquets `net/http` ou `os/exec` tirés par `hclsyntax` et `hclwrite` | 0 |
+| `go tool govulncheck ./...` | aucune vulnérabilité (code 0) |
+| `go mod verify` | « all modules verified » |
 
 Commandes :
 1. `go list -m github.com/hashicorp/hcl/v2 github.com/zclconf/go-cty`
