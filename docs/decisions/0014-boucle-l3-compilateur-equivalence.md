@@ -864,6 +864,23 @@ Ligne `rempart check`, texte cible :
 - **`loop-engineering`** : aucun amendement. L'exemple de `references/loop-spec-template.md` reste illustratif ; la fiche normative est `docs/loops/L3.md`.
 - **ADR 0005** : amendé en M3-T09 seulement si la cible `iac` l'exige (`runs: 1`, baseline hors registre des routes, comme pour `design`).
 
+### Amendement 8 : isolation des outils (ADR 0015, accepté le 2026-11-26)
+L'ADR 0015 prime sur D6 pour l'exécution des outils. Changements, repris de sa section « Écarts avec l'ADR 0014 » :
+- **D6, « Un seul exécutant »** : inchangé. Le processus que lance `Run` est l'assistant, le binaire Rempart lui-même, qui fait l'exec de l'outil. `exec-confined` est complétée par `isolation-confined` et `toolexec-helper-first`.
+- **D6, « Conditions d'exécution »** :
+  - isolation complète obligatoire (ADR 0015, D1 à D8) ;
+  - un délai tue l'espace PID de l'outil (`SIGKILL` sur son PID 1), plus seulement le groupe de processus ;
+  - `Setsid` remplace `Setpgid` ;
+  - `tree/` en lecture seule pour tout outil, `data/` inscriptible pour OpenTofu seulement ; le plan est écrit dans `data/`.
+- **D6, « Échec fermé »** : finding critique `TOOL_ISOLATION_UNAVAILABLE`, qui mène à l'escalade `tool_unavailable`.
+- **D6, étage 6** : parallélisme inchangé, chaque outil dans son propre espace.
+- **D6, parité avec le script du skill** : `scripts/validate.sh` ne lance plus d'outil et appelle `rempart check --json` ; la parité porte sur la normalisation. L'amendement 4 en tient compte (modification de skill, signalée dans `docs/STATUS.md`).
+- **D6, findings** : `Report` gagne `Isolation` (niveau, ABI Landlock).
+- **D8** : l'espace réseau vide vaut pour tous les contextes dès M3 ; le mandataire injoignable reste en seconde barrière ; le risque résiduel 1 est fermé là où l'isolation complète existe.
+- **D15** : la configuration de tflint passe par `--config` depuis une entrée en lecture seule, jamais un `.tflint.hcl` de l'arbre ; chaque binaire est exécuté depuis une copie scellée (`memfd` copié dans un tmpfs privé de l'outil).
+- **D18** : `PR_SET_DUMPABLE=0` est posé par `toolexec` (bascule à 1 sous verrou le seul temps du lancement de l'assistant, constat F10 de l'ADR 0015) ; le worker appelle `Probe` au démarrage et s'arrête sans isolation complète.
+- **Risque résiduel 2** : le bac à sable est livré en M3 ; reste la configuration du conteneur du worker (ADR de déploiement de M4).
+
 ## Résultat de la sonde (mesuré les 2026-11-25 et 2026-11-26, avant la phase tests de M3-T02)
 
 **Protocole** (étape 0 de M3-T02 ; rien n'entre dans le dépôt) :

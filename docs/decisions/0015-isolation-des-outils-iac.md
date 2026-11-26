@@ -1,6 +1,6 @@
 # 0015. Isolation des outils IaC : espaces de noms, arbre fermé monté par un assistant de re-exécution, Landlock en renfort
 
-- Statut : **proposé**, prototype mesuré le 2026-11-26 (section « Mesure du prototype », constats F10 à F12). Rédigé le 2026-11-26 par `architect` pour solder l'obligation (hg) de `docs/STATUS.md` (menace T157). L'humain l'accepte avant la phase tests de M3-T02b, une fois la section « Mesure du prototype » complétée. Tant que M3-T02b n'est pas close avec une revue `security-reviewer` PASS, `internal/validate/toolexec` n'est câblé ni dans `rempart check` (M3-T03) ni dans `rempart-worker` (M3-T08).
+- Statut : **accepté** par l'humain le 2026-11-26 (« Oui a tout » : les six questions, avec la recommandation de l'agent, oui à chacune), prototype mesuré le même jour (section « Mesure du prototype »). Les constats F10 à F12, la variante retenue pour (ht) et la section D13 bis font partie de la décision acceptée. Rédigé le 2026-11-26 par `architect` pour solder l'obligation (hg) de `docs/STATUS.md` (menace T157). L'humain l'accepte avant la phase tests de M3-T02b, une fois la section « Mesure du prototype » complétée. Tant que M3-T02b n'est pas close avec une revue `security-reviewer` PASS, `internal/validate/toolexec` n'est câblé ni dans `rempart check` (M3-T03) ni dans `rempart-worker` (M3-T08).
 - Date : 2026-11-26
 - Jalon : M3. Mise en œuvre par tâche :
   - M3-T02b (nouvelle, insérée entre T02 et T03) : D1 à D8, D10 à D13 ;

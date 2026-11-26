@@ -19,7 +19,8 @@ Neuf tâches, dans cet ordre :
 |---|---|---|---|---|---|---|
 | 1 | M3-T01 | `pre-m3` : obligations datées « avant M3 » | S | aucune | aucun (préalable) | oui |
 | 2 | M3-T02 | `iac-toolchain` : ADR 0014, sonde du plan hors ligne, outils et miroir vérifiés, exécution confinée | M | T01, ADR 0014 | C1, C2 (socle) | oui |
-| 3 | M3-T03 | `validate-chain` : `internal/validate`, garde statique, parité avec `validate.sh`, `rempart check`, pack `policies/iac` | L | T02 | C1, C2 | oui |
+| 2b | M3-T02b | `tool-isolation` : ADR 0015, assistant de re-exécution, espaces de noms, arbre fermé, échec fermé | M | T02, ADR 0015 | C1, C2 (socle) | oui |
+| 3 | M3-T03 | `validate-chain` : `internal/validate`, garde statique, parité avec `validate.sh`, `rempart check`, pack `policies/iac` | L | T02, T02b | C1, C2 | oui |
 | 4 | M3-T04 | `modules-network` : réseau AWS, réseau Azure, groupe de VM Azure, VPN AWS et Azure | L | T03 | C1 | oui (groupée avec T05, Q9) |
 | 5 | M3-T05 | `modules-cluster` : EKS, AKS, amorçage ArgoCD, observabilité | L | T03 | C1 | oui (groupée) |
 | 6 | M3-T06 | `iacgen` : compilateur graphe vers composition, traduction des permissions, rendu, bundle | L | T04, T05 | C2 | oui |
@@ -286,10 +287,30 @@ Codes d'escalade : `module_missing`, `no_translation`, `equivalence_violation`, 
   6. `make -f Makefile verify-quick; echo rc=$?` : `rc=0` (sans outil IaC installé).
 - **Sécurité** : oui (T6, T8, T143).
 
+### M3-T02b `tool-isolation` : isolation des outils (ADR 0015)
+
+- **Objectif** : aucun outil de la chaîne ne voit les processus, fichiers, sockets, réseau ou terminal de son lanceur, d'un autre outil ou d'un autre tenant ; échec fermé (obligation (hg), T157).
+- **Dépend de** : T02 ; ADR 0015 accepté le 2026-11-26.
+- **Livrables** :
+  - `internal/validate/toolexec` : socle (lanceur non « dumpable » avec la bascule de F10, `Setsid`, `Pdeathsig` sur une goroutine verrouillée) ;
+  - assistant de re-exécution (`MaybeHelper`, descripteurs 3 et 4, poignée de main), capacités ambiantes de F11 ;
+  - espaces de noms de D3, arbre fermé de D5 par `pivot_root` (options verrouillées de F12), durcissement de D6, binaire scellé (`memfd` copié dans un tmpfs privé, (ht)) ;
+  - Landlock en renfort (D7) ;
+  - `Probe`, `ErrIsolationUnavailable`, `ErrIsolationSetup`, `Spec.WriteData`, `Spec.ReadOnly`, `Result.Isolation`, `Workspace.DataDir` ;
+  - `Toolchain.ReadOnlyRoots` ; chemins de l'environnement fournis par la chaîne d'outils ((hr)) ;
+  - règles `isolation-confined` et `toolexec-helper-first` ;
+  - correctif (ho) de `scripts/iac-tools.sh` ;
+  - `docs/SETUP.md`, section « Isolation des outils » ; proposition `docs/proposals/0014-ci-isolation-outils.md` (Q4) ;
+  - T8, T157, T161, T162 mises à jour, soumises à `security-reviewer`.
+- **Étapes ordonnées** (chacune un cycle tests puis impl) : 1 socle ; 2 assistant et espaces de noms ; 3 arbre de l'outil ; 4 Landlock ; 5 (ho) ; 6 documentation et revue (ADR 0015, section « Recommandation et ordre de mise en œuvre »).
+- **Tests clés** : les 11 `TestIsolation*`, `TestIsolationConfined`, `TestToolexecHelperFirst`, le sous-cas (ho) ; **test modifié** : `TestToolexecNoShell` (marqueurs dans `data/`).
+- **Acceptation** : vérifications 1 à 11 de l'ADR 0015.
+- **Sécurité** : oui (T3, T8, T143, T157, T161, T162).
+
 ### M3-T03 `validate-chain` : chaîne, garde statique, parité, `rempart check`, pack `iac`
 
 - **Objectif** : `internal/validate` produit, sur les mêmes sorties brutes, la même sortie que `scripts/validate.sh`, échoue fermé, n'exécute jamais un outil sur un arbre refusé ; premier pack de politiques sur le plan.
-- **Dépend de** : T02.
+- **Dépend de** : T02, T02b (ADR 0015 : aucun câblage de `toolexec` dans `rempart check` avant la revue PASS de T02b).
 - **Livrables** : `internal/validate/{static.go,normalize.go,chain.go}` et `internal/validate/domain` (D6, D7) ; `internal/plan` (`Decode`) ; `internal/policy` (`IaCInput`, `NewIaCInput`) et `schemas/policy/iac-input-v1.json` ; `opa.NewIaC()` (adaptateur généralisé par pack, D9) ; `policies/embed.go` (variable `IaC`) ; `policies/iac/*.rego` et leurs `_test.rego` (au moins 10 contrôles : entrée depuis `0.0.0.0/0` hors écouteur d'un équilibreur exposé, API de cluster publique hors sources du graphe, chiffrement au repos, rotation des clés, journaux de flux par réseau, journal d'audit du cluster, IAM sans joker d'action ni de ressource, VM sans IP publique, chiffrement des disques, comptes locaux AKS désactivés, étiquettes obligatoires) ; `Makefile` : `opa check` par pack avec son schéma ; `cmd/rempart check [--module] [--static] [--json] <dossier>` (codes 0, 1, 2) ; `scripts/validate.sh` et `normalize_findings.py` alignés (outil absent : finding critique, sévérité inconnue : critique, empreinte en netstrings, garde statique par `rempart check --static`) : **modification de skill signalée** ; `internal/validate/testdata/` (sorties brutes adverses, arbres `bad`, `good`, `forbidden-annotation`, `code-exec`) ; proposition `docs/proposals/0012-ci-outils-iac.md` (outils en CI par `scripts/iac-tools.sh`, sans cache).
 - **Tests clés (11)** : `TestNormalizeFailsClosed`, `TestStaticGateForbiddenAnnotations` (cinq annotations, trois styles de commentaire, casse, fichiers de configuration), `TestStaticGateRefusesCodeExecution` (`external`, `http`, provisioners, `terraform_data` à provisioner, fonctions de fichier, `terraform_remote_state`, `backend`, `cloud`, `.tofu`, surcharge, `.tf.json`), `TestStaticGateModuleSources` (`git::`, registre, `http`, `../`, plage de versions), `TestChainShortCircuit`, `TestChainUntrustedMessage` (C1, bidirectionnels, ANSI échappés ; 500 runes), `TestCheckCommand`, `TestPlanDecodeStrict`, `TestIaCInputHasNoFreeText`, `TestIaCPackMetadataComplete`, `TestIaCEveryControlHasOkAndKo` ; outils : `TestNormalizeParityWithScript` (même `findings.json`, empreinte et score que `normalize_findings.py`, lancé par `python3 -I`, sur 10 jeux bruts au moins), `TestChainOnFixtures`.
 - **Acceptation** :
@@ -459,6 +480,7 @@ Menaces nouvelles proposées (numéros provisoires, à confirmer par `security-r
 
 1. **M3-T01 `pre-m3`** (S) : (fk), (fl), (fd), (cf), durcissement T31 du `Makefile`, proposition CI 0011. En parallèle : ADR 0014 par `architect`.
 2. **M3-T02 `iac-toolchain`** (M) : sonde du plan hors ligne, acceptation de l'ADR 0014, verrou et script d'outils, miroir de providers, `toolexec`, `exec-confined`, `make iac-tools`, proposition harnais 0013.
+2b. **M3-T02b `tool-isolation`** (M) : ADR 0015 (accepté le 2026-11-26), socle du lanceur, assistant et espaces de noms, arbre fermé, Landlock, (ho), proposition CI 0014 ; revue sécurité PASS exigée avant tout câblage de `toolexec`.
 3. **M3-T03 `validate-chain`** (L) : garde statique, étages, normalisation, parité avec `validate.sh`, `rempart check`, `internal/plan`, pack `policies/iac`, proposition CI 0012.
 4. **M3-T04 `modules-network`** (L) : `aws-network`, `azure-network`, `azure-vm-group`, `vpn-aws-azure`, exceptions, `make module-test`.
 5. **M3-T05 `modules-cluster`** (L) : `aws-eks`, `azure-aks`, `argocd-bootstrap`, `observability-stack` ; revue sécurité groupée T04 et T05.
@@ -478,6 +500,9 @@ Chaque tâche : plan court, phase tests (tests rouges pour la bonne raison), pha
 | H-CI-1 | humain | fin de T01 | Appliquer la proposition 0011 (lot CI daté avant M3). |
 | H-harness-M3 | humain | fin de T02 | Appliquer la proposition 0013 (permissions « ask » et `deny`, gardes d'écriture, CODEOWNERS). |
 | H-tools-lock | humain | fin de T02 | Relire `scripts/iac-tools.lock.json` et le verrou des providers : versions, sommes, dates de publication, empreinte de clé de signature. |
+| H0-M3.3 | humain | avant la phase tests de T02b | Accepter l'ADR 0015 (fait le 2026-11-26, « Oui a tout »). |
+| H-CI-3 | humain | fin de T02b | Appliquer la proposition 0014 (levée de la restriction AppArmor sur le runner éphémère, `REMPART_REQUIRE_SANDBOX=1`). |
+| H-isolation-probe | humain | avant le premier `rempart check` avec outils sur le poste (fin de T03) | Lancer les commandes de l'hypothèse H2 de l'ADR 0015 sur le poste WSL2 et coller la sortie. |
 | H-CI-2 | humain | fin de T03 | Appliquer la proposition 0012 (outils IaC en CI) ; sans elle, `make verify` en CI échoue fermé sur les tests d'intégration IaC. |
 | H-exceptions | humain | fin de T04 et de T05 | Approuver ou refuser chaque entrée de `modules/scanner-exceptions.json` (revue de PR). |
 | H-sandbox-accounts | humain | avant la fin de T06 | Comptes de bac à sable AWS et Azure dédiés, alertes de budget, régions restreintes à `eu-west-3` et `francecentral` ; identité en lecture pour le plan (AWS `ReadOnlyAccess`, Azure `Reader`) ; identité d'écriture sous MFA réservée à un apply futur ; rien dans le dépôt ni dans la session de l'agent. |
