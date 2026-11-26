@@ -507,7 +507,7 @@ Sauf mention, dans la session de l'agent.
 5. Sans mécanisme, sur toute machine et sans variable : `go test ./internal/validate/toolexec/ -run TestIsolationFailsClosed -v 2>&1 | grep -c '^--- PASS: TestIsolationFailsClosed '` : `1`.
 6. `go test ./internal/archtest/ -run 'Test(ExecConfined|IsolationConfined|ToolexecHelperFirst)$' -v 2>&1 | grep -Ec -- '^--- PASS: Test(ExecConfined|IsolationConfined|ToolexecHelperFirst) '` : `3`.
 7. Avec les outils, OpenTofu dans l'isolation complète : `REMPART_REQUIRE_SANDBOX=1 go test -tags=integration ./internal/validate/... -run 'Test(OfflineInitFromMirror|OfflinePlanProbe|OfflineInitRefusesPlantedPackage)$' -v 2>&1 | grep -Ec -- '^--- PASS: Test(OfflineInitFromMirror|OfflinePlanProbe|OfflineInitRefusesPlantedPackage) '` : `3`.
-8. (ho) : `go test ./internal/archtest/ -run TestIaCToolsScriptRefusesTraversal -v 2>&1 | grep -Ec -- '^[[:space:]]*--- PASS: TestIaCToolsScriptRefusesTraversal/planted_link_after_makedirs '` : `1`.
+8. (ho) : `go test ./internal/archtest/ -run TestIaCToolsScriptPlantedLink -v 2>&1 | grep -c '^--- PASS: TestIaCToolsScriptPlantedLink '` : `1`. Écart de M3-T02b : un test à part, plutôt qu'un sous-cas de `TestIaCToolsScriptRefusesTraversal`, dont le contrôle porte sur un verrou refusé alors que celui-ci est valide.
 9. Aucun module ajouté (D10) : `go list -m all | wc -l` rend la valeur consignée dans `docs/STATUS.md` au début de la tâche.
 10. `test -f docs/proposals/0014-ci-isolation-outils.md && grep -c 'REMPART_REQUIRE_SANDBOX' docs/SETUP.md` : au moins `1`.
 11. `make -f Makefile verify-quick; echo rc=$?` : `rc=0`, sans outil IaC installé.

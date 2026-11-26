@@ -360,6 +360,15 @@ func LoadToolchain(lock []byte, cacheDir string) (*Toolchain, error) {
 		}
 		tc.providers[p.Source] = p
 	}
+	// The mirror-only CLI configuration, read-only in the private copy
+	// (obligation (hr)): tofu reads no other.
+	cfg, err := TofuCLIConfig(tc.MirrorDir())
+	if err != nil {
+		return fail(err)
+	}
+	if err := os.WriteFile(tc.cliConfigPath(), cfg, 0o400); err != nil {
+		return fail(fmt.Errorf("validate: CLI configuration: %w", err))
+	}
 	return tc, nil
 }
 
@@ -368,6 +377,23 @@ func (tc *Toolchain) Tool(name string) (toolexec.Tool, bool) {
 	t, ok := tc.tools[name]
 	return t, ok
 }
+
+// ReadOnlyRoots is the private copy (binaries, plugins, mirror, CLI
+// configuration), for toolexec.Spec.ReadOnly (ADR 0015 D11).
+func (tc *Toolchain) ReadOnlyRoots() []string { return []string{tc.private} }
+
+// cliConfigPath is the CLI configuration of OpenTofu in the private copy.
+func (tc *Toolchain) cliConfigPath() string { return filepath.Join(tc.private, "tofu.tfrc") }
+
+// TofuEnv is the environment of an OpenTofu run: the CLI configuration of
+// the private copy, mirror only, and no checkpoint (obligation (hr)).
+func (tc *Toolchain) TofuEnv() []string {
+	return []string{"TF_CLI_CONFIG_FILE=" + tc.cliConfigPath(), "CHECKPOINT_DISABLE=1", "TF_IN_AUTOMATION=1"}
+}
+
+// TFLintEnv is the environment of a tflint run: the private copy of the
+// rulesets (obligation (hr)).
+func (tc *Toolchain) TFLintEnv() []string { return []string{"TFLINT_PLUGIN_DIR=" + tc.PluginDir()} }
 
 // PluginDir is the private copy of the tflint plugins (TFLINT_PLUGIN_DIR).
 func (tc *Toolchain) PluginDir() string { return filepath.Join(tc.private, "plugins") }

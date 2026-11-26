@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -38,17 +41,43 @@ func workspace(t *testing.T) *Workspace {
 	return ws
 }
 
+// spec is a run of tool in a fresh workspace, data/ writable: since ADR 0015
+// the tree is read-only for every tool, so a marker goes to data/.
 func spec(t *testing.T, tool Tool, args ...string) Spec {
 	t.Helper()
-	return Spec{Tool: tool, Args: args, Workspace: workspace(t), Timeout: 10 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20}
+	return Spec{Tool: tool, Args: args, Workspace: workspace(t), WriteData: true, Timeout: 10 * time.Second, MaxStdout: 1 << 20, MaxStderr: 1 << 20}
+}
+
+// hostPID finds the host PID of the running process whose command line holds
+// token, for a test that kills a tool from outside its namespace.
+func hostPID(t *testing.T, token string) int {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		entries, _ := os.ReadDir("/proc")
+		for _, e := range entries {
+			pid, err := strconv.Atoi(e.Name())
+			if err != nil {
+				continue
+			}
+			if b, err := os.ReadFile("/proc/" + e.Name() + "/cmdline"); err == nil && strings.Contains(string(b), token) {
+				return pid
+			}
+		}
+	}
+	t.Fatalf("no process with %q in its command line", token)
+	return 0
 }
 
 // TestToolexecNoShell proves T8 (D6): the arguments reach the tool as they
 // are, one by one, never through a shell: no separator, substitution, glob or
 // quote is interpreted, and nothing is run on the side.
 func TestToolexecNoShell(t *testing.T) {
+	requireIsolation(t)
 	tool := fakeTool(t, `for a in "$@"; do printf '%s\n' "$a"; done`)
-	s := spec(t, tool, "a;b", "$(/usr/bin/touch PWNED)", "`/usr/bin/touch PWNED2`", `"quoted"`, "two words", "*", "x && /usr/bin/touch PWNED3")
+	s := spec(t, tool)
+	// Markers in data/, the only directory a tool can write (ADR 0015 D5).
+	d := s.Workspace.DataDir()
+	s.Args = []string{"a;b", "$(/usr/bin/touch " + d + "/PWNED)", "`/usr/bin/touch " + d + "/PWNED2`", `"quoted"`, "two words", "*", "x && /usr/bin/touch " + d + "/PWNED3"}
 	res, err := Run(context.Background(), s)
 	if err != nil || res.ExitCode != 0 {
 		t.Fatalf("Run = %+v, %v", res, err)
@@ -58,9 +87,14 @@ func TestToolexecNoShell(t *testing.T) {
 		t.Fatalf("arguments seen by the tool = %q, want %q", got, s.Args)
 	}
 	for _, f := range []string{"PWNED", "PWNED2", "PWNED3"} {
-		if _, err := os.Stat(filepath.Join(s.Workspace.Dir(), f)); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s exists in the working directory: a shell interpreted an argument", f)
+		if _, err := os.Stat(filepath.Join(d, f)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s exists in data/: a shell interpreted an argument", f)
 		}
+	}
+	w := spec(t, fakeTool(t, "/usr/bin/touch "+d+"/WITNESS"))
+	w.Workspace = s.Workspace
+	if code := isolated(t, w); code != 0 {
+		t.Fatalf("witness: a tool that writes in data/ fails (exit %d): the markers would prove nothing", code)
 	}
 	t.Run("exit_code", func(t *testing.T) {
 		res, err := Run(context.Background(), spec(t, fakeTool(t, "exit 3")))
@@ -74,11 +108,21 @@ func TestToolexecNoShell(t *testing.T) {
 		}
 	})
 	// Obligation (hi): a tool killed by a signal, outside a timeout or an
-	// output bound, is an error, never an exit code of -1.
+	// output bound, is an error, never an exit code of -1. The tool is PID 1
+	// of its namespace, which ignores a signal sent from inside it: the test
+	// kills it from the host.
 	t.Run("killed_by_a_signal", func(t *testing.T) {
-		res, err := Run(context.Background(), spec(t, fakeTool(t, "kill -KILL $$")))
-		if !errors.Is(err, ErrKilled) {
-			t.Fatalf("Run = %+v, %v; want ErrKilled", res, err)
+		token := fmt.Sprintf("kill-me-%d", time.Now().UnixNano())
+		done := make(chan error, 1)
+		go func() {
+			_, err := Run(context.Background(), spec(t, fakeTool(t, "/usr/bin/sleep 30"), token))
+			done <- err
+		}()
+		if err := syscall.Kill(hostPID(t, token), syscall.SIGKILL); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-done; !errors.Is(err, ErrKilled) {
+			t.Fatalf("Run = %v; want ErrKilled", err)
 		}
 	})
 }
@@ -92,6 +136,7 @@ func TestToolexecNoShell(t *testing.T) {
 // tree, the same for every run of the workspace. Spec.Env admits only the
 // names of the allow-list, the AWS keys only as FAKE values.
 func TestToolexecEnvBuilt(t *testing.T) {
+	requireIsolation(t)
 	for k, v := range map[string]string{
 		"REMPART_CANARY": "canary-7c1f", "AWS_SECRET_ACCESS_KEY": "canary-aws", "ARM_CLIENT_SECRET": "canary-arm",
 		"TF_LOG": "TRACE", "TF_CLI_CONFIG_FILE": "/inherited.tfrc", "KUBECONFIG": "/inherited/kubeconfig",
@@ -102,9 +147,13 @@ func TestToolexecEnvBuilt(t *testing.T) {
 	}
 	tool := fakeTool(t, `/usr/bin/env; printf 'home=%s\n' "$HOME"; test -d "$HOME" && test -w "$HOME" && printf 'home_ok\n'; test -d "$TMPDIR" && printf 'tmp_ok\n'`)
 	s := spec(t, tool)
+	// A path named by the environment is under a read-only entry of the tree
+	// of the tool (ADR 0015 D11, obligation (hr)).
+	cfg := t.TempDir()
+	s.ReadOnly = []string{cfg}
 	s.Env = []string{
-		"TF_CLI_CONFIG_FILE=/rempart/mirror.tfrc", "CHECKPOINT_DISABLE=1", "TF_IN_AUTOMATION=1",
-		"TFLINT_PLUGIN_DIR=/rempart/plugins", "TF_VAR_region=eu-west-3",
+		"TF_CLI_CONFIG_FILE=" + cfg + "/mirror.tfrc", "CHECKPOINT_DISABLE=1", "TF_IN_AUTOMATION=1",
+		"TFLINT_PLUGIN_DIR=" + cfg + "/plugins", "TF_VAR_region=eu-west-3",
 		"AWS_ACCESS_KEY_ID=FAKE-OFFLINE-PLAN", "AWS_SECRET_ACCESS_KEY=FAKE-OFFLINE-PLAN",
 	}
 	res, err := Run(context.Background(), s)
@@ -174,9 +223,36 @@ func TestToolexecEnvBuilt(t *testing.T) {
 		"CHECKPOINT_DISABLE=0", "TF_IN_AUTOMATION=yes", "TF_VAR_Region=x", "TF_VAR_=x",
 	} {
 		s := spec(t, tool)
+		s.ReadOnly = []string{cfg}
 		s.Env = []string{bad}
 		if _, err := Run(context.Background(), s); !errors.Is(err, ErrSpec) {
 			t.Errorf("Spec.Env %q: Run = %v, want ErrSpec", bad, err)
+		}
+	}
+	// ADR 0015 D11, obligation (hr): a path of the environment outside every
+	// read-only entry, and a tofu run without its CLI configuration, are refused.
+	uncovered := spec(t, tool)
+	uncovered.Env = []string{"TF_CLI_CONFIG_FILE=" + cfg + "/mirror.tfrc"}
+	if _, err := Run(context.Background(), uncovered); !errors.Is(err, ErrSpec) {
+		t.Errorf("TF_CLI_CONFIG_FILE outside Spec.ReadOnly: Run = %v, want ErrSpec", err)
+	}
+	tofu := spec(t, Tool{Name: "tofu", Version: tool.Version, Path: tool.Path, SHA256: tool.SHA256})
+	if _, err := Run(context.Background(), tofu); !errors.Is(err, ErrSpec) {
+		t.Errorf("tofu without TF_CLI_CONFIG_FILE: Run = %v, want ErrSpec", err)
+	}
+	for _, bad := range []func(ro Spec) []string{
+		func(Spec) []string { return []string{"/"} },
+		func(Spec) []string { return []string{os.TempDir()} },
+		func(Spec) []string { return []string{"relative"} },
+		func(Spec) []string { return []string{"/etc"} },
+		func(ro Spec) []string { return []string{filepath.Dir(ro.Workspace.Dir())} }, // the workspace itself
+		func(ro Spec) []string { return []string{ro.Workspace.DataDir()} },           // inside the workspace
+		func(Spec) []string { return []string{cfg, filepath.Dir(cfg)} },              // nested entries
+	} {
+		ro := spec(t, tool)
+		ro.ReadOnly = bad(ro)
+		if _, err := Run(context.Background(), ro); !errors.Is(err, ErrSpec) {
+			t.Errorf("Spec.ReadOnly %q: Run = %v, want ErrSpec", ro.ReadOnly, err)
 		}
 	}
 }
@@ -319,6 +395,7 @@ func TestToolexecChecksum(t *testing.T) {
 			t.Fatalf("Run on a binary of another user = %v, want ErrSpec", err)
 		}
 	})
+	requireIsolation(t)
 	if res, err := Run(context.Background(), spec(t, good)); err != nil || res.ExitCode != 0 {
 		t.Fatalf("Run on the locked binary = %+v, %v", res, err)
 	}
@@ -329,9 +406,12 @@ func TestToolexecChecksum(t *testing.T) {
 // background never writes its marker); an output past its bound is an error,
 // never a truncated output returned as if complete.
 func TestToolexecBounds(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "child-survived")
+	requireIsolation(t)
+	ws := workspace(t)
+	marker := filepath.Join(ws.DataDir(), "child-survived")
 	tool := fakeTool(t, "(/usr/bin/sleep 2; /usr/bin/touch "+marker+") &\n/usr/bin/sleep 30")
 	s := spec(t, tool)
+	s.Workspace = ws
 	s.Timeout = 300 * time.Millisecond
 	start := time.Now()
 	res, err := Run(context.Background(), s)

@@ -1,0 +1,103 @@
+diff --git a/.github/workflows/verify.yml b/.github/workflows/verify.yml
+index e4f9241..2a9c7c5 100644
+--- a/.github/workflows/verify.yml
++++ b/.github/workflows/verify.yml
+@@ -23,6 +23,8 @@ jobs:
+       contents: read
+     env:
+       GOTOOLCHAIN: local
++      # ADR 0015 (H-CI-3): the isolation tests of the tools fail instead of skipping.
++      REMPART_REQUIRE_SANDBOX: "1"
+     steps:
+       - name: Checkout
+         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+@@ -36,6 +38,14 @@ jobs:
+           cache: false
+       - name: Install golangci-lint
+         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
++      - name: Tool isolation prerequisites (ADR 0015, H-CI-3)
++        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor;
++        # the runner is ephemeral, the restriction is lifted for this job only.
++        run: |
++          sysctl kernel.apparmor_restrict_unprivileged_userns || true
++          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
++          unshare -U -r -n -p -f --mount-proc true; echo "unshare rc=$?"
++          tr , '\n' < /sys/kernel/security/lsm | grep -cx landlock || true
+       - name: Docker preflight
+         run: make -f Makefile dev-preflight
+       - name: make verify
+diff --git a/internal/archtest/ci_test.go b/internal/archtest/ci_test.go
+index 2d85df5..9afc1fc 100644
+--- a/internal/archtest/ci_test.go
++++ b/internal/archtest/ci_test.go
+@@ -50,6 +50,8 @@ jobs:
+       contents: read
+     env:
+       GOTOOLCHAIN: local
++      # ADR 0015 (H-CI-3): the isolation tests of the tools fail instead of skipping.
++      REMPART_REQUIRE_SANDBOX: "1"
+     steps:
+       - name: Checkout
+         uses: actions/checkout@` + ciSHAA + ` # v5.0.0
+@@ -63,6 +65,14 @@ jobs:
+           cache: false
+       - name: Install golangci-lint
+         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
++      - name: Tool isolation prerequisites (ADR 0015, H-CI-3)
++        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor;
++        # the runner is ephemeral, the restriction is lifted for this job only.
++        run: |
++          sysctl kernel.apparmor_restrict_unprivileged_userns || true
++          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
++          unshare -U -r -n -p -f --mount-proc true; echo "unshare rc=$?"
++          tr , '\n' < /sys/kernel/security/lsm | grep -cx landlock || true
+       - name: Docker preflight
+         run: make -f Makefile dev-preflight
+       - name: make verify
+@@ -165,6 +175,13 @@ func checkCIPinned(wf ciWorkflow, src string) (p problemList) {
+ 	return p
+ }
+ 
++// ciIsolationStep lifts the AppArmor restriction of Ubuntu 24.04 on
++// unprivileged user namespaces, on the ephemeral runner (ADR 0015, H-CI-3).
++const ciIsolationStep = `sysctl kernel.apparmor_restrict_unprivileged_userns || true
++sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
++unshare -U -r -n -p -f --mount-proc true; echo "unshare rc=$?"
++tr , '\n' < /sys/kernel/security/lsm | grep -cx landlock || true`
++
+ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
+ 	j, ok := wf.Jobs["verify"]
+ 	if len(wf.Jobs) != 1 || !ok || wf.Name != "verify" || j.Name != "verify" {
+@@ -173,12 +190,13 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
+ 	if j.RunsOn != "ubuntu-24.04" || j.Timeout < 1 || j.Timeout > 60 {
+ 		p.addf("runs-on %q timeout-minutes %d", j.RunsOn, j.Timeout)
+ 	}
+-	if !strings.Contains(wf.Concurrency.Group, ciGroup) || !maps.Equal(j.Env, map[string]string{"GOTOOLCHAIN": "local"}) {
++	if !strings.Contains(wf.Concurrency.Group, ciGroup) || !maps.Equal(j.Env, map[string]string{"GOTOOLCHAIN": "local", "REMPART_REQUIRE_SANDBOX": "1"}) {
+ 		p.addf("concurrency group %q or job env %v", wf.Concurrency.Group, j.Env)
+ 	}
+ 	want := []string{
+ 		"uses:actions/checkout", "uses:actions/setup-go",
+ 		"run:go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@" + golangci,
++		"run:" + ciIsolationStep,
+ 		"run:make -f Makefile dev-preflight", "run:make -f Makefile verify", "run:make -f Makefile dev-down",
+ 	}
+ 	var got []string
+@@ -572,7 +590,7 @@ func TestParseCIWorkflowDecoding(t *testing.T) {
+ 			t.Errorf("cancel-in-progress %q", wf.Concurrency.Cancel)
+ 		}
+ 		j := wf.Jobs["verify"]
+-		if len(j.Steps) != 6 || j.Timeout != 45 || j.RunsOn != "ubuntu-24.04" {
++		if len(j.Steps) != 7 || j.Timeout != 45 || j.RunsOn != "ubuntu-24.04" {
+ 			t.Fatalf("job %+v", j)
+ 		}
+ 		// 0 and false decode into string fields as their literal text.
+@@ -581,7 +599,7 @@ func TestParseCIWorkflowDecoding(t *testing.T) {
+ 			t.Errorf("with %v %v", j.Steps[0].With, j.Steps[1].With)
+ 		}
+ 		// Untagged fields match their lowercased name.
+-		if s := j.Steps[5]; s.Name != "Stop the dev stack" || s.If != "always()" || s.Run == "" || j.Steps[0].Uses == "" {
++		if s := j.Steps[6]; s.Name != "Stop the dev stack" || s.If != "always()" || s.Run == "" || j.Steps[0].Uses == "" {
+ 			t.Errorf("untagged step fields %+v", s)
+ 		}
+ 		expectProblems(t, allCIChecks(wf, validCIWorkflow), nil)

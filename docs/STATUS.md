@@ -713,6 +713,42 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
     M3-T02b ne commence pas avant cette acceptation, et M3-T03 en dépend.
 - 2026-11-26 : **ADR 0015 accepté** par l'humain (« Oui a tout » : Q1 à Q6 avec la recommandation de l'agent). M3-T02b ajoutée au plan (synthèse, fiche en section 5, liste ordonnée, étapes humaines H0-M3.3 faite, H-CI-3, H-isolation-probe) ; M3-T03 en dépend. Amendement 8 de l'ADR 0014 (changements de D6, D8, D15, D18 et du risque résiduel 2).
 
+- 2026-11-26 : **M3-T02b `tool-isolation`** (ADR 0015 accepté ; fiche `docs/plans/M3-overview.md` ; mode allégé ; deux cycles tests puis impl, avec deux retours en phase tests pour des erreurs de test, déclarés ci-dessous).
+  - `internal/validate/toolexec` :
+    - `isolation.go` : `Probe`, `Isolation`, `LevelFull`, `ErrIsolationUnavailable`, `ErrIsolationSetup` ;
+    - `helper.go` : copie scellée du binaire (`memfd`), assistant de re-exécution (`MaybeHelper`, descripteurs 3, 4 et 5, poignée de main), espaces de noms de D3, arbre fermé de D5 par `pivot_root`, durcissement de D6, couche Landlock de D7 ;
+    - `toolexec.go` : `Spec.WriteData`, `Spec.ReadOnly` avec les contrôles de D11, `Result.Isolation`, `Workspace.DataDir`, `path/` en 0500 ;
+    - aucune contrainte de construction (règle `no-build-constraint`) ; le numéro de `memfd_create` est choisi par `runtime.GOARCH`, et une autre architecture échoue fermé.
+  - `internal/validate/toolchain.go` : `ReadOnlyRoots`, `TofuEnv` (configuration CLI écrite en lecture seule dans la copie privée), `TFLintEnv` (obligation (hr)).
+  - Règles `isolation-confined` (`TestIsolationConfined`) et `toolexec-helper-first` (`TestToolexecHelperFirst`) ; `TestMain` de `validate` et de `toolexec` commencent par `MaybeHelper`.
+  - `scripts/iac-tools.sh` : contrôle d'appartenance au cache avant toute création, répertoires créés composant par composant en `O_NOFOLLOW` (obligation (ho), `TestIaCToolsScriptPlantedLink`).
+  - Proposition `docs/proposals/0014-ci-isolation-outils.md` et son patch :
+    - levée de la restriction AppArmor sur le runner et `REMPART_REQUIRE_SANDBOX=1` ;
+    - le patch porte aussi `internal/archtest/ci_test.go`, qui fige la forme du job ;
+    - vérifié sur une copie de travail jetable patchée (`TestCI*` vert).
+  - `docs/SETUP.md`, section « Isolation des outils » ; modèle de menace : T8 et T157 mises à jour, T161 et T162 insérées.
+  - **Tests modifiés** :
+    - `TestToolexecNoShell` : marqueurs dans `data/`, avec un témoin d'écriture ; l'outil tué par un signal l'est depuis l'hôte, car un PID 1 ignore un signal venu de son espace ;
+    - `TestToolexecEnvBuilt` : chemins de l'environnement sous `Spec.ReadOnly`, contrôles de D11 ;
+    - `TestToolexecBounds` : marqueur dans `data/` ;
+    - `TestToolexec*` : passent par `requireIsolation` ;
+    - tests d'intégration : `Workspace`, `TofuEnv`, plan dans `data/` ;
+    - `TestIsolationHidesProcesses` : le témoin de `/proc/<pid>/environ` vise la victime. Celui du lanceur, non « dumpable », sautait en uid 65534 : la protection tenait, le témoin ne pouvait la montrer.
+  - **Retours en phase tests** : un cas de `TestToolexecEnvBuilt` visait l'espace de travail d'une autre spec ; une variable du test d'intégration masquait un paramètre.
+  - **Écart** : critère 8 porté par `TestIaCToolsScriptPlantedLink`, et non par un sous-cas de `TestIaCToolsScriptRefusesTraversal` (ADR 0015 corrigé).
+  - **Preuves** (critères 1 à 11 de l'ADR 0015, dans la session) :
+    - `11` `TestIsolation*`, `0` saut, `5` `TestToolexec*` (`REMPART_REQUIRE_SANDBOX=1`) ;
+    - en uid 65534 par `setpriv` : `11` réussis, `0` échec ou saut ;
+    - `TestIsolationFailsClosed` `1` ; `3` archtests ;
+    - `3` tests d'intégration hors ligne avec OpenTofu dans l'isolation complète, Landlock compris ;
+    - `TestIaCToolsScriptPlantedLink` `1` ; aucun module ajouté (`go.mod` et `go.sum` inchangés) ; proposition 0014 et `REMPART_REQUIRE_SANDBOX` dans `docs/SETUP.md` ;
+    - `make -f Makefile verify-quick` rc=0 ; `golangci-lint` 0 constat, `integration` compris.
+  - Obligations soldées sous réserve de la revue : (hg), (hn), (ho), (hr), (ht) ; (hq) en partie (`path/` en 0500 ; arbre en lecture seule pour tout outil par D5 ; `WriteFile` limité à la liste de D7 et sorties hors de l'arbre restent à M3-T03).
+  - **Étapes humaines** :
+    - H-CI-3 : appliquer la proposition 0014 ;
+    - H-isolation-probe : commandes de `docs/SETUP.md` sur le poste WSL2, avant le premier `rempart check` avec outils.
+  - Revue sécurité : en cours (PASS exigé avant tout câblage de `toolexec` dans `rempart check`).
+
 ## En cours
 **M1 démarré.** Décisions de l'humain (2026-09-30) : Q2 à Q5 selon les recommandations de `docs/plans/M1-overview.md` ; Q1 : faux LLM scripté en CI, **plus vrais LLM multi-fournisseurs** (Claude, OpenAI, DeepSeek, Qwen, open-weight auto-hébergés) en exécution manuelle, avec refonte du rédacteur avant tout appel réel, adaptateur compatible OpenAI et politique des fournisseurs par ADR (recommandation de l'agent, à confirmer par l'humain avant ces tâches : evals synthétiques vers tout fournisseur, données client seulement vers un fournisseur traitant dans l'UE ou auto-hébergé). Plan amendé en conséquence. **Attente humaine** : accepter l'ADR 0004 (avant M1-T01) et l'ADR 0005, poser le tag `m1-start`, fournir au moins une clé API avant les tâches LLM réel. Aucune tâche en cours. ADR 0004, 0005 et 0006 acceptés par l'humain (`885a556`), tag `m1-start` posé. Prochaine tâche : M1-T02 `codec-replay`, précédée de l'obligation (ct). **Skill `intent-to-spec` modifié en M1-T03** (note D2 : `tenant_id` du scénario de référence invalide, `internal/intent/testdata/reference-ir.json` fait foi), à relire par l'humain. **Mode accéléré** (humain, 2026-09-30, « ça prend bcp de temps ») : seuls les constats critiques ou hauts de la revue sécurité relancent un cycle ; les constats moyens et bas deviennent des obligations datées pour M1 ; une seule campagne de mutations par tâche ; garde-fous inchangés (TDD, revue, acceptation, baseline humaine). **Périmètre réduit de M0-T23** (humain, 2026-09-30, « fais seulement le nécessaire ») : les 7 tests de la fiche seulement (plus les adaptations indispensables de `internal/archtest`), une mutation par test ; l'étape A du plan (obligations (s) à (w) et (y) de M0-T22 sur `internal/evals`) est reportée à M1. **Skill `loop-engineering/references/temporal-loop-skeleton.md` modifié en M0-T19d et M0-T20, à relire.** Rappel des décisions de M0-T19c (section 11 de son plan) retenues sur délégation de l'humain : (1) vérificateur factice réservé aux tests, même en `-dev` : T20 enregistre dans `make demo` un vérificateur qui refuse tout (issue `timed_out`) ; (2) en T19d, `Author` et le délai d'approbation viennent de l'entrée, `Author` restant une identité déclarée jusqu'à M4 ; (3) T19d : `func Spec() loops.LoopSpec` renvoyant un littéral constant, littéral `loops.ApprovalRequest` écrit dans l'appel ; (4) faux positifs acceptés (`internal/archtest` exempté de la règle des chaînes, import `.` interdit partout). Décisions de M0-T19b : Décisions de la section 10 du plan retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes dans le sens le plus strict, réversibles : (1) signal d'approbation admis seulement sous forme canonique, octets du hash et de la signature `[A-Za-z0-9+/=._:-@]` (plus strict que D2 de M0-T15, à confirmer avant M4 : une signature JSON ou PEM serait refusée) ; (2) charge trop grosse : `InvalidLoopSpec` avant toute activité ; (3) échec du proposeur sans `ProposeFailure` non repris (l'adaptateur LLM de T20 doit toujours le renvoyer après un appel facturé) ; (4) obligation (m) couverte par un critère statique en M0, test de rejeu d'historique en M1 ; (5) exemption du décodeur JSON retirée de `workflowcheck.config.yaml` en T19c ; (6) noms de spécification bornés (64 octets, jeu fermé). Amendement A3 retenu sur délégation de l'humain : M0-T19 découpée en T19a à T19d, M0 passe à 22 tâches (`docs/plans/M0-overview.md`, section 0 bis). A1 prime sur la fiche : pas de `ContinueAsNew` en M0. Décisions humaines ouvertes (section 13 du plan) : (1) relire A3 ; (3) liste d'admission ASCII et français pour les prompts ; (4) avant T20, câblage du vérificateur factice (étiquette de build avec ADR, binaire de développement distinct, ou vérificateur qui refuse tout) ; (5) avant T20, `-llm=anthropic` refusé en M0 sauf décision contraire ; (6) forme canonique du signal d'approbation en T19b, à confirmer avant M4.
 
@@ -1856,3 +1892,25 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-26 21:47 [harnais] PHASE FREE (discipline TDD suspendue) : lot des obligations avant M3-T03 terminé, revue sécurité PASS
 
 - 2026-11-26 21:47 [harnais] phase : tests -> free
+
+- 2026-11-26 22:42 [harnais] phase : free -> tests
+
+- 2026-11-26 22:47 [harnais] phase : tests -> impl
+
+- 2026-11-26 22:51 [harnais] RETOUR EN PHASE TESTS depuis impl : test bug in TestToolexecEnvBuilt: the ancestor case used the workspace of another spec; implementation of cycle A otherwise green
+
+- 2026-11-26 22:51 [harnais] phase : impl -> tests
+
+- 2026-11-26 22:51 [harnais] phase : tests -> impl
+
+- 2026-11-26 22:52 [harnais] RETOUR EN PHASE TESTS depuis impl : compile error in the new integration test (parameter p shadows the decoded plan); implementation unchanged
+
+- 2026-11-26 22:52 [harnais] phase : impl -> tests
+
+- 2026-11-26 22:54 [harnais] phase : tests -> impl
+
+- 2026-11-26 22:57 [harnais] RETOUR EN PHASE TESTS depuis impl : cycle B tests (Landlock layer, (ho)) and the witness of TestIsolationHidesProcesses on the victim, not the non-dumpable launcher (skipped as uid 65534)
+
+- 2026-11-26 22:57 [harnais] phase : impl -> tests
+
+- 2026-11-26 22:58 [harnais] phase : tests -> impl

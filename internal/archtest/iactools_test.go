@@ -572,6 +572,38 @@ func TestIaCToolsScriptRefusesTraversal(t *testing.T) {
 	}
 }
 
+// TestIaCToolsScriptPlantedLink proves obligation (ho) (ADR 0015 D13): a link
+// planted in the cache (by a process of the same uid) that leads out of it
+// stops the install before any directory is created through it.
+func TestIaCToolsScriptPlantedLink(t *testing.T) {
+	archive := iacZip(t, "tofu", []byte("binary"))
+	tool := map[string]any{
+		"name": "tofu", "kind": "tool", "version": "1.13.2", "published": "2026-10-21",
+		"url":    "https://github.com/opentofu/opentofu/releases/download/v1.13.2/tofu_1.13.2_linux_amd64.zip",
+		"sha256": iacSum(archive), "archive": "zip", "binary": "tofu", "binary_sha256": iacSum([]byte("binary")), "signature": iacSignature(),
+	}
+	lock := map[string]any{
+		"lock_version": 1, "date": "2026-11-26", "min_age_days": 14, "platform": "linux_amd64",
+		"hosts": []any{"github.com", "releases.hashicorp.com"}, "tools": []any{tool}, "providers": []any{},
+	}
+	outside := t.TempDir()
+	res, _, _ := iacScriptRun(t, lock, func(cache string) {
+		iacSeed(t, cache, "dl/"+iacSum(archive)+"/tofu_1.13.2_linux_amd64.zip", archive)
+		if err := os.MkdirAll(filepath.Join(cache, "tools"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(cache, "tools", "tofu")); err != nil {
+			t.Fatal(err)
+		}
+	}, "install")
+	if res.code != 2 {
+		t.Errorf("install through a planted link: exit %d, want 2\nstdout: %s\nstderr: %s", res.code, res.stdout, res.stderr)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("the install created %d entries through the planted link, out of the cache (obligation (ho))", len(entries))
+	}
+}
+
 // TestIaCToolsScriptVerifyMirror proves T156 on scripts/iac-tools.sh verify:
 // a mirror holding exactly the locked zip, with its h1, is conforming; an
 // entry the lock does not name (an unpacked package, another version), or a

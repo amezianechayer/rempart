@@ -2,23 +2,18 @@
 // (ADR 0014 D6, rule exec-confined, threat T8): no shell, a built
 // environment from an allow-list, a workspace created by Rempart, a checksum
 // checked right before the run on a binary no one else can change, a timeout
-// that kills the whole process group, bounded outputs.
-//
-// Residue (T157, obligation (hg)): the tool runs under the uid of its
-// launcher, in the same namespaces; it is not isolated from it.
+// that kills the tool and all its descendants, bounded outputs. Every run is
+// isolated (ADR 0015, T157): new namespaces, a closed read-only tree, no
+// network, no capability; without the full isolation nothing runs.
 package toolexec
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -49,12 +44,18 @@ type Tool struct{ Name, Version, Path, SHA256 string }
 
 // Spec is one run. Env holds NAME=value entries added to the built
 // environment, under the allow-list of envRules (obligation (hf)); the forced
-// variables cannot be overridden. The tool runs in the tree of Workspace.
+// variables cannot be overridden; a path it names (TF_CLI_CONFIG_FILE,
+// TFLINT_PLUGIN_DIR) is under an entry of ReadOnly (ADR 0015 D11). The tool
+// runs in the tree of Workspace, read-only; WriteData makes data/ writable
+// (OpenTofu runs only); ReadOnly lists extra read-only directories of the
+// tree of the tool (the private copy of the toolchain).
 type Spec struct {
 	Tool                 Tool
 	Args                 []string
 	Workspace            *Workspace
 	Env                  []string
+	WriteData            bool
+	ReadOnly             []string
 	Timeout              time.Duration
 	MaxStdout, MaxStderr int64
 }
@@ -83,6 +84,11 @@ func NewWorkspace() (*Workspace, error) {
 			return nil, fmt.Errorf("toolexec: workspace: %w", err)
 		}
 	}
+	// path/ stays empty: read-only even for its owner (obligation (hq)).
+	if err := os.Chmod(filepath.Join(base, "path"), 0o500); err != nil { //nolint:gosec // G302: an empty directory, searchable by its owner.
+		_ = os.RemoveAll(base)
+		return nil, fmt.Errorf("toolexec: workspace: %w", err)
+	}
 	root, err := os.OpenRoot(filepath.Join(base, "tree"))
 	if err != nil {
 		_ = os.RemoveAll(base)
@@ -91,8 +97,16 @@ func NewWorkspace() (*Workspace, error) {
 	return &Workspace{base: base, root: root}, nil
 }
 
-// Dir is the tree of the workspace, the working directory of every run.
+// Dir is the tree of the workspace, the working directory of every run,
+// read-only for every tool (ADR 0015 D5).
 func (w *Workspace) Dir() string { return filepath.Join(w.base, "tree") }
+
+// DataDir is data/ of the workspace: TF_DATA_DIR and the plan files, writable
+// for a run with Spec.WriteData only.
+func (w *Workspace) DataDir() string { return filepath.Join(w.base, "data") }
+
+// pathDir is the empty directory that PATH names.
+func (w *Workspace) pathDir() string { return filepath.Join(w.base, "path") }
 
 // WriteFile writes data to the new file rel of the tree (slash-separated,
 // relative, no . or .. element), its directories created: through os.Root,
@@ -146,10 +160,12 @@ func (w *Workspace) open() bool {
 	return !w.closed
 }
 
-// Result is a completed run: the exit code and the full outputs.
+// Result is a completed run: the exit code, the full outputs and the
+// isolation it ran in.
 type Result struct {
 	ExitCode       int
 	Stdout, Stderr []byte
+	Isolation      Isolation
 }
 
 var (
@@ -206,6 +222,10 @@ func check(s Spec) error {
 		}
 	}
 	seen := map[string]bool{}
+	if err := checkReadOnly(s); err != nil {
+		return err
+	}
+	vars := map[string]string{}
 	for _, e := range s.Env {
 		k, v, ok := strings.Cut(e, "=")
 		switch {
@@ -219,6 +239,58 @@ func check(s Spec) error {
 			return invalid("env entry repeated")
 		}
 		seen[k] = true
+		vars[k] = v
+	}
+	// ADR 0015 D11, obligation (hr): a path the environment names is under a
+	// read-only entry; tofu runs with its CLI configuration, always.
+	for _, k := range []string{"TF_CLI_CONFIG_FILE", "TFLINT_PLUGIN_DIR"} {
+		if v, ok := vars[k]; ok && !under(v, s.ReadOnly) {
+			return invalid("path of the environment outside the read-only entries")
+		}
+	}
+	if s.Tool.Name == "tofu" && vars["TF_CLI_CONFIG_FILE"] == "" {
+		return invalid("tofu without its CLI configuration")
+	}
+	if dir := filepath.Dir(s.Tool.Path); dir == "/" || isSystemPath(dir) || dir == s.Workspace.base || strings.HasPrefix(dir, s.Workspace.base+"/") {
+		return invalid("tool directory")
+	}
+	return nil
+}
+
+// under reports whether p is strictly under one of the directories roots.
+func under(p string, roots []string) bool {
+	for _, r := range roots {
+		if strings.HasPrefix(p, r+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// checkReadOnly applies ADR 0015 D11 to Spec.ReadOnly: each entry is an
+// absolute clean directory of the effective user that no one else can write,
+// neither /, a system directory of the tree, the temporary directory itself,
+// an ancestor of the workspace, nor in the workspace; no entry is an ancestor
+// of another.
+func checkReadOnly(s Spec) error {
+	tmp := filepath.Clean(os.TempDir())
+	base := s.Workspace.base
+	for i, p := range s.ReadOnly {
+		switch {
+		case !filepath.IsAbs(p) || filepath.Clean(p) != p || p == "/" || p == tmp || isSystemPath(p):
+			return invalid("read-only entry")
+		case base == p || strings.HasPrefix(base, p+"/") || strings.HasPrefix(p, base+"/"):
+			return invalid("read-only entry and the workspace overlap")
+		}
+		info, err := os.Lstat(p)
+		if err != nil || !info.IsDir() || !ownedPrivate(info, 0o022) {
+			return invalid("read-only entry not a private directory")
+		}
+		for j, q := range s.ReadOnly {
+			if i != j && (p == q || strings.HasPrefix(q, p+"/")) {
+				return invalid("read-only entries overlap")
+			}
+		}
 	}
 	return nil
 }
@@ -228,36 +300,6 @@ func check(s Spec) error {
 func ownedPrivate(info fs.FileInfo, mask fs.FileMode) bool {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	return ok && int(st.Uid) == os.Geteuid() && info.Mode().Perm()&mask == 0
-}
-
-// verify hashes the regular file at path, never through a symbolic link,
-// after checking that no one else can change it (obligation (hi)): the
-// directory is the user's and writable by no one else, the opened file is
-// the user's and read-only.
-func verify(path, want string) error {
-	if dir, err := os.Lstat(filepath.Dir(path)); err != nil || !dir.IsDir() || !ownedPrivate(dir, 0o022) {
-		return invalid("tool directory writable by another user")
-	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0) //nolint:gosec // G304: the path of a locked tool, checked by its hash below.
-	if err != nil {
-		return invalid("tool is not a regular file")
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return invalid("tool is not a regular file")
-	}
-	if !ownedPrivate(info, 0o222) {
-		return invalid("tool writable, or owned by another user")
-	}
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return invalid("tool unreadable")
-	}
-	if hex.EncodeToString(h.Sum(nil)) != want {
-		return ErrChecksum
-	}
-	return nil
 }
 
 // bounded keeps at most limit bytes; past it, it records the overflow and
@@ -293,76 +335,81 @@ func (b *bounded) over() bool {
 	return b.overflow
 }
 
-// Run runs the tool of s: spec checked, SHA-256 of the binary checked right
-// before the run, arguments passed as they are (no shell), in the tree of the
-// workspace, environment built from s.Env and the forced variables only
-// (PATH the empty directory of the workspace, TF_DATA_DIR its data directory,
-// fresh HOME and TMPDIR removed afterwards, proxies to UnreachableProxy,
-// NO_PROXY empty), the whole process group killed past s.Timeout. A non-zero
-// exit code is a Result, not an error; a timeout, an output over its bound or
-// a tool killed by a signal is an error with an empty Result.
+// Run runs the tool of s (ADR 0015): spec checked; binary checked and copied
+// into a sealed memfd; without the full isolation, ErrIsolationUnavailable
+// before any process; then the helper builds the closed tree and executes
+// the tool, which becomes PID 1 of its namespaces: arguments as they are (no
+// shell), environment built from s.Env and the forced variables only (PATH
+// the empty directory of the workspace, TF_DATA_DIR its data directory, fresh
+// HOME and TMPDIR removed afterwards, proxies to UnreachableProxy, NO_PROXY
+// empty), the tool and all its descendants killed past s.Timeout. A non-zero
+// exit code is a Result, not an error; a timeout, an output over its bound, a
+// failed isolation or a tool killed by a signal is an error with an empty
+// Result.
 func Run(ctx context.Context, s Spec) (Result, error) {
 	if err := check(s); err != nil {
 		return Result{}, err
 	}
-	if err := verify(s.Tool.Path, s.Tool.SHA256); err != nil {
+	bin, err := sealedCopy(s.Tool)
+	if err != nil {
 		return Result{}, err
+	}
+	defer func() { _ = bin.Close() }()
+	iso := probeFunc(ctx)
+	if iso.Level != LevelFull {
+		return Result{}, ErrIsolationUnavailable
 	}
 	scratch, err := os.MkdirTemp("", "rempart-tool-")
 	if err != nil {
 		return Result{}, fmt.Errorf("toolexec: ephemeral directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(scratch) }()
-	home, tmp := filepath.Join(scratch, "home"), filepath.Join(scratch, "tmp")
-	for _, d := range []string{home, tmp} {
+	home, tmp, root := filepath.Join(scratch, "home"), filepath.Join(scratch, "tmp"), filepath.Join(scratch, "root")
+	for _, d := range []string{home, tmp, root} {
 		if err := os.Mkdir(d, 0o700); err != nil {
 			return Result{}, fmt.Errorf("toolexec: ephemeral directory: %w", err)
 		}
 	}
 	env := append([]string{
-		"PATH=" + filepath.Join(s.Workspace.base, "path"), "TF_DATA_DIR=" + filepath.Join(s.Workspace.base, "data"),
+		"PATH=" + s.Workspace.pathDir(), "TF_DATA_DIR=" + s.Workspace.DataDir(),
 		"HOME=" + home, "TMPDIR=" + tmp,
 		"HTTPS_PROXY=" + UnreachableProxy, "HTTP_PROXY=" + UnreachableProxy,
 		"https_proxy=" + UnreachableProxy, "http_proxy=" + UnreachableProxy,
 		"ALL_PROXY=" + UnreachableProxy, "all_proxy=" + UnreachableProxy,
 		"NO_PROXY=", "no_proxy=",
 	}, s.Env...)
+	cfg := helperConfig{
+		Root: root, Tool: s.Tool.Path, Args: append([]string{s.Tool.Path}, s.Args...), Env: env,
+		Tree: s.Workspace.Dir(), PathDir: s.Workspace.pathDir(), Home: home, Tmp: tmp, ReadOnly: s.ReadOnly,
+	}
+	if s.WriteData {
+		cfg.Data = s.Workspace.DataDir()
+	}
 
 	runCtx, cancel := context.WithTimeout(ctx, s.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, s.Tool.Path, s.Args...) //nolint:gosec // G204: a locked binary checked by its hash, arguments as an array, no shell (D6).
-	cmd.Dir = s.Workspace.Dir()
-	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	killGroup := func() {
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-	}
-	cmd.Cancel = func() error { killGroup(); return nil }
-	cmd.WaitDelay = 2 * time.Second
-	stdout := &bounded{limit: s.MaxStdout, stop: killGroup}
-	stderr := &bounded{limit: s.MaxStderr, stop: killGroup}
-	cmd.Stdout, cmd.Stderr = stdout, stderr
-
-	err = cmd.Run()
-	// The group may outlive the leader (a child in the background): kill it
-	// whatever the outcome.
-	killGroup()
+	var state *os.ProcessState
+	stopped := make(chan struct{})
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(func() { close(stopped); cancel() }) }
+	stdout := &bounded{limit: s.MaxStdout, stop: stop}
+	stderr := &bounded{limit: s.MaxStderr, stop: stop}
+	state, err = launch(runCtx, cfg, bin, stdout, stderr)
 	switch {
+	case errors.Is(err, ErrIsolationSetup):
+		return Result{}, err
 	case stdout.over() || stderr.over():
 		return Result{}, ErrOutputTooLarge
 	case errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil:
 		return Result{}, ErrTimeout
 	case ctx.Err() != nil:
 		return Result{}, fmt.Errorf("toolexec: %w", ctx.Err())
-	}
-	var exit *exec.ExitError
-	if err != nil && !errors.As(err, &exit) {
+	case err != nil:
 		return Result{}, fmt.Errorf("toolexec: start %s: %w", s.Tool.Name, err)
-	}
-	if !cmd.ProcessState.Exited() {
+	case state == nil:
+		return Result{}, ErrIsolationSetup
+	case !state.Exited():
 		return Result{}, ErrKilled
 	}
-	return Result{ExitCode: cmd.ProcessState.ExitCode(), Stdout: stdout.buf.Bytes(), Stderr: stderr.buf.Bytes()}, nil
+	return Result{ExitCode: state.ExitCode(), Stdout: stdout.buf.Bytes(), Stderr: stderr.buf.Bytes(), Isolation: iso}, nil
 }

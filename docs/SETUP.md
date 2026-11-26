@@ -52,6 +52,27 @@ Propositions à appliquer par toi si ce n'est pas encore fait (le harnais est pr
 - Relecture humaine du verrou (étape H-tools-lock) : versions publiées depuis au moins 14 jours, sommes, et signatures notées dans chaque entrée. À confirmer depuis le poste de l'humain : l'empreinte de la clé GPG d'OpenTofu (`E3E6 E43D 84CB 852E ADB0 051D 0C0A F313 E5FD 9F80`) sur opentofu.org ; celle de HashiCorp (`C874 011F 0AB4 0511 0D02 1055 3436 5D94 72D7 468F`) sur hashicorp.com/security ; la signature sans clé de tflint 0.66.0 avec `cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.keyless.sig --certificate-identity https://github.com/terraform-linters/tflint/.github/workflows/release.yml@refs/tags/v0.66.0 --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt` (le journal de transparence n'est pas joignable depuis la session de l'agent).
 - Trivy : jamais les versions 0.69.4 à 0.69.6 (attaque de la chaîne d'approvisionnement de mars 2026, avis GHSA-69fq-xp46-6x23) ; `TestIaCToolsLockPinned` les refuse.
 
+## Isolation des outils (M3-T02b, ADR 0015)
+- **Ce que fait Rempart.** Chaque exécution d'un outil de la chaîne (OpenTofu, tflint, Trivy, puis Checkov) passe par un assistant : le binaire Rempart lui-même, relancé dans de nouveaux espaces de noms (utilisateur, montage, réseau, PID, IPC, UTS, cgroup).
+  - L'outil voit un arbre fermé : `/usr`, un `/etc` synthétique, un `/dev` minimal, son `/proc`, la copie privée de la chaîne d'outils et l'arbre de travail, en lecture seule ; `data/`, `HOME` et `TMPDIR` éphémères en écriture.
+  - Il n'a aucun réseau, aucune capacité, aucun terminal, et ne voit aucun autre processus.
+  - Landlock s'ajoute en renfort quand le noyau l'offre.
+- **Échec fermé.** Sans isolation complète, aucun outil ne tourne. `rempart check --static` (M3-T03) reste utilisable.
+- **Prérequis.** Un noyau Linux qui admet les espaces de noms utilisateur non privilégiés. Sur Ubuntu 24.04, AppArmor les restreint par défaut :
+  - levée sur le poste : `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` ;
+  - levée persistante : `echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-rempart-userns.conf`.
+
+  Sur WSL2, le noyau est fourni par Microsoft : vérifier avec les commandes ci-dessous.
+- **Sonde du poste (étape H-isolation-probe, avant le premier `rempart check` avec outils).** Lancer ces commandes et coller la sortie :
+  - `uname -r`
+  - `sysctl kernel.apparmor_restrict_unprivileged_userns`
+  - `unshare -U -r -n -p -f --mount-proc true; echo rc=$?`
+  - `cat /sys/kernel/security/lsm`
+  - `REMPART_REQUIRE_SANDBOX=1 go test ./internal/validate/toolexec/ -run '^TestIsolation' -v`
+- **Variable `REMPART_REQUIRE_SANDBOX`.**
+  - Sans elle, un test d'isolation saute, avec la raison, quand le noyau n'offre pas l'isolation.
+  - Avec `REMPART_REQUIRE_SANDBOX=1`, il échoue. La CI la pose (proposition 0014), et les critères de M3-T02b sont lancés avec elle.
+
 ## Evals sur un vrai modèle (M1, ADR 0008)
 - Seulement depuis le terminal de l'humain, jamais depuis un agent ni la CI (refus dans le binaire). Route vérifiée de bout en bout le 2026-11-18 : `--llm openrouter --model openai/gpt-4o-2024-08-06`.
 - Compte OpenRouter **crédité** : la limite de dépense d'une clé n'est pas un solde. Tant qu'aucun crédit n'est acheté (`"is_free_tier": true` sur `GET https://openrouter.ai/api/v1/key`), chaque appel est refusé par un 402 : OpenRouter réserve avant l'appel le coût maximal de la requête (8 192 tokens de sortie pour L1, environ 0,09 $ par appel sur GPT-4o). Prévoir environ 10 $ pour une calibration et une mesure de la suite `intent` (28 cas, 3 exécutions).

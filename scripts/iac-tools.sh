@@ -175,6 +175,30 @@ def inside(path):
     if not (d + os.sep).startswith(cache + os.sep):
         fail("chemin hors du cache : refus", 2)
 
+def mkdirs(d):
+    # The directories of d under the cache, component by component, never
+    # through a link (obligation (ho)); refused out of the cache.
+    rel = os.path.relpath(d, cache)
+    if rel == os.curdir:
+        return
+    if rel.startswith(os.pardir) or os.path.isabs(rel):
+        fail("chemin hors du cache : refus", 2)
+    fd = os.open(cache, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in rel.split(os.sep):
+            try:
+                os.mkdir(part, 0o700, dir_fd=fd)
+            except FileExistsError:
+                pass
+            try:
+                nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except OSError:
+                fail("lien ou entrée inattendue dans le cache : refus", 2)
+            os.close(fd)
+            fd = nfd
+    finally:
+        os.close(fd)
+
 def sha256(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -203,13 +227,14 @@ def regular(path):
 def scratch():
     """A new file, created exclusively, in cache/tmp (never in the mirror)."""
     d = os.path.join(cache, "tmp")
-    os.makedirs(d, mode=0o700, exist_ok=True)
     inside(os.path.join(d, "x"))
+    mkdirs(d)
     return tempfile.mkstemp(dir=d)
 
 def put(dest, write, mode):
     """Writes dest through a scratch file renamed over it: no link followed."""
-    os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
+    inside(dest)
+    mkdirs(os.path.dirname(dest))
     inside(dest)
     fd, tmp = scratch()
     try:
@@ -226,8 +251,8 @@ def download(url, want):
     dest = os.path.join(cache, "dl", want, posixpath.basename(urllib.parse.urlsplit(url).path))
     if regular(dest) and sha256(dest) == want:
         return dest
-    os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
     inside(dest)
+    mkdirs(os.path.dirname(dest))
     fd, tmp = scratch()
     os.close(fd)
     try:

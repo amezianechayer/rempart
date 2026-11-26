@@ -195,6 +195,41 @@ func TestLoadToolchain(t *testing.T) {
 	if _, ok := tc.Tool("trivy"); ok {
 		t.Error("Tool(trivy) found: not in the lock")
 	}
+	// Obligation (hr), ADR 0015 D11: the paths the environment of a tool
+	// names come from the toolchain, under its one read-only root.
+	roots := tc.ReadOnlyRoots()
+	if len(roots) != 1 || !filepath.IsAbs(roots[0]) || strings.HasPrefix(roots[0], f.cache) {
+		t.Fatalf("ReadOnlyRoots = %q, want the one private directory", roots)
+	}
+	for _, p := range []string{tofu.Path, tc.MirrorDir(), tc.PluginDir()} {
+		if !strings.HasPrefix(p, roots[0]+string(filepath.Separator)) {
+			t.Errorf("%q outside the read-only root %q", p, roots[0])
+		}
+	}
+	env := tc.TofuEnv()
+	vars := map[string]string{}
+	for _, e := range env {
+		k, v, _ := strings.Cut(e, "=")
+		vars[k] = v
+	}
+	if len(env) != 3 || vars["CHECKPOINT_DISABLE"] != "1" || vars["TF_IN_AUTOMATION"] != "1" ||
+		!strings.HasPrefix(vars["TF_CLI_CONFIG_FILE"], roots[0]+string(filepath.Separator)) {
+		t.Fatalf("TofuEnv = %q, want the CLI configuration of the private root and the two switches", env)
+	}
+	cfgInfo, err := os.Stat(vars["TF_CLI_CONFIG_FILE"])
+	if err != nil || cfgInfo.Mode().Perm()&0o222 != 0 {
+		t.Errorf("CLI configuration %q: %v, want a read-only file", vars["TF_CLI_CONFIG_FILE"], err)
+	}
+	wantCfg, err := TofuCLIConfig(tc.MirrorDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(vars["TF_CLI_CONFIG_FILE"]); err != nil || !bytes.Equal(got, wantCfg) {
+		t.Errorf("CLI configuration content: %v\n%s\nwant\n%s", err, got, wantCfg)
+	}
+	if got := tc.TFLintEnv(); !slices.Equal(got, []string{"TFLINT_PLUGIN_DIR=" + tc.PluginDir()}) {
+		t.Errorf("TFLintEnv = %q", got)
+	}
 	private := filepath.Dir(tofu.Path)
 	if err := tc.Close(); err != nil {
 		t.Fatal(err)
