@@ -4,6 +4,12 @@ target: intent
 watch:
   - internal/loops/l1/**
   - internal/loops/*.go
+  - internal/loops/domain/**
+  - internal/loops/codec/**
   - internal/intent/**
   - internal/llm/**
-  - schemas/intent/**
+  - internal/policy/domain/**
+  - internal/secrets/**
+  - internal/tenancy/**
+  - schemas/**
+  - cmd/rempart-evals/**

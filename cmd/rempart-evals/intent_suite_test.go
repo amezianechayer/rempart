@@ -14,6 +14,25 @@ import (
 	loopsdomain "github.com/amezianechayer/rempart/internal/loops/domain"
 )
 
+// TestIntentWatchCoversTargetDeps (T140, obligation (fd)): every file the
+// intent target runs (L1, its activities, the intent and model packages, the
+// codec, the transit envelope, and the jurisdiction table L1 now reads) is
+// watched by the suite, so --suite changed never skips it.
+func TestIntentWatchCoversTargetDeps(t *testing.T) {
+	root, err := os.OpenRoot("../../evals")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = root.Close() })
+	s, err := evals.LoadSuite(root.FS(), "intent")
+	if err != nil {
+		t.Fatalf("LoadSuite: %v", err)
+	}
+	checkWatchCoversDeps(t, s, "cmd/rempart-evals/intent.go",
+		"./internal/loops/l1/...", "./internal/intent/...", "./internal/llm/...", "./internal/loops/codec", "./internal/secrets/envelope",
+		"./internal/policy/domain")
+}
+
 // TestIntentSuiteComposition (M1-T06): evals/intent holds at least 22 cases
 // of the categories of the card, 3 runs each, and every case passes on the
 // fake model with no invented value (per-case diagnostic of make evals).

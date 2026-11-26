@@ -83,9 +83,10 @@ func (f *fakeGit) run(_ context.Context, dir string, args ...string) ([]byte, in
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, gitCall{dir, slices.Clone(args)})
+	// The subcommand follows the -c options and --no-pager (D14, obligation (cf)).
 	sub := ""
-	if len(args) > 3 {
-		sub = args[3]
+	if i := slices.Index(args, "--no-pager"); i >= 0 && i+1 < len(args) {
+		sub = args[i+1]
 	}
 	switch sub {
 	case "merge-base":

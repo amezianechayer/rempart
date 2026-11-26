@@ -15,12 +15,38 @@ import (
 	"time"
 )
 
+// gitOptions are the -c options that open every git command of the selection
+// (D14, obligation (cf)): a local configuration of the clone can name no
+// fsmonitor, no hook directory and no external diff program.
+var gitOptions = []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", "--no-pager"}
+
 // d14Args are the three argument lists of D14 for base.
 func d14Args(base string) [][]string {
 	return [][]string{
-		{"-c", "core.fsmonitor=false", "--no-pager", "merge-base", "--is-ancestor", "--end-of-options", base, "HEAD"},
-		{"-c", "core.fsmonitor=false", "--no-pager", "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--end-of-options", base, "--"},
-		{"-c", "core.fsmonitor=false", "--no-pager", "ls-files", "--others", "--exclude-standard", "-z"},
+		slices.Concat(gitOptions, []string{"merge-base", "--is-ancestor", "--end-of-options", base, "HEAD"}),
+		slices.Concat(gitOptions, []string{"diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--end-of-options", base, "--"}),
+		slices.Concat(gitOptions, []string{"ls-files", "--others", "--exclude-standard", "-z"}),
+	}
+}
+
+// TestGitOptionsFrozen proves obligation (cf) (T152): the three git commands
+// start with exactly gitOptions and carry no other -c option, so the
+// configuration of an untrusted clone cannot run a program (fsmonitor, hook,
+// external diff) when the evals select the changed suites.
+func TestGitOptionsFrozen(t *testing.T) {
+	base := strings.Repeat("ab", 20)
+	got := [][]string{mergeBaseArgs(base), diffArgs(base), untrackedArgs()}
+	for i, args := range got {
+		if len(args) < len(gitOptions) || !slices.Equal(args[:len(gitOptions)], gitOptions) {
+			t.Errorf("command %d starts with %q, want %q", i, args[:min(len(args), len(gitOptions))], gitOptions)
+			continue
+		}
+		if slices.Contains(args[len(gitOptions):], "-c") {
+			t.Errorf("command %d carries another -c option: %q", i, args)
+		}
+	}
+	if !slices.EqualFunc(got, d14Args(base), slices.Equal[[]string]) {
+		t.Errorf("git commands = %q, want %q", got, d14Args(base))
 	}
 }
 

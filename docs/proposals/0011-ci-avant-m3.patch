@@ -1,0 +1,187 @@
+diff --git a/.github/workflows/verify.yml b/.github/workflows/verify.yml
+index e4f9241..2646d4e 100644
+--- a/.github/workflows/verify.yml
++++ b/.github/workflows/verify.yml
+@@ -10,8 +10,10 @@ on:
+ permissions:
+   contents: read
+ 
++# (br): one group per commit on main, so a pending run of main is never
++# replaced by a later push; a pull request keeps one run, the latest.
+ concurrency:
+-  group: verify-${{ github.event.pull_request.number || github.ref }}
++  group: verify-${{ github.event.pull_request.number || github.sha }}
+   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+ 
+ jobs:
+@@ -34,10 +36,16 @@ jobs:
+         with:
+           go-version-file: go.mod
+           cache: false
++      # (ce): the module hash of the binary is checked against the hash pinned
++      # here, so a proxy or checksum database that served other content fails.
+       - name: Install golangci-lint
+-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
++        run: |
++          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
++          test "$(go version -m "$(go env GOPATH)/bin/golangci-lint" | awk '$1 == "mod" {print $2, $3, $4}')" = "github.com/golangci/golangci-lint/v2 v2.14.0 h1:ot8QffRa4LzAAEgtvNYrVs9esxQ7xoTwoAv6uhp4ngA="
+       - name: Docker preflight
+         run: make -f Makefile dev-preflight
++      # (cg): on the first push of a branch, github.event.before is the null
++      # SHA; rempart-evals then selects every suite (base_null, fail closed).
+       - name: make verify
+         env:
+           EVAL_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+diff --git a/internal/archtest/ci_test.go b/internal/archtest/ci_test.go
+index 2d85df5..eff588e 100644
+--- a/internal/archtest/ci_test.go
++++ b/internal/archtest/ci_test.go
+@@ -21,11 +21,16 @@ import (
+ const (
+ 	ciPath  = ".github/workflows/verify.yml"
+ 	ciBase  = "${{ github.event.pull_request.base.sha || github.event.before }}"
+-	ciGroup = "github.event.pull_request.number || github.ref"
++	ciGroup = "github.event.pull_request.number || github.sha"
+ 	ciSHAA  = "0123456789abcdef0123456789abcdef01234567"
+ 	ciSHAB  = "89abcdef0123456789abcdef0123456789abcdef"
+ )
+ 
++// ciGolangciCheck (obligation (ce), T6): the module hash of the installed
++// golangci-lint, compared with the hash pinned in the workflow.
++const ciGolangciCheck = `test "$(go version -m "$(go env GOPATH)/bin/golangci-lint" | awk '$1 == "mod" {print $2, $3, $4}')" = ` +
++	`"github.com/golangci/golangci-lint/v2 v2.14.0 h1:ot8QffRa4LzAAEgtvNYrVs9esxQ7xoTwoAv6uhp4ngA="`
++
+ const validCIWorkflow = `name: verify
+ 
+ on:
+@@ -62,7 +67,9 @@ jobs:
+           go-version-file: go.mod
+           cache: false
+       - name: Install golangci-lint
+-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
++        run: |
++          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
++          ` + ciGolangciCheck + `
+       - name: Docker preflight
+         run: make -f Makefile dev-preflight
+       - name: make verify
+@@ -158,7 +165,7 @@ func checkCIPinned(wf ciWorkflow, src string) (p problemList) {
+ 	}
+ 	line := regexp.MustCompile(`^ *(- )?uses: [a-z0-9-]+/[a-z0-9._-]+@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+$`)
+ 	for i, l := range strings.Split(src, "\n") {
+-		if strings.Contains(l, "uses:") && !line.MatchString(l) {
++		if regexp.MustCompile(`\buses\b`).MatchString(l) && !line.MatchString(l) {
+ 			p.addf("line %d: want uses: owner/repo@<sha> # vX.Y.Z", i+1)
+ 		}
+ 	}
+@@ -177,8 +184,7 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
+ 		p.addf("concurrency group %q or job env %v", wf.Concurrency.Group, j.Env)
+ 	}
+ 	want := []string{
+-		"uses:actions/checkout", "uses:actions/setup-go",
+-		"run:go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@" + golangci,
++		"uses:actions/checkout", "uses:actions/setup-go", "run:golangci-lint " + golangci + " pinned by hash",
+ 		"run:make -f Makefile dev-preflight", "run:make -f Makefile verify", "run:make -f Makefile dev-down",
+ 	}
+ 	var got []string
+@@ -188,6 +194,9 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
+ 		if s.Uses != "" {
+ 			step = "uses:" + name
+ 		}
++		if golangciRunRe(golangci).MatchString(strings.TrimSpace(s.Run)) {
++			step = "run:golangci-lint " + golangci + " pinned by hash"
++		}
+ 		got = append(got, step)
+ 		if strings.Contains(s.Run, "${{") {
+ 			p.addf("step %d: expression in run (template injection)", i+1)
+@@ -212,6 +221,37 @@ func checkCIVerify(wf ciWorkflow, golangci string) (p problemList) {
+ 	return p
+ }
+ 
++// golangciRunRe (obligation (ce), T6): the install of golangci-lint at version,
++// then the check of its module hash against a pinned h1: hash.
++func golangciRunRe(version string) *regexp.Regexp {
++	v := regexp.QuoteMeta(version)
++	return regexp.MustCompile(`^go install github\.com/golangci/golangci-lint/v2/cmd/golangci-lint@` + v + `\n` +
++		`test "\$\(go version -m "\$\(go env GOPATH\)/bin/golangci-lint" \| awk '\$1 == "mod" \{print \$2, \$3, \$4\}'\)" = ` +
++		`"github\.com/golangci/golangci-lint/v2 ` + v + ` h1:[A-Za-z0-9+/]{43}="$`)
++}
++
++// ciExpressions is the closed list of the expressions of the workflow
++// (obligations (bq), (br), (cg), T82): every ${{ ... }} of the file, comments
++// included, is one of them.
++var ciExpressions = []string{
++	"${{ " + ciGroup + " }}",
++	"${{ github.event_name == 'pull_request' }}",
++	ciBase,
++}
++
++func checkCIExpressions(_ ciWorkflow, src string) (p problemList) {
++	found := regexp.MustCompile(`\$\{\{.*?\}\}`).FindAllString(src, -1)
++	for _, e := range found {
++		if !slices.Contains(ciExpressions, e) {
++			p.addf("expression %q outside the closed list %q", e, ciExpressions)
++		}
++	}
++	if n := strings.Count(src, "${{"); n != len(found) {
++		p.addf("%d expression openings, %d closed expressions on one line", n, len(found))
++	}
++	return p
++}
++
+ func checkCINoSecrets(_ ciWorkflow, src string) (p problemList) {
+ 	if regexp.MustCompile(`(?i)secrets|github\.token|github_token`).MatchString(src) {
+ 		p.addf("the workflow names a secret or the workflow token")
+@@ -306,6 +346,7 @@ func TestCIActionsPinnedBySHA(t *testing.T) {
+ 	runCI(t, checkCIPinned, checkCIPinned,
+ 		"@"+ciSHAA, "@v5", pinned,
+ 		"@"+ciSHAB, "@89abcde", pinned,
++		"        uses: actions/setup-go@", "        \"uses\": actions/setup-go@", "want uses:",
+ 		ciSHAB+" # v6.0.0", ciSHAB, "want uses:",
+ 		"actions/setup-go@", "actionz/setup-go@", "exactly once")
+ }
+@@ -326,10 +367,25 @@ func TestCIRunsMakeVerify(t *testing.T) {
+ 		ciBase, "${{ github.head_ref }}", "env map[EVAL_BASE",
+ 		"dev-preflight\n", "dev-preflight ${{ github.head_ref }}\n", "template injection",
+ 		"@v2.14.0", "@v2.13.1", "steps",
++		" h1:ot8QffRa4LzAAEgtvNYrVs9esxQ7xoTwoAv6uhp4ngA=", "", "steps",
+ 		"      GOTOOLCHAIN: local\n", "      GOTOOLCHAIN: local\n      MAKEFILES: x.mk\n", "job env",
+ 		"          persist-credentials: false\n", "", "checkout with")
+ }
+ 
++// TestCIExpressionsClosed proves obligations (bq), (br) and (cg) (T82): no
++// expression outside the closed list anywhere in the workflow, the group of
++// main per commit, the base of the evals from the two event fields only.
++func TestCIExpressionsClosed(t *testing.T) {
++	const outside = "outside the closed list"
++	runCI(t, checkCIExpressions, checkCIExpressions,
++		"      - name: Docker preflight\n", "      - name: ${{ github.head_ref }}\n", outside,
++		"        if: always()\n", "        if: ${{ always() && github.event.pull_request.title != '' }}\n", outside,
++		"github.event.pull_request.number || github.sha", "github.event.pull_request.number || github.ref", outside,
++		ciBase, "${{ github.event.pull_request.head.sha }}", outside,
++		"\non:\n", "\n# ${{ github.event.issue.title }}\non:\n", outside,
++		"\non:\n", "\n# ${{ github.sha\non:\n", "expression openings")
++}
++
+ func TestCINoSecrets(t *testing.T) {
+ 	const at = "          EVAL_BASE: "
+ 	runCI(t, checkCINoSecrets, checkCINoSecrets,
+@@ -542,7 +598,7 @@ func TestNoShadowMakefile(t *testing.T) {
+ // allCIChecks runs every workflow check on one decoded workflow.
+ func allCIChecks(wf ciWorkflow, src string) (p problemList) {
+ 	for _, check := range []func(ciWorkflow, string) problemList{
+-		checkCITriggers, checkCIPermissions, checkCIPinned, checkCINoSecrets, checkCIGoVersion,
++		checkCITriggers, checkCIPermissions, checkCIPinned, checkCINoSecrets, checkCIGoVersion, checkCIExpressions,
+ 		func(wf ciWorkflow, _ string) problemList { return checkCIVerify(wf, "v2.14.0") },
+ 	} {
+ 		p = append(p, check(wf, src)...)
+@@ -553,7 +609,8 @@ func allCIChecks(wf ciWorkflow, src string) (p problemList) {
+ // TestParseCIWorkflowDecoding lifts risk R6 of docs/plans/M0-ci.md: how
+ // go.yaml.in/yaml/v3 decodes the key "on", a key with a null value, the
+ // scalars 0 and false into string fields, and fields without a yaml tag. Its
+-// name does not start with TestCI so acceptance criterion 1 still counts 7.
++// name does not start with TestCI so acceptance criterion 1 counts the TestCI
++// tests only (7, then 8 with TestCIExpressionsClosed, proposal 0011).
+ func TestParseCIWorkflowDecoding(t *testing.T) {
+ 	t.Run("valid", func(t *testing.T) {
+ 		wf, err := parseCIWorkflow(validCIWorkflow)

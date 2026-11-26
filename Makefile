@@ -117,18 +117,16 @@ sandbox-guard:
 	@test -e scripts/sandbox.sh || { echo "sandbox : scripts/sandbox.sh absent (livré en M3) ; aucune action." >&2; exit 2; }
 	@test -x scripts/sandbox.sh || { echo "sandbox : scripts/sandbox.sh non exécutable ; aucune action." >&2; exit 2; }
 
+# Menace T31 : validation, confirmation et appel sur une seule ligne chaînée par &&, si bien
+# qu'un échec ignoré par make (option i, préfixe -, cible spéciale de même effet) ne mène
+# jamais à l'appel du script.
 sandbox-plan: sandbox-guard
-	@[[ "$${SCENARIO:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$$ ]] || { echo "SCENARIO requis, au format [a-z0-9-] (ex. SCENARIO=demo)." >&2; exit 2; }
-	./scripts/sandbox.sh plan "$$SCENARIO"
+	@{ [[ "$${SCENARIO:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$$ ]] || { echo "SCENARIO requis, au format [a-z0-9-] (ex. SCENARIO=demo)." >&2; exit 2; }; } && ./scripts/sandbox.sh plan "$$SCENARIO"
 
 # Approbation humaine exigée deux fois : permission "ask" de Claude Code ET confirmation
 # tapée au terminal (lue sur /dev/tty : un tube sur l'entrée standard ne suffit pas).
 sandbox-apply: sandbox-guard
-	@[[ "$${SCENARIO:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$$ ]] || { echo "SCENARIO requis, au format [a-z0-9-] (ex. SCENARIO=demo)." >&2; exit 2; }
-	@read -r -p "Appliquer $$SCENARIO sur le compte SANDBOX ? Tape 'oui' : " a </dev/tty; [ "$$a" = "oui" ]
-	./scripts/sandbox.sh apply "$$SCENARIO"
+	@{ [[ "$${SCENARIO:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$$ ]] || { echo "SCENARIO requis, au format [a-z0-9-] (ex. SCENARIO=demo)." >&2; exit 2; }; } && read -r -p "Appliquer $$SCENARIO sur le compte SANDBOX ? Tape 'oui' : " a </dev/tty && [ "$$a" = "oui" ] && ./scripts/sandbox.sh apply "$$SCENARIO"
 
 sandbox-destroy: sandbox-guard
-	@[[ "$${SCENARIO:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$$ ]] || { echo "SCENARIO requis, au format [a-z0-9-] (ex. SCENARIO=demo)." >&2; exit 2; }
-	@read -r -p "Détruire $$SCENARIO sur le compte SANDBOX ? Tape 'oui' : " a </dev/tty; [ "$$a" = "oui" ]
-	./scripts/sandbox.sh destroy "$$SCENARIO"
+	@{ [[ "$${SCENARIO:-}" =~ ^[a-z0-9][a-z0-9-]{0,62}$$ ]] || { echo "SCENARIO requis, au format [a-z0-9-] (ex. SCENARIO=demo)." >&2; exit 2; }; } && read -r -p "Détruire $$SCENARIO sur le compte SANDBOX ? Tape 'oui' : " a </dev/tty && [ "$$a" = "oui" ] && ./scripts/sandbox.sh destroy "$$SCENARIO"

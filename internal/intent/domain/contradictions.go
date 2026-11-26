@@ -104,12 +104,12 @@ func Contradictions(ir IR, c TenantContext) []Contradiction {
 		}
 		for _, id := range x.StoredIn {
 			w, ok := byID[id]
-			if !ok || inZone(*x.Residency, w.Region) {
+			if !ok || inZone(*x.Residency, w.Cloud, w.Region) {
 				continue
 			}
 			def := fallbackRegion
 			for _, r := range allowed {
-				if inZone(*x.Residency, r) {
+				if inZone(*x.Residency, w.Cloud, r) {
 					def = r
 					break
 				}

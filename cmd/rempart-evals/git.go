@@ -72,17 +72,24 @@ func validRef(s string) bool {
 	return (len(s) == 40 || len(s) == 64) && strings.Trim(s, "0123456789abcdef") == "" && strings.Trim(s, "0") != ""
 }
 
+// withGitOptions opens every command (D14, obligation (cf), T152): the local
+// configuration of a clone can name no fsmonitor, no hook directory and no
+// external diff program for these commands.
+func withGitOptions(args ...string) []string {
+	return append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", "--no-pager"}, args...)
+}
+
 // The three command forms of D14: the base only after --end-of-options.
 func mergeBaseArgs(base string) []string {
-	return []string{"-c", "core.fsmonitor=false", "--no-pager", "merge-base", "--is-ancestor", "--end-of-options", base, "HEAD"}
+	return withGitOptions("merge-base", "--is-ancestor", "--end-of-options", base, "HEAD")
 }
 
 func diffArgs(base string) []string {
-	return []string{"-c", "core.fsmonitor=false", "--no-pager", "diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--end-of-options", base, "--"}
+	return withGitOptions("diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "--end-of-options", base, "--")
 }
 
 func untrackedArgs() []string {
-	return []string{"-c", "core.fsmonitor=false", "--no-pager", "ls-files", "--others", "--exclude-standard", "-z"}
+	return withGitOptions("ls-files", "--others", "--exclude-standard", "-z")
 }
 
 // changedPaths returns the changed and untracked paths since base, or

@@ -210,6 +210,9 @@ func checkModule(m *ast.Module) error {
 	if bad != nil {
 		return bad
 	}
+	if err := checkDataRefs(m); err != nil {
+		return err
+	}
 	// Obligation (fe) (T108, T120): no string of the grammar of a control_id
 	// anywhere in a module, so a rule cannot emit the identifier of another.
 	ast.NewGenericVisitor(func(x any) bool {
@@ -233,6 +236,42 @@ func checkModule(m *ast.Module) error {
 		}
 	}
 	return nil
+}
+
+// packRoot is the document of the compiled pack: data.rempart.design.
+var packRoot = ast.Ref{ast.DefaultRootDocument, ast.StringTerm("rempart"), ast.StringTerm("design")}
+
+// checkDataRefs: obligation (fk) (ADR 0011 D3, T109). Every reference to data,
+// in a package, an import, a rule head or body, a comprehension, an every
+// domain or an index, starts with packRoot: no bare data, no index on data or
+// on rempart, no other pack, no test package.
+func checkDataRefs(m *ast.Module) error {
+	var bad error
+	var visit func(x any) bool
+	visit = func(x any) bool {
+		if bad != nil {
+			return true
+		}
+		switch v := x.(type) {
+		case ast.Ref:
+			if len(v) > 0 && v[0].Equal(ast.DefaultRootDocument) && !v.HasPrefix(packRoot) {
+				bad = invalid("data reference outside the pack")
+				return true
+			}
+			// The head is checked; an index may hold another reference.
+			for _, t := range v[1:] {
+				ast.NewGenericVisitor(visit).Walk(t)
+			}
+			return true
+		case ast.Var:
+			if v.Equal(ast.DefaultRootDocument.Value) {
+				bad = invalid("data reference outside the pack")
+			}
+		}
+		return false
+	}
+	ast.NewGenericVisitor(visit).Walk(m)
+	return bad
 }
 
 // checkDeny admits a rule named deny only in the form of ADR 0011 D4, checked

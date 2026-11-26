@@ -486,9 +486,16 @@ func TestDesignTrapsDetectedForTheirReason(t *testing.T) {
 // activities, the codec, the pack, the summary) is watched by the suite, so
 // that --suite changed never skips it; and the target itself is watched.
 func TestDesignWatchCoversTargetDeps(t *testing.T) {
-	s := loadDesignSuite(t)
-	cmd := exec.CommandContext(t.Context(), "go", "list", "-deps", "-json",
+	checkWatchCoversDeps(t, loadDesignSuite(t), "cmd/rempart-evals/design.go",
 		"./internal/loops/l2/...", "./internal/policy/adapters/opa", "./internal/loops/codec", "./internal/design/confirm")
+}
+
+// checkWatchCoversDeps (T140): every Go file and every embedded file of pkgs
+// and of their dependencies in the module is watched by s, and so is target.
+func checkWatchCoversDeps(t *testing.T, s evals.Suite, target string, pkgs ...string) {
+	t.Helper()
+	//nolint:gosec // G204: go list with fixed flags and package patterns that are literals of these tests, no shell.
+	cmd := exec.CommandContext(t.Context(), "go", append([]string{"list", "-deps", "-json"}, pkgs...)...)
 	cmd.Dir = "../.."
 	raw, err := cmd.Output()
 	if err != nil {
@@ -514,14 +521,14 @@ func TestDesignWatchCoversTargetDeps(t *testing.T) {
 		for _, f := range slices.Concat(pkg.GoFiles, pkg.EmbedFiles) {
 			files++
 			if !watched(dir + "/" + f) {
-				t.Errorf("%s/%s: a dependency of the design target outside the watch of the suite", dir, f)
+				t.Errorf("%s/%s: a dependency of the %s target outside the watch of the suite", dir, f, s.Name)
 			}
 		}
 	}
 	if files < 50 {
 		t.Errorf("%d files listed, want the dependencies of the target", files)
 	}
-	if !watched("cmd/rempart-evals/design.go") {
-		t.Error("the design target itself is not watched")
+	if !watched(target) {
+		t.Errorf("the %s target itself (%s) is not watched", s.Name, target)
 	}
 }
