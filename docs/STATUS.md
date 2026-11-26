@@ -598,7 +598,33 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
       - `LoadToolchain` refuse un cache d'un autre compte ou inscriptible par d'autres ;
       - un outil tué par un signal hors délai ou hors borne rend une erreur, et non `ExitCode -1`.
     - **(hj)** avant M3-T03 (constat bas) : `exec-confined` couvre aussi `syscall.Syscall*` et `RawSyscall*` (`SYS_EXECVE`, `SYS_EXECVEAT`), `unix.Syscall*`, `plugin.Open` et cgo. Un test fige la liste des importeurs tiers transitifs admis d'`os/exec` (aujourd'hui `opa/internal/compiler/wasm`, lié dans `cmd/rempart` et `rempart-worker`).
-  - Revue sécurité, seconde passe : en cours.
+  - **Revue sécurité, seconde passe : PASS.** Le correctif haut est vérifié par le relecteur, qui a rejoué l'attaque :
+    - OpenTofu ne lit que le miroir privé ; une entrée plantée après `checkMirror` n'y arrive jamais ;
+    - les liens sont refusés, ou ce qu'ils désignent est haché ;
+    - le `h1:` d'aws du verrou est celui qu'OpenTofu 1.13.2 a écrit lors de la première passe ;
+    - toute divergence future de Hash1 fait échouer `init` (échec fermé).
+
+    La grammaire du script ne rouvre pas T158 : elle est plus stricte que `parseLock`, et la preuve de la première passe rend désormais 2 sans écriture. La proposition 0013 v2 ne relâche rien.
+  - **Obligations datées (seconde passe)** :
+    - **(hk)** avant la création de `scripts/sandbox.sh`, avec (hh) (constat moyen, T149) : la règle du hook n'est qu'une friction, contournable par développement du shell (variable, barre oblique inverse, accolades, motif de nom de fichier). Il faut une barrière dans le code exécuté :
+      - `sandbox.sh` exige une confirmation lue sur `/dev/tty` pour chaque sous-commande, `plan` compris, et refuse sans terminal ;
+      - la recette `sandbox-plan` fait de même ;
+      - un test montre que `sandbox.sh` sans terminal ne fait rien.
+
+      La proposition 0013 et T149 présentent maintenant la règle comme une friction.
+    - **(hl)** avant M3-T03, avec (hi) (constat bas) : le dépôt figé par outil se contourne par des segments `..` dans l'URL ; la somme épinglée reste la vraie défense. Correctif dans les trois lecteurs (`parseLock`, script, archtest) :
+      - forme exacte `https://github.com/<dépôt>/releases/download/v<version>/<fichier>` ;
+      - un seul segment après la version, sans `.`, `..`, `%` ni `//` ;
+      - un cas négatif.
+    - **(hm)** avant M3-T03 (constat bas) : la chaîne écrase le `.terraform.lock.hcl` de l'arbre avec la sortie de `ProviderLockFile` avant `init` (ou la garde statique le refuse). Un test montre qu'un `h1:` étranger venu de l'arbre n'atteint jamais tofu. ADR 0014 D7 est aligné sur D15.
+    - **(hn)** avec (hg) (constat bas, T157) : les rulesets tflint de `PluginDir` ne sont vérifiés qu'au chargement. Correctif : les rehacher avant chaque `tflint`, ou monter le répertoire privé en lecture seule pour les outils.
+    - **(ho)** avec (hg) (constat bas, T157) : dans `iac-tools.sh`, `put()` et `download()` appellent `inside()` après `os.makedirs`, et il reste une fenêtre entre `inside()` et `os.replace`. Correctif : `inside()` d'abord, création par `dir_fd` et `O_NOFOLLOW`. Aucun fichier ne sort du cache.
+    - Proposition 0013 : faux positifs de la règle proposée signalés, avec leur contournement (constat bas, documentation, fait).
+  - Fermeture : M3-T02 close. Les critères 1 à 6 de la fiche sont vérifiés par exécution, après le correctif comme avant ; `make -f Makefile verify-quick` rc=0.
+  - **Reste pour l'humain** :
+    - H-tools-lock : verrou avec ses `h1:`, empreintes GPG d'OpenTofu et de HashiCorp, `cosign verify-blob` de tflint ;
+    - H-harness-M3 : proposition 0013, seconde version.
+  - **Écart reporté** : Checkov à M3-T03.
 
 ## En cours
 **M1 démarré.** Décisions de l'humain (2026-09-30) : Q2 à Q5 selon les recommandations de `docs/plans/M1-overview.md` ; Q1 : faux LLM scripté en CI, **plus vrais LLM multi-fournisseurs** (Claude, OpenAI, DeepSeek, Qwen, open-weight auto-hébergés) en exécution manuelle, avec refonte du rédacteur avant tout appel réel, adaptateur compatible OpenAI et politique des fournisseurs par ADR (recommandation de l'agent, à confirmer par l'humain avant ces tâches : evals synthétiques vers tout fournisseur, données client seulement vers un fournisseur traitant dans l'UE ou auto-hébergé). Plan amendé en conséquence. **Attente humaine** : accepter l'ADR 0004 (avant M1-T01) et l'ADR 0005, poser le tag `m1-start`, fournir au moins une clé API avant les tâches LLM réel. Aucune tâche en cours. ADR 0004, 0005 et 0006 acceptés par l'humain (`885a556`), tag `m1-start` posé. Prochaine tâche : M1-T02 `codec-replay`, précédée de l'obligation (ct). **Skill `intent-to-spec` modifié en M1-T03** (note D2 : `tenant_id` du scénario de référence invalide, `internal/intent/testdata/reference-ir.json` fait foi), à relire par l'humain. **Mode accéléré** (humain, 2026-09-30, « ça prend bcp de temps ») : seuls les constats critiques ou hauts de la revue sécurité relancent un cycle ; les constats moyens et bas deviennent des obligations datées pour M1 ; une seule campagne de mutations par tâche ; garde-fous inchangés (TDD, revue, acceptation, baseline humaine). **Périmètre réduit de M0-T23** (humain, 2026-09-30, « fais seulement le nécessaire ») : les 7 tests de la fiche seulement (plus les adaptations indispensables de `internal/archtest`), une mutation par test ; l'étape A du plan (obligations (s) à (w) et (y) de M0-T22 sur `internal/evals`) est reportée à M1. **Skill `loop-engineering/references/temporal-loop-skeleton.md` modifié en M0-T19d et M0-T20, à relire.** Rappel des décisions de M0-T19c (section 11 de son plan) retenues sur délégation de l'humain : (1) vérificateur factice réservé aux tests, même en `-dev` : T20 enregistre dans `make demo` un vérificateur qui refuse tout (issue `timed_out`) ; (2) en T19d, `Author` et le délai d'approbation viennent de l'entrée, `Author` restant une identité déclarée jusqu'à M4 ; (3) T19d : `func Spec() loops.LoopSpec` renvoyant un littéral constant, littéral `loops.ApprovalRequest` écrit dans l'appel ; (4) faux positifs acceptés (`internal/archtest` exempté de la règle des chaînes, import `.` interdit partout). Décisions de M0-T19b : Décisions de la section 10 du plan retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes dans le sens le plus strict, réversibles : (1) signal d'approbation admis seulement sous forme canonique, octets du hash et de la signature `[A-Za-z0-9+/=._:-@]` (plus strict que D2 de M0-T15, à confirmer avant M4 : une signature JSON ou PEM serait refusée) ; (2) charge trop grosse : `InvalidLoopSpec` avant toute activité ; (3) échec du proposeur sans `ProposeFailure` non repris (l'adaptateur LLM de T20 doit toujours le renvoyer après un appel facturé) ; (4) obligation (m) couverte par un critère statique en M0, test de rejeu d'historique en M1 ; (5) exemption du décodeur JSON retirée de `workflowcheck.config.yaml` en T19c ; (6) noms de spécification bornés (64 octets, jeu fermé). Amendement A3 retenu sur délégation de l'humain : M0-T19 découpée en T19a à T19d, M0 passe à 22 tâches (`docs/plans/M0-overview.md`, section 0 bis). A1 prime sur la fiche : pas de `ContinueAsNew` en M0. Décisions humaines ouvertes (section 13 du plan) : (1) relire A3 ; (3) liste d'admission ASCII et français pour les prompts ; (4) avant T20, câblage du vérificateur factice (étiquette de build avec ADR, binaire de développement distinct, ou vérificateur qui refuse tout) ; (5) avant T20, `-llm=anthropic` refusé en M0 sauf décision contraire ; (6) forme canonique du signal d'approbation en T19b, à confirmer avant M4.
@@ -1727,3 +1753,7 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-26 17:09 [harnais] RETOUR EN PHASE TESTS depuis impl : lint only: three unused nolint directives in the new test lines; implementation of the review cycle complete
 
 - 2026-11-26 17:09 [harnais] phase : impl -> tests
+
+- 2026-11-26 17:23 [harnais] PHASE FREE (discipline TDD suspendue) : tâche M3-T02 iac-toolchain terminée, revue sécurité PASS à la seconde passe
+
+- 2026-11-26 17:23 [harnais] phase : tests -> free

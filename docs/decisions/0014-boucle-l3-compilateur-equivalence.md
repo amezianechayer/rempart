@@ -371,7 +371,7 @@ D1 à D20 reprennent la numérotation de la section 3 du plan. Correspondance av
   - elle rend toutes les violations, sans s'arrêter à la première.
 - **Fichiers admis**, en liste fermée :
   - `*.tf` ;
-  - `.terraform.lock.hcl` à la racine d'une racine ;
+  - `.terraform.lock.hcl` à la racine d'une racine, admis par la garde mais jamais lu : la chaîne l'écrase avec la sortie de `ProviderLockFile` avant `init` (D15 ; obligation (hm) : test qui montre qu'un `h1:` étranger venu de l'arbre n'atteint jamais tofu) ;
   - `README.md`, `SECURITY.md` ;
   - le manifeste ;
   - les archives de charts listées au manifeste ;

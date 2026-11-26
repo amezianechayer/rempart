@@ -18,6 +18,11 @@
 - `.claude/hooks/test_hooks.sh` : 12 cas refusés (les formes de la revue) ; le cas existant qui employait `sandbox-plan` dans une substitution de commande pour tester T28 emploie désormais `opa-test`, et la forme canonique reste admise.
 - `.github/CODEOWNERS` : `/modules/`, `/internal/validate/toolexec/`, `/internal/validate/toolchain.go`, `/internal/iacgen/iam/`, `/internal/plan/equivalence/`.
 
+## Limites (seconde passe de la revue de M3-T02)
+
+- **Friction, pas fermeture.** La règle filtre le texte de la commande. Le shell la contourne en développant ce texte : `T=sandbox-plan; make $T SCENARIO=demo`, barre oblique inverse dans le nom de la cible, accolades (`sandbox-{plan,}`), variable ou motif pour le chemin de `sandbox.sh`. Aucune de ces formes n'est sous « ask ». La barrière qui ferme T149 est dans le code exécuté : `sandbox.sh` exigera lui-même, pour chaque sous-commande y compris `plan`, une confirmation lue sur `/dev/tty`, et refusera sans terminal ; la recette `sandbox-plan` aussi (obligation (hk) de l'agent, avant la création de `sandbox.sh`, avec un test qui montre que `sandbox.sh` sans terminal ne fait rien).
+- **Faux positifs** (sondés par la revue, code 2) : une commande qui nomme `make` puis `sandbox-plan`, ou `sandbox.sh` puis `plan`, sur le même segment, par exemple `git add scripts/sandbox.sh internal/plan/decode.go` ou `grep -n 'make sandbox-plan' docs/SETUP.md`. Contournement : séparer les commandes (`git add scripts/sandbox.sh` puis `git add internal/plan/`), lire le fichier par un autre moyen. `internal/plan` arrive en M3-T03.
+
 ## Non inclus, à décider par l'humain
 
 - **Garde d'écriture** (comme pour les baselines) sur `scripts/iac-tools.lock.json`, `modules/scanner-exceptions.json` et `internal/iacgen/iam/`. Recommandation de l'agent : ne pas l'ajouter sur le verrou, que l'agent doit pouvoir monter de version ; l'ajouter sur la table IAM et les exceptions. Résidu sans garde d'écriture : un verrou modifié par l'agent sous injection n'est arrêté que par sa grammaire fermée (chargeur Go, script, archtest), par la relecture humaine (H-tools-lock) et par la revue de code owner (`/scripts/`). Depuis la revue de M3-T02, le script relit le verrou sous cette grammaire avant toute écriture (T158).
