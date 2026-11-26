@@ -1,6 +1,6 @@
 # 0015. Isolation des outils IaC : espaces de noms, arbre fermé monté par un assistant de re-exécution, Landlock en renfort
 
-- Statut : **proposé**. Rédigé le 2026-11-26 par `architect` pour solder l'obligation (hg) de `docs/STATUS.md` (menace T157). L'humain l'accepte avant la phase tests de M3-T02b, une fois la section « Mesure du prototype » complétée. Tant que M3-T02b n'est pas close avec une revue `security-reviewer` PASS, `internal/validate/toolexec` n'est câblé ni dans `rempart check` (M3-T03) ni dans `rempart-worker` (M3-T08).
+- Statut : **proposé**, prototype mesuré le 2026-11-26 (section « Mesure du prototype », constats F10 à F12). Rédigé le 2026-11-26 par `architect` pour solder l'obligation (hg) de `docs/STATUS.md` (menace T157). L'humain l'accepte avant la phase tests de M3-T02b, une fois la section « Mesure du prototype » complétée. Tant que M3-T02b n'est pas close avec une revue `security-reviewer` PASS, `internal/validate/toolexec` n'est câblé ni dans `rempart check` (M3-T03) ni dans `rempart-worker` (M3-T08).
 - Date : 2026-11-26
 - Jalon : M3. Mise en œuvre par tâche :
   - M3-T02b (nouvelle, insérée entre T02 et T03) : D1 à D8, D10 à D13 ;
@@ -475,17 +475,25 @@ Protocole :
 
 | Mesure | Attendu | Valeur |
 |---|---|---|
-| `tofu init` sur le miroir privé, `validate`, `plan` hors ligne d'une racine AWS, dans l'isolation complète | code 0 | |
-| `tflint` avec les rulesets de la copie privée | code 0 ou 2 (findings) | |
-| `trivy config` sur règles embarquées | code 0 | |
-| montages nécessaires au-delà de D5 | aucun | |
-| `lo` levé nécessaire (H6) | non | |
-| `subset=pid` admis | oui (noyau 6.18) | |
-| `max_user_namespaces=0` posé dans l'espace de l'outil, puis `unshare -U` refusé dans l'outil | oui | |
-| connexion à une socket Unix nommée depuis un processus restreint par Landlock seul (H4) | réussie à l'ABI 7 | |
-| exec par `execveat(AT_EMPTY_PATH)` d'un `memfd` scellé depuis l'espace de montage de l'assistant ((ht)), et surcoût de la copie d'OpenTofu | réussi, moins de 100 ms | |
-| surcoût médian par exécution (assistant compris) | moins de 50 ms | |
-| `go version -m <binaire> \| grep -c 'golang.org/x/sys'` pour `rempart` et `rempart-worker` (D10) | à mesurer | |
+| `tofu init` sur le miroir privé, `validate`, `plan` hors ligne d'une racine AWS, dans l'isolation complète | code 0 | **code 0** pour les trois. `init` en 5,8 s, `validate` en 2,1 s, `plan -out` en 2,5 s ; `show -json` rend les 8 ressources attendues, dont `aws_iam_user.injected`. Arbre en lecture seule, aucun `.terraform/` écrit dedans |
+| `tflint` avec les rulesets de la copie privée | code 0 ou 2 (findings) | **code 2** : un finding `terraform_required_version`, identique à l'exécution directe ; le ruleset AWS est chargé |
+| `trivy config` sur règles embarquées | code 0 | **code 0** (`--skip-check-update`, cache dans `TMPDIR`) |
+| montages nécessaires au-delà de D5 | aucun | **aucun** pour les trois outils. Deux conséquences sur l'usage : `plan -out` vise `data/`, puisque l'arbre est en lecture seule ; la configuration de tflint est passée par `--config` depuis une entrée en lecture seule, jamais un `.tflint.hcl` de l'arbre (D7 de l'ADR 0014) |
+| `lo` levé nécessaire (H6) | non | **non** : providers d'OpenTofu et plugins de tflint passent par des sockets Unix dans `TMPDIR` |
+| `subset=pid` admis | oui (noyau 6.18) | **oui** : `/proc` ne montre que `1`, `self` et `thread-self` |
+| `max_user_namespaces=0` posé dans l'espace de l'outil, puis `unshare -U` refusé dans l'outil | oui | **oui**, en uid 0 comme en uid 65534 : `unshare: No space left on device`. À poser avant le montage de `/proc` en `subset=pid`, qui masque `/proc/sys` |
+| connexion à une socket Unix nommée depuis un processus restreint par Landlock seul (H4) | réussie à l'ABI 7 | **réussie** : sous un domaine qui refuse tous les droits du système de fichiers (création de fichier refusée), `connect()` aboutit. H4 est confirmée : (b) ne ferme pas P8 |
+| exec par `execveat(AT_EMPTY_PATH)` d'un `memfd` scellé depuis l'espace de montage de l'assistant ((ht)), et surcoût de la copie d'OpenTofu | réussi, moins de 100 ms | **réussi pour OpenTofu et Trivy, échec pour tflint**, qui se relance lui-même par `os.Executable()` pour son ruleset intégré (`fork/exec /memfd:tool: no such file or directory`). Monter le `memfd` par `bind` est refusé par le noyau (`EINVAL`). **Variante retenue, réussie pour les trois outils** : l'assistant copie le `memfd` scellé dans un tmpfs de l'espace de montage de l'outil, monté sur le répertoire de l'outil puis remonté en lecture seule. Le chemin est stable et le contenu est celui qui a été vérifié. Copie en 23 ms (tflint, 53 Mio), 41 ms (OpenTofu, 108 Mio), 73 ms (Trivy, 167 Mio), plus la copie du parent dans le `memfd`. Mémoire : environ deux fois la taille du binaire pendant l'exécution |
+| surcoût médian par exécution (assistant compris) | moins de 50 ms | **1,8 ms** (`/usr/bin/true`, médiane sur 25 exécutions : 2,3 ms en direct, 4,1 ms isolé), hors copie du binaire |
+| `go version -m <binaire> \| grep -c 'golang.org/x/sys'` pour `rempart` et `rempart-worker` (D10) | à mesurer | **1** pour chacun : `x/sys` est déjà lié, donc son import direct par `toolexec` n'ajoute aucun module |
+
+Conditions : prototype jetable de 300 lignes de Go, hors dépôt, dans la session ; outils du verrou ; réseau absent. La chaîne complète d'outils a tourné en uid 0 (cache sous `/root`). En uid 65534 par `setpriv`, ont été vérifiés : `id` (uid 1000), capacités effectives et ensemble limitant nuls, `tofu version` par la copie du `memfd`, `/proc` réduit aux processus de l'outil, `kill -9 -1` sans effet sur un processus de l'hôte du même uid, espace imbriqué refusé. La chaîne complète en uid non privilégié est le critère 4 de M3-T02b.
+
+### Constats du prototype, qui amendent D2 à D4 (à l'acceptation)
+- **F10. `PR_SET_DUMPABLE` contre la re-exécution.** En uid non privilégié, un lanceur dont `PR_SET_DUMPABLE` vaut 0 ne peut plus se relancer par `/proc/self/exe` : `fork/exec /proc/self/exe: permission denied`, mesuré en uid 65534 ; root n'est pas touché, d'où la nécessité du critère 4. Parade mesurée, qui amende D2 : le lanceur repasse à 1 sous un verrou le seul temps de `Start`, puis revient à 0 (vérifié : `PR_GET_DUMPABLE` vaut 0 juste après). Pendant cette fenêtre, aucun outil ne voit le lanceur, puisque l'espace PID et son `/proc` (D3, D5) ferment P1 à eux seuls ; `PR_SET_DUMPABLE=0` reste une défense en profondeur contre les autres processus.
+- **F11. Capacités de l'assistant.** L'assistant tourne sous l'uid interne 1000. Il perdrait ses capacités à sa propre exec, et ne pourrait alors plus monter (`EPERM` mesuré). Amendement de D3 et D4 : le lanceur lui donne en capacités ambiantes (`SysProcAttr.AmbientCaps`) `CAP_SETPCAP`, `CAP_SYS_ADMIN` et `CAP_SYS_RESOURCE`. L'assistant efface ensuite, avant l'exec de l'outil, les capacités ambiantes, l'ensemble limitant **et l'ensemble héritable**. Le prototype laissait l'ensemble héritable non nul, sans effet mais à effacer. Mesuré dans l'outil : `CapEff`, `CapBnd`, `CapAmb` nuls.
+- **F12. Remontage en lecture seule dans un espace utilisateur.** Il doit reprendre les options verrouillées de la source (`noexec`, options d'horodatage), lues par `statfs`, sinon il est refusé. Le prototype le fait ; la mise en œuvre le teste.
+- **(ht)** : la variante retenue (copie du `memfd` scellé dans un tmpfs privé de l'outil) remplace, dans D4 et D5, le montage en lecture seule du répertoire de l'outil. Un outil qui se relance lui-même (tflint) garde un chemin valide, et une réécriture de la copie privée entre la vérification et l'exec n'a plus d'effet.
 
 ## Vérifications (critères de M3-T02b, puis compléments de M3-T03 et M3-T08)
 Sauf mention, dans la session de l'agent.

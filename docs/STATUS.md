@@ -680,6 +680,38 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
     - (hm) dans M3-T03 ;
     - verrou de Checkov, avec (hs).
 
+- 2026-11-26 : **ADR 0015 (isolation des outils IaC) proposé**, pour l'obligation (hg) (T157).
+  - **Contenu.** Rédigé par `architect`, relu par l'agent.
+    - Numéros provisoires T160 et T161 de l'ADR renommés T161 et T162, car T160 était déjà prise.
+    - Section D13 bis ajoutée par l'agent : rattachement de (hq), (hr), (hs) et (ht).
+  - **Recommandation : option (c).**
+    - Un assistant re-exécute le binaire Rempart lui-même et crée les espaces de noms utilisateur, montage, réseau, PID, IPC, UTS et cgroup.
+    - Il monte un arbre en liste fermée par `pivot_root` ; `tree/` et la copie privée sont en lecture seule pour tout outil.
+    - Le lanceur n'est pas « dumpable » ; `Setsid` ; l'espace PID tue tous les descendants.
+    - Landlock en renfort.
+    - Échec fermé partout, aucun mode dégradé en M3, aucune dépendance nouvelle.
+    - Nouvelle tâche **M3-T02b `tool-isolation`**, entre T02 et T03.
+  - **Prototype (étape 0), mesuré dans la session** : 300 lignes de Go jetables, hors dépôt.
+    - OpenTofu (`init`, `validate`, `plan` à 8 ressources), tflint (ruleset AWS chargé) et Trivy tournent dans l'arbre fermé, réseau éteint, sans montage au-delà de D5.
+    - `subset=pid` est admis ; l'espace imbriqué est refusé (`max_user_namespaces=0`).
+    - Surcoût médian de 1,8 ms ; `x/sys` est déjà lié dans les deux binaires.
+    - H4 est confirmée : à l'ABI 7, Landlock seul n'empêche pas `connect()` sur une socket Unix nommée, d'où le choix de (c).
+    - Chemin non privilégié (uid 65534) vérifié.
+  - **Constats qui amendent l'ADR :**
+    - F10 : en uid non privilégié, `PR_SET_DUMPABLE=0` empêche la re-exécution par `/proc/self/exe` ; parade mesurée, bascule sous verrou le seul temps de `Start` ;
+    - F11 : capacités ambiantes pour l'assistant, puis effacement des ensembles ambiant, limitant et héritable avant l'outil ;
+    - F12 : options verrouillées reprises au remontage ;
+    - (ht) : `execveat` d'un `memfd` casse tflint, qui se relance par `os.Executable()`. Variante retenue, réussie pour les trois outils : copie du `memfd` scellé dans un tmpfs privé de l'outil, en lecture seule, pour 23 à 73 ms.
+  - **Attente humaine H0-M3.3 : acceptation de l'ADR 0015 et réponse à ses six questions** (recommandation de l'agent : oui à chacune) :
+    - Q1 option (c) ;
+    - Q2 aucun mode dégradé ;
+    - Q3 sonde du poste WSL2 (H-isolation-probe), commandes dans l'hypothèse H2 ;
+    - Q4 proposition 0014 pour la CI (levée de la restriction AppArmor d'Ubuntu 24.04 sur le runner éphémère, `REMPART_REQUIRE_SANDBOX=1`) ;
+    - Q5 refus de démarrage du worker sans isolation ;
+    - Q6 `tree/` en lecture seule pour tout outil.
+
+    M3-T02b ne commence pas avant cette acceptation, et M3-T03 en dépend.
+
 ## En cours
 **M1 démarré.** Décisions de l'humain (2026-09-30) : Q2 à Q5 selon les recommandations de `docs/plans/M1-overview.md` ; Q1 : faux LLM scripté en CI, **plus vrais LLM multi-fournisseurs** (Claude, OpenAI, DeepSeek, Qwen, open-weight auto-hébergés) en exécution manuelle, avec refonte du rédacteur avant tout appel réel, adaptateur compatible OpenAI et politique des fournisseurs par ADR (recommandation de l'agent, à confirmer par l'humain avant ces tâches : evals synthétiques vers tout fournisseur, données client seulement vers un fournisseur traitant dans l'UE ou auto-hébergé). Plan amendé en conséquence. **Attente humaine** : accepter l'ADR 0004 (avant M1-T01) et l'ADR 0005, poser le tag `m1-start`, fournir au moins une clé API avant les tâches LLM réel. Aucune tâche en cours. ADR 0004, 0005 et 0006 acceptés par l'humain (`885a556`), tag `m1-start` posé. Prochaine tâche : M1-T02 `codec-replay`, précédée de l'obligation (ct). **Skill `intent-to-spec` modifié en M1-T03** (note D2 : `tenant_id` du scénario de référence invalide, `internal/intent/testdata/reference-ir.json` fait foi), à relire par l'humain. **Mode accéléré** (humain, 2026-09-30, « ça prend bcp de temps ») : seuls les constats critiques ou hauts de la revue sécurité relancent un cycle ; les constats moyens et bas deviennent des obligations datées pour M1 ; une seule campagne de mutations par tâche ; garde-fous inchangés (TDD, revue, acceptation, baseline humaine). **Périmètre réduit de M0-T23** (humain, 2026-09-30, « fais seulement le nécessaire ») : les 7 tests de la fiche seulement (plus les adaptations indispensables de `internal/archtest`), une mutation par test ; l'étape A du plan (obligations (s) à (w) et (y) de M0-T22 sur `internal/evals`) est reportée à M1. **Skill `loop-engineering/references/temporal-loop-skeleton.md` modifié en M0-T19d et M0-T20, à relire.** Rappel des décisions de M0-T19c (section 11 de son plan) retenues sur délégation de l'humain : (1) vérificateur factice réservé aux tests, même en `-dev` : T20 enregistre dans `make demo` un vérificateur qui refuse tout (issue `timed_out`) ; (2) en T19d, `Author` et le délai d'approbation viennent de l'entrée, `Author` restant une identité déclarée jusqu'à M4 ; (3) T19d : `func Spec() loops.LoopSpec` renvoyant un littéral constant, littéral `loops.ApprovalRequest` écrit dans l'appel ; (4) faux positifs acceptés (`internal/archtest` exempté de la règle des chaînes, import `.` interdit partout). Décisions de M0-T19b : Décisions de la section 10 du plan retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes dans le sens le plus strict, réversibles : (1) signal d'approbation admis seulement sous forme canonique, octets du hash et de la signature `[A-Za-z0-9+/=._:-@]` (plus strict que D2 de M0-T15, à confirmer avant M4 : une signature JSON ou PEM serait refusée) ; (2) charge trop grosse : `InvalidLoopSpec` avant toute activité ; (3) échec du proposeur sans `ProposeFailure` non repris (l'adaptateur LLM de T20 doit toujours le renvoyer après un appel facturé) ; (4) obligation (m) couverte par un critère statique en M0, test de rejeu d'historique en M1 ; (5) exemption du décodeur JSON retirée de `workflowcheck.config.yaml` en T19c ; (6) noms de spécification bornés (64 octets, jeu fermé). Amendement A3 retenu sur délégation de l'humain : M0-T19 découpée en T19a à T19d, M0 passe à 22 tâches (`docs/plans/M0-overview.md`, section 0 bis). A1 prime sur la fiche : pas de `ContinueAsNew` en M0. Décisions humaines ouvertes (section 13 du plan) : (1) relire A3 ; (3) liste d'admission ASCII et français pour les prompts ; (4) avant T20, câblage du vérificateur factice (étiquette de build avec ADR, binaire de développement distinct, ou vérificateur qui refuse tout) ; (5) avant T20, `-llm=anthropic` refusé en M0 sauf décision contraire ; (6) forme canonique du signal d'approbation en T19b, à confirmer avant M4.
 
