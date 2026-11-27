@@ -621,3 +621,41 @@ Puis :
 |---|---|---|---|---|
 | T161 | Faille du mécanisme d'isolation lui-même : montage oublié ou trop large, descripteur hérité, ancienne racine non détachée, binaire Rempart visible en écriture (leçon de CVE-2019-5736), configuration de l'assistant détournée ; surface noyau offerte par les espaces de noms utilisateur, dont un espace imbriqué créé par l'outil | E | Liste fermée sous CODEOWNERS et amendée par ADR ; détachement vérifié ; descripteurs fermés ; `no_new_privs` ; ensemble limitant vidé ; uid interne non nul ; `max_user_namespaces=0` dans l'espace de l'outil ; Landlock en renfort ; seccomp en M4 ; revue sécurité de chaque changement de `toolexec` | `TestIsolationFilesystemClosed` (racine en liste fermée), `TestIsolationHidesProcesses`, `TestIsolationLandlockLayer`, critère 4 (uid non privilégié) |
 | T162 | Isolation désactivée ou affaiblie en silence : tests d'isolation sautés en CI, sonde trompée, binaire sans `MaybeHelper` (la re-exécution lance alors son `main` normal), mode dégradé posé par une variable sous injection | T, E | Échec fermé, aucun mode dégradé ; `REMPART_REQUIRE_SANDBOX=1` en CI (proposition 0014) ; poignée de main de l'assistant ; règle `toolexec-helper-first` ; niveau porté par chaque rapport ; refus de démarrage du worker | `TestIsolationFailsClosed`, `TestToolexecHelperFirst`, vérification 2, `TestWorkerRequiresIsolation` |
+
+## Amendement 1 (proposé le 2026-11-27, à accepter par l'humain)
+
+- Statut : proposé ; l'agent l'applique dès M3-T02b, le filtre ne relâchant rien ; refus de l'humain : retrait du filtre et retour à BLOCK.
+- Origine : deuxième passe de la revue `security-reviewer` de M3-T02b (commit `ec6ce76`, branche `main-6cpq6q`), BLOCK sur un constat haut.
+- **Constat** :
+  - le noyau accorde les droits « user » d'une clé à tout processus du même kuid, quel que soit l'espace utilisateur ; l'outil a le kuid du lanceur (D3) ;
+  - l'outil peut lier à son trousseau de session, par son numéro de série, un trousseau du lanceur qui donne `USR_ALL` (par exemple le trousseau utilisateur `_uid.N` de l'espace initial, droits 0x1f3f0000), en redevenir possesseur et en lire les clés (keyctl d'aws-vault, Kerberos `KEYRING:user:`). Le numéro de 31 bits se trouve par recherche exhaustive en quelques minutes ;
+  - `add_key` permet aussi d'épuiser le quota de clés de l'uid ;
+  - le trousseau de session anonyme neuf, que l'assistant rejoint déjà avant l'exec (T164), ne suffit pas, et Landlock ne filtre pas keyctl.
+
+### A1.1. D14 amendé : filtre seccomp minimal dès M3-T02b
+- « Un filtre seccomp, en M4 » devient « le filtre seccomp complet (liste blanche d'appels), en M4 ».
+- **Place** : dans D6, entre l'étape 7 (Landlock) et l'étape 8 (exec), donc après `PR_SET_NO_NEW_PRIVS` (étape 6), sur le fil verrouillé qui fait l'exec ; l'outil en hérite.
+- **Contenu** :
+  - `add_key`, `request_key` et `keyctl` rendent `EPERM` ; tout autre appel est admis ;
+  - l'architecture d'audit est contrôlée : `x86_64` sur amd64, `aarch64` sur arm64 ; toute autre est refusée ;
+  - sur amd64, l'ABI x32 (bit 0x40000000 du numéro d'appel) est refusée ;
+  - ces deux refus rendent `EPERM` à tout appel (`SECCOMP_RET_ERRNO`), comme les appels de clés : un appel par une autre ABI n'aboutit jamais.
+- **Échec fermé** : si le filtre ne se pose pas, l'assistant écrit un code fixe sur le descripteur 4 (`ErrIsolationSetup`). Le filtre posé, il vérifie qu'un `keyctl` rend `EPERM`, sinon même échec.
+- **Mode sonde** : l'assistant y pose et vérifie le filtre de même ; un échec prive la sonde du niveau complet.
+- **Rattachement** : T161 ; T164, dont la parade « trousseau utilisateur propre à chaque espace utilisateur » n'est pas une barrière (le trousseau de l'espace initial reste joignable par son numéro) et renvoie désormais à T170 ; T170, nouvelle :
+
+| # | Menace | Cat. | Atténuations | Vérification |
+|---|---|---|---|---|
+| T170 | Accès aux clés du noyau par numéro de série pour un même kuid : lien d'un trousseau du lanceur qui donne `USR_ALL`, possession retrouvée, lecture des clés (aws-vault, Kerberos) ; épuisement du quota de clés de l'uid par `add_key` | I, T, D | Filtre seccomp minimal (A1.1), posé aussi en sonde, vérifié, échec fermé ; trousseau de session anonyme neuf (T164) en défense en profondeur ; liste blanche en M4 | `TestIsolationKeysBySerial` |
+
+- **Résidus** :
+  - le profil seccomp par défaut de Docker refuse déjà keyctl avec `EPERM` ; l'assistant, qui ne tolère que `ENOSYS`, y échoue fermé à son `KEYCTL_JOIN_SESSION_KEYRING` (code `y`) : à traiter avec H3 et Q5 en M4 ;
+  - aucun outil du verrou n'est censé employer ces appels : le critère 7 le montre pour OpenTofu sous le filtre, M3-T03 le montrera pour tflint, Trivy et Checkov.
+
+### A1.2. Critères de la section « Vérifications » amendés
+- **Critère 1** : 18 tests, soit les 11 d'origine, les six ajouts de la revue (`TestIsolationProcRestricted`, `TestIsolationSessionKeyring`, `TestIsolationCredentials`, `TestIsolationDevicesReadOnly`, `TestIsolationReadOnlyRecursive`, `TestIsolationTestHooksRefused`) et `TestIsolationKeysBySerial`. `REMPART_REQUIRE_SANDBOX=1 go test ./internal/validate/toolexec/ -v 2>&1 | grep -Ec -- '^--- PASS: TestIsolation(Probe|FailsClosed|LauncherNotDumpable|KillsEscapedDescendants|NoNetwork|FilesystemClosed|PrivateCopiesReadOnly|HidesProcesses|ParallelRunsSeparated|NoTerminal|LandlockLayer|ProcRestricted|SessionKeyring|Credentials|DevicesReadOnly|ReadOnlyRecursive|TestHooksRefused|KeysBySerial) '` : `18`.
+- **Critère 2** : seuls sont admis les sauts de témoin dont la cible n'existe pas sur le noyau même hors isolation (`/proc/sys/kernel/modprobe`, `/proc/sysrq-trigger`, `/proc/kcore` sur le noyau de la session). La commande du critère, dont le `grep` devient `grep -E -- '^[[:space:]]*--- SKIP' | grep -Evc -- 'TestIsolationProcRestricted/(modprobe|sysrq-trigger|kcore) '`, rend `0` ; `ls -d /proc/sys/kernel/modprobe /proc/sysrq-trigger /proc/kcore 2>/dev/null` ne nomme aucune cible dont le sous-test a sauté.
+- **Critère 4** : sont admis en plus les sauts de témoin qui exigent un privilège : chmod d'un inode d'un autre propriétaire (`TestIsolationDevicesReadOnly/*/chmod_dev_null` et `fchmod_stdin`) et sous-montage qui exige `CAP_SYS_ADMIN` (`TestIsolationReadOnlyRecursive`, sauté en entier). La première commande rend donc `17`. La seconde, dont le dernier `grep` devient `grep -E -- '^[[:space:]]*--- (FAIL|SKIP)' | grep -Evc -- '--- SKIP: (TestIsolationReadOnlyRecursive|TestIsolationDevicesReadOnly/(landlock|mounts_only)/(chmod_dev_null|fchmod_stdin)|TestIsolationProcRestricted/(modprobe|sysrq-trigger|kcore)) '`, rend `0`.
+- **Critère 8** : modifié dans le commit de M3-T02b (test à part `TestIaCToolsScriptPlantedLink`) ; l'acceptation de cet amendement acquitte cette modification.
+- Les mentions des « 11 `TestIsolation*` » (fiche de M3-T02b, T157 ci-dessus) se lisent « 18 ».
+- **Ordre** : `TestIsolationKeysBySerial` d'abord, rouge (lien par numéro et lecture d'une clé du lanceur, avec témoin), puis le filtre, puis les critères 1 à 11 rejoués.
