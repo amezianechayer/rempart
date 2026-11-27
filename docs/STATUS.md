@@ -747,7 +747,44 @@ Tête vérifiée : `b964f73` (branche `main-6cpq6q`, PR #5). Tag proposé : `m0-
   - **Étapes humaines** :
     - H-CI-3 : appliquer la proposition 0014 ;
     - H-isolation-probe : commandes de `docs/SETUP.md` sur le poste WSL2, avant le premier `rempart check` avec outils.
-  - Revue sécurité : en cours (PASS exigé avant tout câblage de `toolexec` dans `rempart check`).
+  - **Revue sécurité, première passe : BLOCK** (2026-11-27). Deux constats hauts, cinq moyens, dix-neuf bas ; cause commune : un lanceur root associe l'outil au kuid 0, propriétaire des inodes root, que Landlock ne protège ni du `chmod` ni du `keyctl`.
+    - Hauts, corrigés :
+      - repli sur un `/proc` complet quand `subset=pid` est refusé (`core_pattern` mène alors au root de l'hôte) : refusé désormais, code `p`, absence de `/proc/sys` vérifiée ;
+      - trousseau de session du lanceur lisible et modifiable par l'outil : l'assistant rejoint un trousseau anonyme neuf avant l'exec, code `y`.
+    - Moyens, corrigés dans le même cycle :
+      - descripteurs au-delà de 1023 hérités : `close_range` puis contrôle, code `q` ;
+      - nœuds de `/dev` et entrée standard de l'hôte modifiables : `/dev` en lecture seule, entrée standard ouverte dans l'arbre, code `i` ;
+      - liens en lecture seule non récursifs : `mount_setattr` avec `AT_RECURSIVE`, échec fermé avant Linux 5.12 ;
+      - tests masqués par Landlock : crochet de test `NoLandlock` (refusé hors du binaire de test du paquet) et `TestIsolationCredentials`.
+    - Bas corrigé au passage : erreurs de `PR_CAPBSET_DROP` vérifiées, puis l'ensemble limitant relu.
+    - Cycle : tests rouges vus pour la bonne raison (repli pris, `launcher-secret` lu, descripteur 1500 hérité, `chmod` de `/dev/null` réussi, sous-montage en écriture), puis verts. Un retour en phase tests pour le seul lint du fichier de test ; retour en impl par `--allow-green`, les tests ayant été vus rouges avant les correctifs.
+    - Nouveaux tests : `TestIsolationProcRestricted`, `TestIsolationSessionKeyring`, `TestIsolationCredentials`, `TestIsolationDevicesReadOnly`, `TestIsolationReadOnlyRecursive`, `TestIsolationTestHooksRefused`. `TestIsolationNoNetwork`, `TestIsolationFilesystemClosed`, `TestIsolationPrivateCopiesReadOnly` et `TestIsolationHidesProcesses` sont rejoués sans Landlock.
+    - Preuves :
+      - `REMPART_REQUIRE_SANDBOX=1` : `17` `TestIsolation*` et `5` `TestToolexec*` réussis, `0` échec ; trois sauts de témoin (`/proc/sys/kernel/modprobe`, `/proc/sysrq-trigger`, `/proc/kcore` absents de ce noyau, même hors isolation) ;
+      - en uid 65534 par `setpriv` : `16` réussis, `0` échec ; sauts de témoin attendus sans privilège (`chmod` refusé à un non-propriétaire, sous-montage qui exige `CAP_SYS_ADMIN`) ;
+      - `3` tests d'intégration hors ligne avec OpenTofu isolé ; archtests verts ; `golangci-lint` 0 constat, `integration` compris.
+    - `docs/SETUP.md` : noyau 5.12 ou plus récent ; pas de lancement en root. Modèle de menace : T157 et T161 complétées (« Couvre P1 à P13 », inexact, corrigé), T163 à T169 insérées.
+    - **Écarts à acquitter par l'humain** :
+      - les critères 1 et 4 de l'ADR 0015 comptent 11 tests ; il y en a désormais 17 (l'ADR n'est pas modifié) ;
+      - le critère 8 a été modifié dans le commit de M3-T02b (signalé par la revue).
+    - **Obligations datées** (constats bas, amendement) :
+      - (hw) amendement de D3 par ADR, décision humaine : jamais d'uid interne associé au kuid 0 (uid hôte dédié non nul, ou lanceur root refusé hors tests) ; avant M3-T08 ; d'ici là, `docs/SETUP.md` déconseille le lancement en root (T163) ;
+      - (hx) lanceur non « dumpable » dès `Probe` et `Run`, `PR_GET_DUMPABLE` vérifié (D2) ; avant M3-T08 ;
+      - (hy) aucun `kill(-pid)` après la récupération du processus (pid réutilisable), ou une pidfd ; avant M3-T08 ;
+      - (hz) octet de fin juste avant l'exec, pour qu'une panique de l'assistant après « prêt » ne passe pas pour un code de sortie de l'outil ; avant la clôture de M3-T03 ;
+      - (ia) `MaybeHelper` vérifie `uid_map` et `getpid() == 1` avant tout ; résidu des `init()` documenté (T169) ; avant M3-T08 ;
+      - (ib) ABI Landlock de la sonde passée dans la configuration et comparée (D7) ; avant M3-T08 ;
+      - (ic) règles Landlock : plus de `READ_DIR` sur `/`, entrées `/bin`, `/lib`, `/lib64`, `/sbin` quand ce ne sont pas des liens ; avant M3-T08 ;
+      - (id) sauts de témoin sous `REMPART_REQUIRE_SANDBOX=1` : échec, ou décompte des `--- SKIP` par la CI ; `TestIsolationNoTerminal` sans terminal ne prouve pas `Setsid` ; avant l'application de la proposition 0014 (H-CI-3) ;
+      - (ie) `AF_VSOCK` non cloisonné : seccomp en M4, test avec témoin là où vsock existe (T166) ;
+      - (if) règles `exec-confined` et `isolation-confined` : `AllThreadsSyscall`, `AllThreadsSyscall6` et leurs équivalents `unix` ; `go list` avec `-tags=integration` ; avant la clôture de M3-T03 ;
+      - (ig) entrées `ReadOnly` issues d'un jeton typé `Toolchain` (en uid 0, « appartient à l'uid effectif » admet `/run`, `/var`, `/home` ; une autre arborescence `rempart-ws-*` ou `rempart-tool-*` est admise) ; avant la clôture de M3-T03 ;
+      - (ih) `TMPDIR` sous un chemin système (`/dev/shm`) refusé ; avant la clôture de M3-T03 ;
+      - (ii) nettoyage de `data/` qui résiste à un répertoire mis en mode 0 par l'outil (lanceur non root) ; avant la clôture de M3-T03 ;
+      - (ij) toute lecture de `data/`, `HOME` ou `TMPDIR` par le lanceur passe par `os.Root`, sans suivre de lien, fichier régulier, taille bornée (T168) ; M3-T03 ;
+      - (ik) `docs/SETUP.md` : un profil AppArmor `userns,` limité au binaire `rempart` installé, plutôt que la levée persistante pour tout le poste ; avant la clôture de M3-T03 ;
+      - (il) critère 4 avec la chaîne réelle d'outils en uid non root, et un test de F12 (un lien d'une source `noexec` reste `noexec`) ; avant la clôture de M3-T03.
+  - Revue sécurité : deuxième passe en cours (PASS exigé avant tout câblage de `toolexec` dans `rempart check`).
 
 ## En cours
 **M1 démarré.** Décisions de l'humain (2026-09-30) : Q2 à Q5 selon les recommandations de `docs/plans/M1-overview.md` ; Q1 : faux LLM scripté en CI, **plus vrais LLM multi-fournisseurs** (Claude, OpenAI, DeepSeek, Qwen, open-weight auto-hébergés) en exécution manuelle, avec refonte du rédacteur avant tout appel réel, adaptateur compatible OpenAI et politique des fournisseurs par ADR (recommandation de l'agent, à confirmer par l'humain avant ces tâches : evals synthétiques vers tout fournisseur, données client seulement vers un fournisseur traitant dans l'UE ou auto-hébergé). Plan amendé en conséquence. **Attente humaine** : accepter l'ADR 0004 (avant M1-T01) et l'ADR 0005, poser le tag `m1-start`, fournir au moins une clé API avant les tâches LLM réel. Aucune tâche en cours. ADR 0004, 0005 et 0006 acceptés par l'humain (`885a556`), tag `m1-start` posé. Prochaine tâche : M1-T02 `codec-replay`, précédée de l'obligation (ct). **Skill `intent-to-spec` modifié en M1-T03** (note D2 : `tenant_id` du scénario de référence invalide, `internal/intent/testdata/reference-ir.json` fait foi), à relire par l'humain. **Mode accéléré** (humain, 2026-09-30, « ça prend bcp de temps ») : seuls les constats critiques ou hauts de la revue sécurité relancent un cycle ; les constats moyens et bas deviennent des obligations datées pour M1 ; une seule campagne de mutations par tâche ; garde-fous inchangés (TDD, revue, acceptation, baseline humaine). **Périmètre réduit de M0-T23** (humain, 2026-09-30, « fais seulement le nécessaire ») : les 7 tests de la fiche seulement (plus les adaptations indispensables de `internal/archtest`), une mutation par test ; l'étape A du plan (obligations (s) à (w) et (y) de M0-T22 sur `internal/evals`) est reportée à M1. **Skill `loop-engineering/references/temporal-loop-skeleton.md` modifié en M0-T19d et M0-T20, à relire.** Rappel des décisions de M0-T19c (section 11 de son plan) retenues sur délégation de l'humain : (1) vérificateur factice réservé aux tests, même en `-dev` : T20 enregistre dans `make demo` un vérificateur qui refuse tout (issue `timed_out`) ; (2) en T19d, `Author` et le délai d'approbation viennent de l'entrée, `Author` restant une identité déclarée jusqu'à M4 ; (3) T19d : `func Spec() loops.LoopSpec` renvoyant un littéral constant, littéral `loops.ApprovalRequest` écrit dans l'appel ; (4) faux positifs acceptés (`internal/archtest` exempté de la règle des chaînes, import `.` interdit partout). Décisions de M0-T19b : Décisions de la section 10 du plan retenues sur délégation de l'humain (« continue sans t'arrêter, fais ce qu'il faut »), toutes dans le sens le plus strict, réversibles : (1) signal d'approbation admis seulement sous forme canonique, octets du hash et de la signature `[A-Za-z0-9+/=._:-@]` (plus strict que D2 de M0-T15, à confirmer avant M4 : une signature JSON ou PEM serait refusée) ; (2) charge trop grosse : `InvalidLoopSpec` avant toute activité ; (3) échec du proposeur sans `ProposeFailure` non repris (l'adaptateur LLM de T20 doit toujours le renvoyer après un appel facturé) ; (4) obligation (m) couverte par un critère statique en M0, test de rejeu d'historique en M1 ; (5) exemption du décodeur JSON retirée de `workflowcheck.config.yaml` en T19c ; (6) noms de spécification bornés (64 octets, jeu fermé). Amendement A3 retenu sur délégation de l'humain : M0-T19 découpée en T19a à T19d, M0 passe à 22 tâches (`docs/plans/M0-overview.md`, section 0 bis). A1 prime sur la fiche : pas de `ContinueAsNew` en M0. Décisions humaines ouvertes (section 13 du plan) : (1) relire A3 ; (3) liste d'admission ASCII et français pour les prompts ; (4) avant T20, câblage du vérificateur factice (étiquette de build avec ADR, binaire de développement distinct, ou vérificateur qui refuse tout) ; (5) avant T20, `-llm=anthropic` refusé en M0 sauf décision contraire ; (6) forme canonique du signal d'approbation en T19b, à confirmer avant M4.
@@ -1914,3 +1951,17 @@ Préalables humains (étape H0 du plan) :
 - 2026-11-26 22:57 [harnais] phase : impl -> tests
 
 - 2026-11-26 22:58 [harnais] phase : tests -> impl
+
+- 2026-11-27 11:58 [harnais] RETOUR EN PHASE TESTS depuis impl : M3-T02b revue sécurité BLOCK : constats hauts (repli proc complet, trousseau de session) et moyens, nouveau cycle tests puis impl
+
+- 2026-11-27 11:58 [harnais] phase : impl -> tests
+
+- 2026-11-27 12:02 [harnais] phase : tests -> impl
+
+- 2026-11-27 12:07 [harnais] RETOUR EN PHASE TESTS depuis impl : M3-T02b cycle de revue : corrections de lint du seul fichier de test (contextcheck, G304, G703), sans changement de comportement
+
+- 2026-11-27 12:07 [harnais] phase : impl -> tests
+
+- 2026-11-27 12:07 [harnais] passage en impl avec tests verts (caractérisation) : retour en tests pour le seul lint du fichier de test, tests du cycle vus rouges avant les correctifs
+
+- 2026-11-27 12:07 [harnais] phase : tests -> impl

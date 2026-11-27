@@ -58,11 +58,12 @@ Propositions à appliquer par toi si ce n'est pas encore fait (le harnais est pr
   - Il n'a aucun réseau, aucune capacité, aucun terminal, et ne voit aucun autre processus.
   - Landlock s'ajoute en renfort quand le noyau l'offre.
 - **Échec fermé.** Sans isolation complète, aucun outil ne tourne. `rempart check --static` (M3-T03) reste utilisable.
-- **Prérequis.** Un noyau Linux qui admet les espaces de noms utilisateur non privilégiés. Sur Ubuntu 24.04, AppArmor les restreint par défaut :
+- **Prérequis.** Un noyau Linux 5.12 ou plus récent (`/proc` en `subset=pid`, `close_range`, `mount_setattr` récursif ; un noyau plus ancien échoue fermé), qui admet les espaces de noms utilisateur non privilégiés. Sur Ubuntu 24.04, AppArmor les restreint par défaut :
   - levée sur le poste : `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` ;
   - levée persistante : `echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee /etc/sysctl.d/60-rempart-userns.conf`.
 
   Sur WSL2, le noyau est fourni par Microsoft : vérifier avec les commandes ci-dessous.
+- **Pas de lancement en root.** Lancé en root, Rempart associe l'outil à l'uid 0 de l'hôte : sans capacité, mais propriétaire des fichiers root qu'il atteint (menace T163, obligation (hw)). Lancer Rempart sous un uid ordinaire.
 - **Sonde du poste (étape H-isolation-probe, avant le premier `rempart check` avec outils).** Lancer ces commandes et coller la sortie :
   - `uname -r`
   - `sysctl kernel.apparmor_restrict_unprivileged_userns`

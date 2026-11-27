@@ -385,6 +385,9 @@ func Run(ctx context.Context, s Spec) (Result, error) {
 	if s.WriteData {
 		cfg.Data = s.Workspace.DataDir()
 	}
+	if h, ok := ctx.Value(testHooksKey{}).(testHooks); ok && testHooksAllowed {
+		cfg.Test = &h
+	}
 
 	runCtx, cancel := context.WithTimeout(ctx, s.Timeout)
 	defer cancel()

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -51,6 +52,9 @@ const (
 // closed.
 var sysMemfdCreate = map[string]uintptr{"amd64": 319, "arm64": 279}
 
+// sysKeyctl is keyctl(2) by architecture; another architecture fails closed.
+var sysKeyctl = map[string]uintptr{"amd64": 250, "arm64": 219}
+
 // startMu serializes the start of helpers: the launcher is dumpable only for
 // the time of Start (F10).
 var startMu sync.Mutex
@@ -64,6 +68,18 @@ const (
 	fAddSeals       = 1033
 	sealAll         = 0x1 | 0x2 | 0x4 | 0x8 // seal, shrink, grow, write
 	capVersion3     = 0x20080522
+	prCapbsetRead   = 23
+
+	keyctlJoinSessionKeyring = 1
+	sysCloseRange            = 436 // the same on every architecture
+	closeRangeCloexec        = 1 << 2
+
+	sysMountSetattr = 442 // the same on every architecture
+	atRecursive     = 0x8000
+	mountAttrRdonly = 0x1
+	mountAttrNosuid = 0x2
+	mountAttrNodev  = 0x4
+	mountAttrNoexec = 0x8
 )
 
 func prctl(op, a, b, c uintptr) error {
@@ -349,6 +365,9 @@ func helperMain() int {
 
 // valid checks that every path of the configuration is absolute and clean.
 func (c *helperConfig) valid() bool {
+	if c.Test != nil && !testHooksAllowed {
+		return false
+	}
 	paths := append([]string{c.Root, c.Tree, c.PathDir, c.Home, c.Tmp}, c.ReadOnly...)
 	if c.Data != "" {
 		paths = append(paths, c.Data)
@@ -367,33 +386,30 @@ func (c *helperConfig) valid() bool {
 	return true
 }
 
-// lockedFlags are the flags of the mount of src that a remount in a user
-// namespace must keep (F12): noexec and the atime flags.
-func lockedFlags(src string) uintptr {
-	var st syscall.Statfs_t
-	if syscall.Statfs(src, &st) != nil {
-		return 0
+// setAttr sets attr on the mount at path and on every mount below it
+// (mount_setattr with AT_RECURSIVE): a remount changes the top mount only, so
+// a submount of a read-only entry would stay writable (review of M3-T02b).
+// It sets and never clears: the atime flags and the flags of the host that a
+// user namespace locks are kept (F12). A kernel without mount_setattr (before
+// 5.12) fails closed.
+func setAttr(path string, attr uint64) error {
+	p, err := syscall.BytePtrFromString(path)
+	if err != nil {
+		return err
 	}
-	const stNoexec, stNoatime, stNodiratime, stRelatime = 8, 1024, 2048, 4096
-	var f uintptr
-	if st.Flags&stNoexec != 0 {
-		f |= syscall.MS_NOEXEC
+	a := struct{ set, clr, propagation, userns uint64 }{set: attr}
+	fdcwd := -100 // AT_FDCWD
+	//nolint:gosec // G103: mount_setattr takes pointers to its path and attributes.
+	if _, _, e := syscall.Syscall6(sysMountSetattr, uintptr(fdcwd), uintptr(unsafe.Pointer(p)), atRecursive, uintptr(unsafe.Pointer(&a)), unsafe.Sizeof(a), 0); e != 0 {
+		return e
 	}
-	if st.Flags&stNoatime != 0 {
-		f |= syscall.MS_NOATIME
-	}
-	if st.Flags&stNodiratime != 0 {
-		f |= syscall.MS_NODIRATIME
-	}
-	if st.Flags&stRelatime != 0 {
-		f |= syscall.MS_RELATIME
-	}
-	return f
+	return nil
 }
 
-// bind mounts the directory src at root+src, then remounts it with flags
-// (MS_RDONLY for a read-only entry) plus nosuid, nodev and the locked flags.
-func bind(root, src string, flags uintptr) error {
+// bind mounts the directory src at root+src with its submounts, then sets
+// nosuid, nodev and attr (mountAttrRdonly for a read-only entry) on all of
+// them.
+func bind(root, src string, attr uint64) error {
 	dst := root + src
 	if err := os.MkdirAll(dst, 0o750); err != nil {
 		return err
@@ -401,7 +417,7 @@ func bind(root, src string, flags uintptr) error {
 	if err := syscall.Mount(src, dst, "", syscall.MS_BIND|syscall.MS_REC, ""); err != nil {
 		return err
 	}
-	return syscall.Mount("", dst, "", syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_NOSUID|syscall.MS_NODEV|flags|lockedFlags(src), "")
+	return setAttr(dst, mountAttrNosuid|mountAttrNodev|attr)
 }
 
 // buildTree mounts the closed tree of D5 at cfg.Root and pivots into it.
@@ -423,7 +439,7 @@ func buildTree(cfg *helperConfig) byte {
 			if err != nil || os.Symlink(target, r+d) != nil {
 				return 's'
 			}
-		case bind(r, d, syscall.MS_RDONLY) != nil:
+		case bind(r, d, mountAttrRdonly) != nil:
 			return 's'
 		}
 	}
@@ -447,16 +463,22 @@ func buildTree(cfg *helperConfig) byte {
 			return 'd'
 		}
 	}
+	// /dev and the device nodes of the host read-only: a tool mapped to the
+	// owner of these inodes (a root launcher) cannot change them, and /dev
+	// takes no file (review of M3-T02b). Writing to a device stays possible.
+	if setAttr(r+"/dev", mountAttrRdonly|mountAttrNosuid|mountAttrNoexec) != nil {
+		return 'd'
+	}
 	for _, p := range append([]string{cfg.PathDir}, cfg.ReadOnly...) {
-		if bind(r, p, syscall.MS_RDONLY) != nil {
+		if bind(r, p, mountAttrRdonly) != nil {
 			return 'o'
 		}
 	}
-	if bind(r, cfg.Tree, syscall.MS_RDONLY|syscall.MS_NOEXEC) != nil {
+	if bind(r, cfg.Tree, mountAttrRdonly|mountAttrNoexec) != nil {
 		return 't'
 	}
 	for _, p := range []string{cfg.Home, cfg.Tmp} {
-		if bind(r, p, syscall.MS_NOEXEC) != nil {
+		if bind(r, p, mountAttrNoexec) != nil {
 			return 'w'
 		}
 	}
@@ -476,8 +498,16 @@ func buildTree(cfg *helperConfig) byte {
 	if os.Mkdir(r+"/proc", 0o550) != nil {
 		return 'p'
 	}
-	if syscall.Mount("proc", r+"/proc", "proc", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, "subset=pid") != nil &&
-		syscall.Mount("proc", r+"/proc", "proc", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, "") != nil {
+	// subset=pid or nothing: a full /proc opens /proc/sys and
+	// /proc/sysrq-trigger to a tool mapped to the owner of their inodes (a
+	// root launcher), core_pattern leading to the root of the host (review of
+	// M3-T02b). A kernel that refuses the option (before 5.8) fails closed,
+	// and a kernel that would ignore it too.
+	if cfg.Test != nil && cfg.Test.FailProcSubset ||
+		syscall.Mount("proc", r+"/proc", "proc", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, "subset=pid") != nil {
+		return 'p'
+	}
+	if _, err := os.Lstat(r + "/proc/sys"); !errors.Is(err, os.ErrNotExist) {
 		return 'p'
 	}
 	if os.Mkdir(r+"/.old", 0o700) != nil || syscall.PivotRoot(r, r+"/.old") != nil || syscall.Chdir("/") != nil {
@@ -518,8 +548,10 @@ func mountTool(cfg *helperConfig) byte {
 	return 0
 }
 
-// harden sets the host name, the working directory, closes every descriptor
-// at the exec but stdin, stdout and stderr, and drops every privilege (D6).
+// harden sets the host name and the working directory, gives the tool a
+// stdin of its own tree, leaves the session keyring of the launcher, closes
+// every descriptor at the exec but stdin, stdout and stderr, and drops every
+// privilege (D6). It runs on the locked thread that executes the tool.
 func harden(cfg *helperConfig) byte {
 	if syscall.Sethostname([]byte("rempart-tool")) != nil {
 		return 'h'
@@ -527,14 +559,52 @@ func harden(cfg *helperConfig) byte {
 	if syscall.Chdir(cfg.Tree) != nil {
 		return 'c'
 	}
-	for fd := 3; fd < 1024; fd++ {
-		_, _, _ = syscall.RawSyscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFD, syscall.FD_CLOEXEC)
+	// The stdin of the launcher is the /dev/null of the host, an inode that a
+	// tool mapped to its owner could change through fchmod; this one is on the
+	// read-only /dev of the tree (review of M3-T02b).
+	null, err := syscall.Open("/dev/null", syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return 'i'
+	}
+	if syscall.Dup3(null, 0, 0) != nil || syscall.Close(null) != nil {
+		return 'i'
+	}
+	// A fresh anonymous session keyring: the one of the launcher (Kerberos,
+	// aws-vault, fscrypt keys) crosses user namespaces, and Landlock does not
+	// filter keyctl (review of M3-T02b). A kernel without keys has none.
+	nr, ok := sysKeyctl[runtime.GOARCH]
+	if !ok {
+		return 'y'
+	}
+	if _, _, e := syscall.RawSyscall(nr, keyctlJoinSessionKeyring, 0, 0); e != 0 && e != syscall.ENOSYS {
+		return 'y'
+	}
+	// Every descriptor above 2 closed at the exec, whatever its number: Go
+	// closes none at a fork, and an ancestor may pass one beyond 1023 that
+	// opens the host (review of M3-T02b). Then checked.
+	if _, _, e := syscall.RawSyscall(sysCloseRange, 3, uintptr(^uint32(0)), closeRangeCloexec); e != 0 || !onlyStdio() {
+		return 'q'
 	}
 	if prctl(prSetNoNewPrivs, 1, 0, 0) != nil {
 		return 'k'
 	}
 	for c := uintptr(0); c <= 63; c++ {
-		_ = prctl(syscall.PR_CAPBSET_DROP, c, 0, 0)
+		err := prctl(syscall.PR_CAPBSET_DROP, c, 0, 0)
+		if errors.Is(err, syscall.EINVAL) {
+			break // past the last capability of the kernel
+		}
+		if err != nil {
+			return 'k'
+		}
+	}
+	for c := uintptr(0); c <= 63; c++ {
+		v, _, e := syscall.RawSyscall6(syscall.SYS_PRCTL, prCapbsetRead, c, 0, 0, 0, 0)
+		if e != 0 {
+			break
+		}
+		if v != 0 {
+			return 'k'
+		}
 	}
 	// Inheritable set emptied (F11), then the ambient set.
 	type capHeader struct {
@@ -557,6 +627,40 @@ func harden(cfg *helperConfig) byte {
 		return 'k'
 	}
 	return 0
+}
+
+// onlyStdio reports whether every open descriptor above 2 is closed at the
+// exec, read from the /proc of the tool.
+func onlyStdio() bool {
+	dir, err := syscall.Open("/proc/self/fd", syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = syscall.Close(dir) }()
+	buf := make([]byte, 4096)
+	for {
+		n, err := syscall.ReadDirent(dir, buf)
+		if err != nil {
+			return false
+		}
+		if n == 0 {
+			return true
+		}
+		_, _, names := syscall.ParseDirent(buf[:n], -1, nil)
+		for _, name := range names {
+			fd, err := strconv.Atoi(name)
+			if err != nil {
+				return false
+			}
+			if fd <= 2 {
+				continue
+			}
+			flags, _, e := syscall.RawSyscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFD, 0)
+			if e != 0 || flags&syscall.FD_CLOEXEC == 0 {
+				return false
+			}
+		}
+	}
 }
 
 // Landlock access rights (D7), by ABI.
@@ -588,7 +692,7 @@ const (
 // apply an announced ABI is.
 func landlock(cfg *helperConfig) byte {
 	abi := landlockABI()
-	if abi < 1 {
+	if abi < 1 || cfg.Test != nil && cfg.Test.NoLandlock {
 		return 0
 	}
 	fsAll := uint64(llFSABI1)

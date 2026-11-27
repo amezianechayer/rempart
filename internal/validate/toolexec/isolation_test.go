@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +30,43 @@ import (
 // witness); then through Run, where it must fail.
 
 const fakeToolArg = "fake-tool"
+
+// The test hooks of the helper (no Landlock, a refused subset=pid) are honored
+// in the test binary of this package only.
+func init() { testHooksAllowed = true }
+
+// withTestHooks attaches test hooks to the runs made with ctx.
+func withTestHooks(ctx context.Context, h testHooks) context.Context {
+	return context.WithValue(ctx, testHooksKey{}, h)
+}
+
+// layers are the two runs of an isolation test: with the Landlock layer, and
+// without it (test hook), so that the namespaces and mounts of D5 are proven
+// on their own; D7 is a layer, never a substitute (review of M3-T02b, medium
+// finding 4).
+func layers() []struct {
+	name string
+	ctx  context.Context
+} {
+	return []struct {
+		name string
+		ctx  context.Context
+	}{
+		{"landlock", context.Background()},
+		{"mounts_only", withTestHooks(context.Background(), testHooks{NoLandlock: true})},
+	}
+}
+
+// testKeyctl are keyctl(2) and add_key(2) by architecture, for the keyring
+// witness.
+var testKeyctl = map[string]struct{ keyctl, addKey uintptr }{"amd64": {250, 248}, "arm64": {219, 217}}
+
+const (
+	tkJoinSession = 1           // KEYCTL_JOIN_SESSION_KEYRING
+	tkSearch      = 10          // KEYCTL_SEARCH
+	tkRead        = 11          // KEYCTL_READ
+	tkSpecSession = ^uintptr(2) // KEY_SPEC_SESSION_KEYRING, -3
+)
 
 func TestMain(m *testing.M) {
 	MaybeHelper()
@@ -136,6 +175,86 @@ func goToolAction(action string, args []string) int {
 	case "sleep":
 		time.Sleep(30 * time.Second)
 		return 0
+	case "stat":
+		_, err := os.Lstat(arg(0))
+		return fail(err)
+	case "chmodsame":
+		// A chmod to the current mode changes nothing; it is refused on a
+		// read-only mount (EROFS) and for a non-owner (EPERM).
+		var st syscall.Stat_t
+		if err := syscall.Stat(arg(0), &st); err != nil {
+			return fail(err)
+		}
+		return fail(syscall.Chmod(arg(0), st.Mode&0o7777))
+	case "fchmod0same":
+		var st syscall.Stat_t
+		if err := syscall.Fstat(0, &st); err != nil {
+			return fail(err)
+		}
+		return fail(syscall.Fchmod(0, st.Mode&0o7777))
+	case "creds":
+		b, err := os.ReadFile("/proc/self/status")
+		if err != nil {
+			return fail(err)
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(l, "Cap") || strings.HasPrefix(l, "NoNewPrivs:") {
+				fmt.Println(l)
+			}
+		}
+		for _, f := range []string{"uid_map", "gid_map", "setgroups"} {
+			b, err := os.ReadFile("/proc/self/" + f) //nolint:gosec // G304: a fixed file of /proc/self.
+			if err != nil {
+				return fail(err)
+			}
+			fmt.Printf("%s: %s\n", f, strings.Join(strings.Fields(string(b)), " "))
+		}
+		return 0
+	case "fds":
+		// Raw system calls only, so that no descriptor of the Go runtime is in
+		// the list: one line per descriptor above 2.
+		dir, err := syscall.Open("/proc/self/fd", syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+		if err != nil {
+			return fail(err)
+		}
+		buf := make([]byte, 8192)
+		var names []string
+		for {
+			n, err := syscall.ReadDirent(dir, buf)
+			if err != nil {
+				return fail(err)
+			}
+			if n == 0 {
+				break
+			}
+			_, _, names = syscall.ParseDirent(buf[:n], -1, names)
+		}
+		for _, name := range names {
+			if fd, _ := strconv.Atoi(name); fd > 2 && fd != dir {
+				target, _ := os.Readlink("/proc/self/fd/" + name)
+				fmt.Printf("fd %d %s\n", fd, target)
+			}
+		}
+		return 0
+	case "keyring":
+		nr, ok := testKeyctl[runtime.GOARCH]
+		if !ok {
+			return 2
+		}
+		typ, desc := []byte("user\x00"), []byte(arg(0)+"\x00")
+		//nolint:gosec // G103: keyctl takes pointers to NUL-terminated strings.
+		id, _, e := syscall.Syscall6(nr.keyctl, tkSearch, tkSpecSession, uintptr(unsafe.Pointer(&typ[0])), uintptr(unsafe.Pointer(&desc[0])), 0, 0)
+		if e != 0 {
+			return fail(e)
+		}
+		payload := make([]byte, 128)
+		//nolint:gosec // G103: keyctl takes a pointer to its buffer.
+		n, _, e := syscall.Syscall6(nr.keyctl, tkRead, id, uintptr(unsafe.Pointer(&payload[0])), uintptr(len(payload)), 0, 0)
+		if e != 0 {
+			return fail(e)
+		}
+		fmt.Printf("payload %q\n", payload[:min(int(n), len(payload))])
+		return 0
 	case "unixlisten":
 		l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", filepath.Join(os.TempDir(), "plugin.sock"))
 		if err == nil {
@@ -200,7 +319,13 @@ func isoSpec(t *testing.T, ws *Workspace, tool Tool, action string, args ...stri
 // isolated runs the action through Run and returns its exit code.
 func isolated(t *testing.T, s Spec) int {
 	t.Helper()
-	res, err := Run(context.Background(), s)
+	return isolatedIn(t, context.Background(), s)
+}
+
+// isolatedIn is isolated with the context ctx (test hooks).
+func isolatedIn(t *testing.T, ctx context.Context, s Spec) int {
+	t.Helper()
+	res, err := Run(ctx, s)
 	if err != nil {
 		t.Fatalf("Run %v: %v", s.Args, err)
 	}
@@ -214,27 +339,40 @@ func isolated(t *testing.T, s Spec) int {
 // code.
 func direct(t *testing.T, tool Tool, action string, args ...string) int {
 	t.Helper()
-	cmd := exec.CommandContext(context.Background(), tool.Path, append([]string{fakeToolArg, action}, args...)...) //nolint:gosec // G204: the fake tool.
+	code, _ := directOutput(t, context.Background(), tool, action, args...)
+	return code
+}
+
+// directOutput is direct with the context ctx and the output of the action.
+func directOutput(t *testing.T, ctx context.Context, tool Tool, action string, args ...string) (int, []byte) {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, tool.Path, append([]string{fakeToolArg, action}, args...)...) //nolint:gosec // G204: the fake tool.
 	out, err := cmd.CombinedOutput()
 	var ee *exec.ExitError
 	switch {
 	case err == nil:
-		return 0
+		return 0, out
 	case errors.As(err, &ee):
 		t.Logf("direct %s: %s", action, bytes.TrimSpace(out))
-		return ee.ExitCode()
+		return ee.ExitCode(), out
 	}
 	t.Fatalf("direct %s: %v", action, err)
-	return -1
+	return -1, nil
 }
 
 // attack asserts the witness (direct run succeeds) then the isolated failure.
 func attack(t *testing.T, tool Tool, ws *Workspace, action string, args ...string) {
 	t.Helper()
-	if code := direct(t, tool, action, args...); code != 0 {
+	attackIn(t, context.Background(), tool, ws, action, args...)
+}
+
+// attackIn is attack with the context ctx (test hooks).
+func attackIn(t *testing.T, ctx context.Context, tool Tool, ws *Workspace, action string, args ...string) {
+	t.Helper()
+	if code, _ := directOutput(t, ctx, tool, action, args...); code != 0 {
 		t.Skipf("witness: %s %v fails outside isolation (code %d): the environment already blocks it", action, args, code)
 	}
-	if code := isolated(t, isoSpec(t, ws, tool, action, args...)); code != 1 {
+	if code := isolatedIn(t, ctx, isoSpec(t, ws, tool, action, args...)); code != 1 {
 		t.Errorf("%s %v under isolation: exit %d, want 1 (refused)", action, args, code)
 	}
 }
@@ -317,8 +455,14 @@ func TestIsolationKillsEscapedDescendants(t *testing.T) {
 func TestIsolationNoNetwork(t *testing.T) {
 	requireIsolation(t)
 	tool, ws := selfTool(t), workspace(t)
+	for _, m := range layers() {
+		t.Run(m.name, func(t *testing.T) { noNetwork(t, m.ctx, tool, ws) })
+	}
+}
+
+func noNetwork(t *testing.T, ctx context.Context, tool Tool, ws *Workspace) {
 	t.Run("tcp", func(t *testing.T) {
-		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -332,19 +476,19 @@ func TestIsolationNoNetwork(t *testing.T) {
 				_ = c.Close()
 			}
 		}()
-		attack(t, tool, ws, "tcp", l.Addr().String())
+		attackIn(t, ctx, tool, ws, "tcp", l.Addr().String())
 	})
 	t.Run("udp", func(t *testing.T) {
-		pc, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", "127.0.0.1:0")
+		pc, err := (&net.ListenConfig{}).ListenPacket(ctx, "udp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _ = pc.Close() }()
-		attack(t, tool, ws, "udp", pc.LocalAddr().String(), "token")
+		attackIn(t, ctx, tool, ws, "udp", pc.LocalAddr().String(), "token")
 	})
 	t.Run("abstract_unix", func(t *testing.T) {
 		name := fmt.Sprintf("@rempart-test-%d", os.Getpid())
-		l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", name)
+		l, err := (&net.ListenConfig{}).Listen(ctx, "unix", name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -358,7 +502,7 @@ func TestIsolationNoNetwork(t *testing.T) {
 				_ = c.Close()
 			}
 		}()
-		attack(t, tool, ws, "unix", name)
+		attackIn(t, ctx, tool, ws, "unix", name)
 	})
 }
 
@@ -370,8 +514,14 @@ func TestIsolationNoNetwork(t *testing.T) {
 func TestIsolationFilesystemClosed(t *testing.T) {
 	requireIsolation(t)
 	tool, ws := selfTool(t), workspace(t)
+	for _, m := range layers() {
+		t.Run(m.name, func(t *testing.T) { filesystemClosed(t, m.ctx, tool, ws) })
+	}
+}
+
+func filesystemClosed(t *testing.T, ctx context.Context, tool Tool, ws *Workspace) {
 	t.Run("root_closed_list", func(t *testing.T) {
-		res, err := Run(context.Background(), isoSpec(t, ws, tool, "ls", "/"))
+		res, err := Run(ctx, isoSpec(t, ws, tool, "ls", "/"))
 		if err != nil || res.ExitCode != 0 {
 			t.Fatalf("ls /: %+v, %v", res, err)
 		}
@@ -393,11 +543,11 @@ func TestIsolationFilesystemClosed(t *testing.T) {
 		if err := os.WriteFile(secret, []byte("s"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		attack(t, tool, ws, "read", secret)
+		attackIn(t, ctx, tool, ws, "read", secret)
 	})
 	t.Run("unix_pathname", func(t *testing.T) {
 		sock := filepath.Join(t.TempDir(), "docker.sock")
-		l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", sock)
+		l, err := (&net.ListenConfig{}).Listen(ctx, "unix", sock)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -411,26 +561,26 @@ func TestIsolationFilesystemClosed(t *testing.T) {
 				_ = c.Close()
 			}
 		}()
-		attack(t, tool, ws, "unix", sock)
+		attackIn(t, ctx, tool, ws, "unix", sock)
 	})
 	t.Run("tree_read_only", func(t *testing.T) {
-		attack(t, tool, ws, "write", filepath.Join(ws.Dir(), "dropped.trivyignore"))
+		attackIn(t, ctx, tool, ws, "write", filepath.Join(ws.Dir(), "dropped.trivyignore"))
 	})
 	t.Run("root_read_only", func(t *testing.T) {
-		if code := isolated(t, isoSpec(t, ws, tool, "write", "/dropped")); code != 1 {
+		if code := isolatedIn(t, ctx, isoSpec(t, ws, tool, "write", "/dropped")); code != 1 {
 			t.Errorf("write / under isolation: exit %d, want 1", code)
 		}
 	})
 	t.Run("nested_user_namespace", func(t *testing.T) {
-		attack(t, tool, ws, "userns")
+		attackIn(t, ctx, tool, ws, "userns")
 	})
 	t.Run("data_writable_when_asked", func(t *testing.T) {
-		if code := isolated(t, isoSpec(t, ws, tool, "write", filepath.Join(ws.DataDir(), "plan.bin"))); code != 0 {
+		if code := isolatedIn(t, ctx, isoSpec(t, ws, tool, "write", filepath.Join(ws.DataDir(), "plan.bin"))); code != 0 {
 			t.Fatalf("write data/ with WriteData: exit %d, want 0", code)
 		}
 		s := isoSpec(t, ws, tool, "write", filepath.Join(ws.DataDir(), "other"))
 		s.WriteData = false
-		if code := isolated(t, s); code != 1 {
+		if code := isolatedIn(t, ctx, s); code != 1 {
 			t.Errorf("write data/ without WriteData: exit %d, want 1", code)
 		}
 	})
@@ -455,10 +605,16 @@ func TestIsolationPrivateCopiesReadOnly(t *testing.T) {
 	if code := direct(t, tool, "write", filepath.Join(private, "planted")); code != 0 {
 		t.Fatalf("witness: write in the private copy outside isolation: exit %d", code)
 	}
-	write := isoSpec(t, ws, tool, "write", filepath.Join(private, "planted-2"))
-	write.ReadOnly = []string{private}
-	if code := isolated(t, write); code != 1 {
-		t.Errorf("write in a ReadOnly entry under isolation: exit %d, want 1", code)
+	for _, m := range layers() {
+		t.Run(m.name, func(t *testing.T) {
+			for _, action := range [][]string{{"write", filepath.Join(private, "planted-2")}, {"chmodsame", plugin}} {
+				s := isoSpec(t, ws, tool, action[0], action[1:]...)
+				s.ReadOnly = []string{private}
+				if code := isolatedIn(t, m.ctx, s); code != 1 {
+					t.Errorf("%v in a ReadOnly entry under isolation: exit %d, want 1", action, code)
+				}
+			}
+		})
 	}
 }
 
@@ -473,7 +629,9 @@ func TestIsolationHidesProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = victim.Process.Kill(); _, _ = victim.Process.Wait() })
-	attack(t, tool, ws, "kill0", strconv.Itoa(victim.Process.Pid))
+	for _, m := range layers() {
+		t.Run(m.name, func(t *testing.T) { attackIn(t, m.ctx, tool, ws, "kill0", strconv.Itoa(victim.Process.Pid)) })
+	}
 	// P7: the environment of another process of the same uid (the victim is
 	// dumpable; the launcher is not, see TestIsolationLauncherNotDumpable).
 	attack(t, tool, ws, "read", fmt.Sprintf("/proc/%d/environ", victim.Process.Pid))
@@ -616,4 +774,297 @@ func TestIsolationLandlockLayer(t *testing.T) {
 	if code := isolated(t, isoSpec(t, ws, tool, "unixlisten")); code != 0 {
 		t.Errorf("listen on a Unix socket in TMPDIR under Landlock: exit %d, want 0", code)
 	}
+}
+
+// childEnv names the test that a child process reruns (inChild).
+const childEnv = "REMPART_TEST_CHILD"
+
+// inChild reports whether this process is the child of the current test. In
+// the parent, it runs prepare on an OS thread locked for good (the thread ends
+// with its goroutine, and what prepare changed with it), starts from that very
+// thread this test binary on the current test only, and asserts that the
+// child passed. A session keyring or a mount namespace belongs to one thread:
+// the launcher of Run, on another thread, would not inherit it, while every
+// thread of the child does. A prepare that fails skips the test (witness).
+func inChild(t *testing.T, env []string, prepare func() error) bool {
+	t.Helper()
+	if os.Getenv(childEnv) == t.Name() {
+		return true
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		out       []byte
+		err, prep error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		runtime.LockOSThread() // never unlocked: the thread ends with this goroutine
+		if err := prepare(); err != nil {
+			ch <- result{prep: err}
+			return
+		}
+		cmd := exec.CommandContext(context.Background(), exe, "-test.run=^"+regexp.QuoteMeta(t.Name())+"$", "-test.v", "-test.count=1") //nolint:gosec // G204: this test binary.
+		cmd.Env = append(append(os.Environ(), env...), childEnv+"="+t.Name())
+		out, err := cmd.CombinedOutput()
+		ch <- result{out: out, err: err}
+	}()
+	r := <-ch
+	switch {
+	case r.prep != nil:
+		t.Skipf("witness: cannot prepare the child process: %v", r.prep)
+	case bytes.Contains(r.out, []byte("--- SKIP: "+t.Name()+" ")):
+		t.Skipf("the child process skipped:\n%s", r.out)
+	case r.err != nil || !bytes.Contains(r.out, []byte("--- PASS: "+t.Name()+" ")):
+		t.Fatalf("child process of %s: %v\n%s", t.Name(), r.err, r.out)
+	}
+	t.Logf("child process:\n%s", r.out)
+	return false
+}
+
+// joinKeyringWithKey joins, on the calling thread, a new anonymous session
+// keyring and adds to it a user key desc holding payload.
+func joinKeyringWithKey(desc, payload string) error {
+	nr, ok := testKeyctl[runtime.GOARCH]
+	if !ok {
+		return fmt.Errorf("no keyctl number for %s", runtime.GOARCH)
+	}
+	if _, _, e := syscall.RawSyscall(nr.keyctl, tkJoinSession, 0, 0); e != 0 {
+		return fmt.Errorf("join a session keyring: %w", e)
+	}
+	typ, d, p := []byte("user\x00"), []byte(desc+"\x00"), []byte(payload)
+	//nolint:gosec // G103: add_key takes pointers to its type, description and payload.
+	if _, _, e := syscall.Syscall6(nr.addKey, uintptr(unsafe.Pointer(&typ[0])), uintptr(unsafe.Pointer(&d[0])), uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)), tkSpecSession, 0); e != 0 {
+		return fmt.Errorf("add_key: %w", e)
+	}
+	return nil
+}
+
+// TestIsolationProcRestricted proves D5 (review of M3-T02b, high finding 1):
+// the /proc of the tool shows its PID namespace only (subset=pid), with no
+// /proc/sys and no /proc/sysrq-trigger, whatever the uid of the launcher; a
+// kernel that refuses subset=pid fails closed, never with a full /proc.
+func TestIsolationProcRestricted(t *testing.T) {
+	requireIsolation(t)
+	tool, ws := selfTool(t), workspace(t)
+	for _, p := range []string{"/proc/sys/kernel/core_pattern", "/proc/sys/kernel/modprobe", "/proc/sysrq-trigger", "/proc/kcore"} {
+		t.Run(filepath.Base(p), func(t *testing.T) { attack(t, tool, ws, "stat", p) })
+	}
+	t.Run("subset_refused_fails_closed", func(t *testing.T) {
+		marker := filepath.Join(ws.DataDir(), "ran-with-a-full-proc")
+		_, err := Run(withTestHooks(context.Background(), testHooks{FailProcSubset: true}), isoSpec(t, ws, tool, "write", marker))
+		if !errors.Is(err, ErrIsolationSetup) {
+			t.Fatalf("Run with subset=pid refused = %v, want ErrIsolationSetup (never a full /proc)", err)
+		}
+		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("the tool ran with a full /proc")
+		}
+	})
+}
+
+// TestIsolationSessionKeyring proves D6 (review of M3-T02b, high finding 2,
+// P1): the session keyring of the launcher, that a user namespace does not
+// change and Landlock does not filter, is closed to the tool. The test reruns
+// itself in a child process started by a thread that joined a session keyring
+// holding a key: the child, launcher of the run, holds that keyring on every
+// thread, as a process under pam_keyinit does.
+func TestIsolationSessionKeyring(t *testing.T) {
+	requireIsolation(t)
+	const desc, payload = "rempart-witness", "launcher-secret"
+	if !inChild(t, nil, func() error { return joinKeyringWithKey(desc, payload) }) {
+		return
+	}
+	tool := selfTool(t)
+	if code, out := directOutput(t, context.Background(), tool, "keyring", desc); code != 0 || !bytes.Contains(out, []byte(payload)) {
+		t.Fatalf("witness: the key of the session keyring is not readable outside isolation: exit %d, %q", code, bytes.TrimSpace(out))
+	}
+	for _, m := range layers() {
+		t.Run(m.name, func(t *testing.T) {
+			res, err := Run(m.ctx, isoSpec(t, workspace(t), tool, "keyring", desc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.ExitCode != 1 || bytes.Contains(res.Stdout, []byte(payload)) {
+				t.Errorf("keyring under isolation: exit %d, %q; want 1 (the session keyring of the launcher is closed)", res.ExitCode, bytes.TrimSpace(res.Stdout))
+			}
+		})
+	}
+}
+
+// inheritableFD duplicates a directory on a descriptor beyond 1023 without
+// close-on-exec (Go closes no such descriptor at a fork) until the end of the
+// test.
+func inheritableFD(t *testing.T) int {
+	t.Helper()
+	var lim syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
+		t.Fatal(err)
+	}
+	target := 1500
+	if lim.Cur <= uint64(target) {
+		if lim.Cur <= 1025 {
+			t.Skipf("witness: descriptor limit %d, no descriptor beyond 1023", lim.Cur)
+		}
+		target = int(lim.Cur) - 1 //nolint:gosec // G115: a descriptor limit above 1025 and under 1501.
+	}
+	dir, err := syscall.Open(t.TempDir(), syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Close(dir) }()
+	if err := syscall.Dup3(dir, target, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Close(target) })
+	return target
+}
+
+// TestIsolationCredentials proves D3 and D6 (review of M3-T02b, medium
+// findings 1 and 4): the tool runs as toolUID mapped to the launcher only,
+// setgroups denied, every capability set empty, no_new_privs set, and it
+// inherits no descriptor but 0, 1 and 2, even one beyond 1023.
+func TestIsolationCredentials(t *testing.T) {
+	requireIsolation(t)
+	tool, ws := selfTool(t), workspace(t)
+	t.Run("capabilities_and_maps", func(t *testing.T) {
+		res, err := Run(context.Background(), isoSpec(t, ws, tool, "creds"))
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("creds: %+v, %v", res, err)
+		}
+		got := map[string]string{}
+		for _, l := range strings.Split(string(res.Stdout), "\n") {
+			if k, v, ok := strings.Cut(l, ":"); ok {
+				got[k] = strings.TrimSpace(v)
+			}
+		}
+		const none = "0000000000000000"
+		want := map[string]string{
+			"CapInh": none, "CapPrm": none, "CapEff": none, "CapBnd": none, "CapAmb": none,
+			"NoNewPrivs": "1",
+			"uid_map":    fmt.Sprintf("%d %d 1", toolUID, os.Geteuid()),
+			"gid_map":    fmt.Sprintf("%d %d 1", toolUID, os.Getegid()),
+			"setgroups":  "deny",
+		}
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("%s of the tool = %q, want %q", k, got[k], v)
+			}
+		}
+	})
+	t.Run("descriptor_beyond_1023", func(t *testing.T) {
+		fd := inheritableFD(t)
+		if code, out := directOutput(t, context.Background(), tool, "fds"); code != 0 || !bytes.Contains(out, []byte(fmt.Sprintf("fd %d ", fd))) {
+			t.Skipf("witness: descriptor %d not inherited outside isolation: %q", fd, out)
+		}
+		for _, m := range layers() {
+			t.Run(m.name, func(t *testing.T) {
+				res, err := Run(m.ctx, isoSpec(t, ws, tool, "fds"))
+				if err != nil || res.ExitCode != 0 {
+					t.Fatalf("fds: %+v, %v", res, err)
+				}
+				if out := strings.TrimSpace(string(res.Stdout)); out != "" {
+					t.Errorf("descriptors inherited by the tool:\n%s\nwant none above 2", out)
+				}
+			})
+		}
+	})
+}
+
+// TestIsolationDevicesReadOnly proves D5 (review of M3-T02b, medium finding
+// 2): the device nodes of the host bound in /dev, and the stdin of the tool,
+// are on read-only mounts, so a tool mapped to the owner of these inodes (a
+// root launcher) cannot change them on the host; /dev takes no new file;
+// writing to /dev/null still works. A chmod to the current mode changes
+// nothing even when it succeeds.
+func TestIsolationDevicesReadOnly(t *testing.T) {
+	requireIsolation(t)
+	tool, ws := selfTool(t), workspace(t)
+	for _, m := range layers() {
+		t.Run(m.name, func(t *testing.T) {
+			t.Run("chmod_dev_null", func(t *testing.T) { attackIn(t, m.ctx, tool, ws, "chmodsame", "/dev/null") })
+			t.Run("fchmod_stdin", func(t *testing.T) { attackIn(t, m.ctx, tool, ws, "fchmod0same") })
+			t.Run("create_in_dev", func(t *testing.T) {
+				if code := isolatedIn(t, m.ctx, isoSpec(t, ws, tool, "write", "/dev/planted")); code != 1 {
+					t.Errorf("create /dev/planted under isolation: exit %d, want 1", code)
+				}
+			})
+			t.Run("write_dev_null", func(t *testing.T) {
+				if code := isolatedIn(t, m.ctx, isoSpec(t, ws, tool, "write", "/dev/null")); code != 0 {
+					t.Errorf("write /dev/null under isolation: exit %d, want 0", code)
+				}
+			})
+		})
+	}
+}
+
+// TestIsolationReadOnlyRecursive proves D5 (review of M3-T02b, medium finding
+// 3): a mount under a read-only entry (a submount of /usr, of a private copy)
+// is read-only in the tree of the tool too. The submount lives in a private
+// mount namespace of a child process (CAP_SYS_ADMIN needed); the run without
+// Landlock shows the mounts alone, a chmod is beyond Landlock.
+func TestIsolationReadOnlyRecursive(t *testing.T) {
+	requireIsolation(t)
+	private := os.Getenv("REMPART_TEST_SUBMOUNT")
+	if private == "" {
+		private = t.TempDir()
+	}
+	sub := filepath.Join(private, "sub")
+	if !inChild(t, []string{"REMPART_TEST_SUBMOUNT=" + private}, func() error {
+		if err := os.Mkdir(sub, 0o700); err != nil { //nolint:gosec // G703: under the temporary directory of this test, passed to its child.
+			return err
+		}
+		if err := syscall.Unshare(syscall.CLONE_NEWNS); err != nil {
+			return fmt.Errorf("unshare a mount namespace: %w", err)
+		}
+		if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
+			return err
+		}
+		return syscall.Mount("tmpfs", sub, "tmpfs", 0, "size=64k,mode=0700")
+	}) {
+		return
+	}
+	tool, ws := selfTool(t), workspace(t)
+	if code := direct(t, tool, "write", filepath.Join(sub, "witness")); code != 0 {
+		t.Fatalf("witness: the submount is not writable outside isolation (exit %d)", code)
+	}
+	for _, m := range layers() {
+		t.Run(m.name, func(t *testing.T) {
+			for _, action := range [][]string{{"write", filepath.Join(sub, "planted")}, {"chmodsame", sub}} {
+				s := isoSpec(t, ws, tool, action[0], action[1:]...)
+				s.ReadOnly = []string{private}
+				if code := isolatedIn(t, m.ctx, s); code != 1 {
+					t.Errorf("%v on a submount of a read-only entry: exit %d, want 1", action, code)
+				}
+			}
+		})
+	}
+}
+
+// TestIsolationTestHooksRefused proves that the test hooks exist in this test
+// binary only: a configuration that carries them is invalid wherever
+// testHooksAllowed is false (every other binary), and Run does not send them
+// from there.
+func TestIsolationTestHooksRefused(t *testing.T) {
+	saved := testHooksAllowed
+	t.Cleanup(func() { testHooksAllowed = saved })
+	testHooksAllowed = false
+	cfg := helperConfig{Probe: true, Root: "/r", Tree: "/t", PathDir: "/p", Home: "/h", Tmp: "/x", Test: &testHooks{NoLandlock: true}}
+	if cfg.valid() {
+		t.Fatal("a configuration with test hooks is valid outside the tests")
+	}
+	cfg.Test = nil
+	if !cfg.valid() {
+		t.Fatal("control: the same configuration without hooks is invalid")
+	}
+	t.Run("not_sent", func(t *testing.T) {
+		requireIsolation(t)
+		// The helper, this test binary, would honor the hook: a run that
+		// succeeds proves that the launcher did not send it.
+		res, err := Run(withTestHooks(context.Background(), testHooks{FailProcSubset: true}), isoSpec(t, workspace(t), selfTool(t), "noop"))
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("Run with hooks refused by the launcher = %+v, %v; want a plain run", res, err)
+		}
+	})
 }
