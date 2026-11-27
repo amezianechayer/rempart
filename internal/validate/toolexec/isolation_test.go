@@ -63,10 +63,31 @@ var testKeyctl = map[string]struct{ keyctl, addKey uintptr }{"amd64": {250, 248}
 
 const (
 	tkJoinSession = 1           // KEYCTL_JOIN_SESSION_KEYRING
+	tkSetPerm     = 5           // KEYCTL_SETPERM
+	tkLink        = 8           // KEYCTL_LINK
 	tkSearch      = 10          // KEYCTL_SEARCH
 	tkRead        = 11          // KEYCTL_READ
 	tkSpecSession = ^uintptr(2) // KEY_SPEC_SESSION_KEYRING, -3
 )
+
+// readSessionKey searches the session keyring for the user key desc and
+// prints its payload.
+func readSessionKey(keyctl uintptr, desc string) error {
+	typ, d := []byte("user\x00"), []byte(desc+"\x00")
+	//nolint:gosec // G103: keyctl takes pointers to NUL-terminated strings.
+	id, _, e := syscall.Syscall6(keyctl, tkSearch, tkSpecSession, uintptr(unsafe.Pointer(&typ[0])), uintptr(unsafe.Pointer(&d[0])), 0, 0)
+	if e != 0 {
+		return fmt.Errorf("search: %w", e)
+	}
+	payload := []byte(strings.Repeat("\x00", 128))
+	//nolint:gosec // G103: keyctl takes a pointer to its buffer.
+	n, _, e := syscall.Syscall6(keyctl, tkRead, id, uintptr(unsafe.Pointer(&payload[0])), uintptr(len(payload)), 0, 0)
+	if e != 0 {
+		return fmt.Errorf("read: %w", e)
+	}
+	fmt.Printf("payload %q\n", payload[:min(int(n), len(payload))])
+	return nil
+}
 
 func TestMain(m *testing.M) {
 	MaybeHelper()
@@ -198,7 +219,7 @@ func goToolAction(action string, args []string) int {
 			return fail(err)
 		}
 		for _, l := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(l, "Cap") || strings.HasPrefix(l, "NoNewPrivs:") {
+			if strings.HasPrefix(l, "Cap") || strings.HasPrefix(l, "NoNewPrivs:") || strings.HasPrefix(l, "Seccomp:") {
 				fmt.Println(l)
 			}
 		}
@@ -241,20 +262,35 @@ func goToolAction(action string, args []string) int {
 		if !ok {
 			return 2
 		}
-		typ, desc := []byte("user\x00"), []byte(arg(0)+"\x00")
-		//nolint:gosec // G103: keyctl takes pointers to NUL-terminated strings.
-		id, _, e := syscall.Syscall6(nr.keyctl, tkSearch, tkSpecSession, uintptr(unsafe.Pointer(&typ[0])), uintptr(unsafe.Pointer(&desc[0])), 0, 0)
+		return fail(readSessionKey(nr.keyctl, arg(0)))
+	case "keylink":
+		// The attack by serial number: a fresh session keyring (no possession
+		// inherited), then a link of a keyring of the launcher by its number,
+		// that its "user" rights grant to any process of the same kuid.
+		nr, ok := testKeyctl[runtime.GOARCH]
+		serial, err := strconv.ParseUint(arg(0), 10, 31)
+		if !ok || err != nil {
+			return 2
+		}
+		if _, _, e := syscall.RawSyscall(nr.keyctl, tkJoinSession, 0, 0); e != 0 {
+			return fail(fmt.Errorf("join: %w", e))
+		}
+		if _, _, e := syscall.RawSyscall(nr.keyctl, tkLink, uintptr(serial), tkSpecSession); e != 0 {
+			return fail(fmt.Errorf("link: %w", e))
+		}
+		return fail(readSessionKey(nr.keyctl, arg(1)))
+	case "addkey":
+		nr, ok := testKeyctl[runtime.GOARCH]
+		if !ok {
+			return 2
+		}
+		typ, d, v := []byte("user\x00"), []byte("rempart-planted\x00"), []byte("x")
+		//nolint:gosec // G103: add_key takes pointers to its type, description and payload.
+		_, _, e := syscall.Syscall6(nr.addKey, uintptr(unsafe.Pointer(&typ[0])), uintptr(unsafe.Pointer(&d[0])), uintptr(unsafe.Pointer(&v[0])), uintptr(len(v)), tkSpecSession, 0)
 		if e != 0 {
 			return fail(e)
 		}
-		payload := make([]byte, 128)
-		//nolint:gosec // G103: keyctl takes a pointer to its buffer.
-		n, _, e := syscall.Syscall6(nr.keyctl, tkRead, id, uintptr(unsafe.Pointer(&payload[0])), uintptr(len(payload)), 0, 0)
-		if e != 0 {
-			return fail(e)
-		}
-		fmt.Printf("payload %q\n", payload[:min(int(n), len(payload))])
-		return 0
+		return fail(nil)
 	case "unixlisten":
 		l, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", filepath.Join(os.TempDir(), "plugin.sock"))
 		if err == nil {
@@ -923,8 +959,9 @@ func inheritableFD(t *testing.T) int {
 
 // TestIsolationCredentials proves D3 and D6 (review of M3-T02b, medium
 // findings 1 and 4): the tool runs as toolUID mapped to the launcher only,
-// setgroups denied, every capability set empty, no_new_privs set, and it
-// inherits no descriptor but 0, 1 and 2, even one beyond 1023.
+// setgroups denied, every capability set empty, no_new_privs set, under a
+// seccomp filter (amendment 1 of ADR 0015), and it inherits no descriptor but
+// 0, 1 and 2, even one beyond 1023.
 func TestIsolationCredentials(t *testing.T) {
 	requireIsolation(t)
 	tool, ws := selfTool(t), workspace(t)
@@ -943,6 +980,7 @@ func TestIsolationCredentials(t *testing.T) {
 		want := map[string]string{
 			"CapInh": none, "CapPrm": none, "CapEff": none, "CapBnd": none, "CapAmb": none,
 			"NoNewPrivs": "1",
+			"Seccomp":    "2",
 			"uid_map":    fmt.Sprintf("%d %d 1", toolUID, os.Geteuid()),
 			"gid_map":    fmt.Sprintf("%d %d 1", toolUID, os.Getegid()),
 			"setgroups":  "deny",
@@ -1067,4 +1105,74 @@ func TestIsolationTestHooksRefused(t *testing.T) {
 			t.Fatalf("Run with hooks refused by the launcher = %+v, %v; want a plain run", res, err)
 		}
 	})
+}
+
+// ringWithKey joins, on the calling thread, a new anonymous session keyring,
+// adds to it a keyring ring with the rights of a user keyring (0x1f3f0000:
+// the possessor all but setattr, the user all) and, in ring, a user key desc
+// holding payload.
+func ringWithKey(ring, desc, payload string) error {
+	nr, ok := testKeyctl[runtime.GOARCH]
+	if !ok {
+		return fmt.Errorf("no keyctl number for %s", runtime.GOARCH)
+	}
+	if _, _, e := syscall.RawSyscall(nr.keyctl, tkJoinSession, 0, 0); e != 0 {
+		return fmt.Errorf("join a session keyring: %w", e)
+	}
+	kt, r := []byte("keyring\x00"), []byte(ring+"\x00")
+	//nolint:gosec // G103: add_key takes pointers to its type and description.
+	id, _, e := syscall.Syscall6(nr.addKey, uintptr(unsafe.Pointer(&kt[0])), uintptr(unsafe.Pointer(&r[0])), 0, 0, tkSpecSession, 0)
+	if e != 0 {
+		return fmt.Errorf("add_key keyring: %w", e)
+	}
+	if _, _, e := syscall.RawSyscall(nr.keyctl, tkSetPerm, id, 0x1f3f0000); e != 0 {
+		return fmt.Errorf("setperm: %w", e)
+	}
+	typ, d, p := []byte("user\x00"), []byte(desc+"\x00"), []byte(payload)
+	//nolint:gosec // G103: add_key takes pointers to its type, description and payload.
+	if _, _, e := syscall.Syscall6(nr.addKey, uintptr(unsafe.Pointer(&typ[0])), uintptr(unsafe.Pointer(&d[0])), uintptr(unsafe.Pointer(&p[0])), uintptr(len(p)), id, 0); e != 0 {
+		return fmt.Errorf("add_key user: %w", e)
+	}
+	return nil
+}
+
+// TestIsolationKeysBySerial proves amendment 1 of ADR 0015 (second pass of
+// the review of M3-T02b, T170): a keyring of the launcher whose "user" rights
+// are open (as the user keyring of the initial namespace) stays out of reach
+// of the tool even by its serial number, which a search over 2^31 numbers
+// finds in minutes: the test hands the number to the tool, the worst case.
+// add_key, which would exhaust the key quota of the uid, is refused too.
+func TestIsolationKeysBySerial(t *testing.T) {
+	requireIsolation(t)
+	const ring, desc, payload = "rempart-witness-ring", "rempart-witness", "user-keyring-secret"
+	if !inChild(t, nil, func() error { return ringWithKey(ring, desc, payload) }) {
+		return
+	}
+	nr, ok := testKeyctl[runtime.GOARCH]
+	if !ok {
+		t.Fatalf("no keyctl number for %s", runtime.GOARCH)
+	}
+	kt, r := []byte("keyring\x00"), []byte(ring+"\x00")
+	//nolint:gosec // G103: keyctl takes pointers to NUL-terminated strings.
+	id, _, e := syscall.Syscall6(nr.keyctl, tkSearch, tkSpecSession, uintptr(unsafe.Pointer(&kt[0])), uintptr(unsafe.Pointer(&r[0])), 0, 0)
+	if e != 0 {
+		t.Fatalf("the witness keyring is not in the session keyring of the child: %v", e)
+	}
+	serial := strconv.FormatUint(uint64(id), 10)
+	tool := selfTool(t)
+	if code, out := directOutput(t, context.Background(), tool, "keylink", serial, desc); code != 0 || !bytes.Contains(out, []byte(payload)) {
+		t.Fatalf("witness: link by serial number outside isolation: exit %d, %q", code, bytes.TrimSpace(out))
+	}
+	for _, m := range layers() {
+		t.Run(m.name, func(t *testing.T) {
+			res, err := Run(m.ctx, isoSpec(t, workspace(t), tool, "keylink", serial, desc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.ExitCode != 1 || bytes.Contains(res.Stdout, []byte(payload)) {
+				t.Errorf("keylink under isolation: exit %d, %q; want 1 (no key system call for the tool)", res.ExitCode, bytes.TrimSpace(res.Stdout))
+			}
+			attackIn(t, m.ctx, tool, workspace(t), "addkey")
+		})
+	}
 }

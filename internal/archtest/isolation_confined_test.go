@@ -233,3 +233,85 @@ func TestToolexecHelperFirst(t *testing.T) {
 		t.Errorf("%d binaries link toolexec, want at least the tests of toolexec and validate", checked)
 	}
 }
+
+// hooksVar is the switch of the test hooks of the helper (review of M3-T02b).
+const hooksVar = "testHooksAllowed"
+
+// checkHooksTestOnly refuses, in a non-test Go file, any write of hooksVar:
+// an assignment, an initial value, its address taken.
+func checkHooksTestOnly(name, src string) []string {
+	var problems problemList
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
+	if err != nil {
+		problems.addf("%s: cannot parse: %v", name, err)
+		return problems
+	}
+	isVar := func(e ast.Expr) bool {
+		id, ok := e.(*ast.Ident)
+		return ok && id.Name == hooksVar
+	}
+	ast.Inspect(f, func(x ast.Node) bool {
+		switch n := x.(type) {
+		case *ast.AssignStmt:
+			for _, l := range n.Lhs {
+				if isVar(l) {
+					problems.addf("%s:%d: %s assigned outside a test file (review of M3-T02b)", name, fset.Position(l.Pos()).Line, hooksVar)
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				if id.Name == hooksVar && len(n.Values) > 0 {
+					problems.addf("%s:%d: %s given an initial value (review of M3-T02b)", name, fset.Position(id.Pos()).Line, hooksVar)
+				}
+			}
+		case *ast.UnaryExpr:
+			if n.Op == token.AND && isVar(n.X) {
+				problems.addf("%s:%d: address of %s taken outside a test file (review of M3-T02b)", name, fset.Position(n.Pos()).Line, hooksVar)
+			}
+		}
+		return true
+	})
+	return problems
+}
+
+// TestToolexecHooksTestOnly proves that the test hooks of the helper (no
+// Landlock, a refused subset=pid) are switched on by a test file of toolexec
+// only (T167): no other source file of toolexec, the only package that sees
+// the unexported switch, writes it; with negative controls.
+func TestToolexecHooksTestOnly(t *testing.T) {
+	for _, c := range []struct {
+		name, src string
+		want      []string
+	}{
+		{"declared", "package p\n\nvar testHooksAllowed bool\n\nfunc f() bool { return testHooksAllowed }\n", nil},
+		{"assigned", "package p\n\nfunc init() { testHooksAllowed = true }\n", []string{"assigned outside a test file"}},
+		{"initial_value", "package p\n\nvar testHooksAllowed = true\n", []string{"initial value"}},
+		{"address", "package p\n\nfunc f() { p := &testHooksAllowed; *p = true }\n", []string{"address of"}},
+		{"multi_assign", "package p\n\nfunc f() { var x int; x, testHooksAllowed = 1, true; _ = x }\n", []string{"assigned outside a test file"}},
+	} {
+		t.Run(c.name, func(t *testing.T) { expectProblems(t, checkHooksTestOnly(c.name+".go", c.src), c.want) })
+	}
+	_, fsys := repoRoot(t)
+	entries, err := fs.ReadDir(fsys, toolexecDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked, declared := 0, false
+	for _, e := range entries {
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		b, err := fs.ReadFile(fsys, toolexecDir+"/"+n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checked++
+		declared = declared || strings.Contains(string(b), "var "+hooksVar+" bool")
+		reportProblems(t, checkHooksTestOnly(toolexecDir+"/"+n, string(b)))
+	}
+	if checked < 3 || !declared {
+		t.Errorf("%d source files of %s checked, switch declared %v: want the sources and the declaration", checked, toolexecDir, declared)
+	}
+}

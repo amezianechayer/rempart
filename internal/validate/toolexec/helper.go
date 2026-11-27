@@ -355,6 +355,9 @@ func helperMain() int {
 	if code := landlock(&cfg); code != 0 {
 		return fail(code)
 	}
+	if code := seccompKeys(); code != 0 {
+		return fail(code)
+	}
 	if cfg.Probe {
 		_, _ = status.Write([]byte{statusProbeOK})
 		return 0
@@ -661,6 +664,83 @@ func onlyStdio() bool {
 			}
 		}
 	}
+}
+
+// seccompArch is, by architecture, the audit architecture of seccomp, whether
+// the x32 ABI must be refused, and the key system calls refused to the tool
+// (add_key, request_key, keyctl). Another architecture fails closed.
+var seccompArch = map[string]struct {
+	audit uint32
+	x32   bool
+	keys  [3]uint32
+}{
+	"amd64": {0xC000003E, true, [3]uint32{248, 249, 250}},
+	"arm64": {0xC00000B7, false, [3]uint32{217, 218, 219}},
+}
+
+// sockFilter is one instruction of a classic BPF program (struct sock_filter).
+type sockFilter struct {
+	code   uint16
+	jt, jf uint8
+	k      uint32
+}
+
+// seccompKeys installs, after no_new_privs and Landlock, just before the
+// exec, the seccomp filter of amendment 1 of ADR 0015 (D14): add_key,
+// request_key and keyctl refused with EPERM, any other architecture than the
+// native one refused, the x32 ABI refused on amd64. A keyring of the launcher
+// whose "user" rights are open is reachable by its serial number from any
+// process of the same kuid, whatever its user namespace, and Landlock does not
+// filter keyctl (second pass of the review of M3-T02b, T170). The filter is
+// then checked: a keyctl must fail with EPERM. The full filter, an allow-list,
+// stays in M4.
+func seccompKeys() byte {
+	a, ok := seccompArch[runtime.GOARCH]
+	if !ok {
+		return 'z'
+	}
+	const (
+		ldAbsW  = 0x20 // BPF_LD | BPF_W | BPF_ABS
+		jeqK    = 0x15 // BPF_JMP | BPF_JEQ | BPF_K
+		jgeK    = 0x35 // BPF_JMP | BPF_JGE | BPF_K
+		retK    = 0x06 // BPF_RET | BPF_K
+		allow   = 0x7fff0000
+		deny    = 0x00050000 | 1 // SECCOMP_RET_ERRNO | EPERM
+		offNr   = 0              // seccomp_data.nr
+		offArch = 4              // seccomp_data.arch
+		x32Bit  = 0x40000000
+
+		prSetSeccomp      = 22
+		seccompModeFilter = 2
+	)
+	prog := []sockFilter{
+		{ldAbsW, 0, 0, offArch},
+		{jeqK, 1, 0, a.audit},
+		{retK, 0, 0, deny},
+		{ldAbsW, 0, 0, offNr},
+	}
+	if a.x32 {
+		prog = append(prog, sockFilter{jgeK, 0, 1, x32Bit}, sockFilter{retK, 0, 0, deny})
+	}
+	for _, nr := range a.keys {
+		prog = append(prog, sockFilter{jeqK, 0, 1, nr}, sockFilter{retK, 0, 0, deny})
+	}
+	prog = append(prog, sockFilter{retK, 0, 0, allow})
+	fprog := struct {
+		n      uint16
+		filter *sockFilter
+	}{uint16(len(prog)), &prog[0]} //nolint:gosec // G115: a program of at most 13 instructions.
+	//nolint:gosec // G103: PR_SET_SECCOMP takes a pointer to its program.
+	if err := prctl(prSetSeccomp, seccompModeFilter, uintptr(unsafe.Pointer(&fprog)), 0); err != nil {
+		return 'z'
+	}
+	runtime.KeepAlive(prog)
+	// The check: KEYCTL_GET_KEYRING_ID of the session keyring is refused.
+	const keyctlGetKeyringID = 0
+	if _, _, e := syscall.RawSyscall(uintptr(a.keys[2]), keyctlGetKeyringID, ^uintptr(2), 0); e != syscall.EPERM {
+		return 'z'
+	}
+	return 0
 }
 
 // Landlock access rights (D7), by ABI.
